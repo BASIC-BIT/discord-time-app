@@ -1,7 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Window};
+use tauri::{AppHandle, Window};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 #[derive(Debug, Serialize, Deserialize)]
