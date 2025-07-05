@@ -1,0 +1,204 @@
+/* Reset and base styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: transparent;
+}
+
+/* App container */
+.app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+/* Overlay window */
+.overlay {
+  width: 480px;
+  max-width: 90vw;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 16px;
+  color: #fff;
+  outline: none;
+}
+
+/* Input section */
+.input-section {
+  margin-bottom: 16px;
+}
+
+.input-textarea {
+  width: 100%;
+  background: #2d2d2d;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 8px;
+  color: #fff;
+  font-size: 14px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-textarea:focus {
+  border-color: #0078d4;
+}
+
+.input-textarea::placeholder {
+  color: #888;
+}
+
+.loading {
+  color: #0078d4;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.error {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.warning {
+  color: #ffa500;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* Results section */
+.results-section {
+  margin-bottom: 16px;
+}
+
+.single-result {
+  position: relative;
+}
+
+.hint {
+  color: #888;
+  font-size: 11px;
+  text-align: center;
+  margin-top: 4px;
+}
+
+.format-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Row styling */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.row:hover {
+  background: #333;
+}
+
+.row.selected {
+  background: #0078d4;
+}
+
+.row-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.format-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.format-code {
+  font-family: 'Courier New', monospace;
+  background: #444;
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.format-description {
+  color: #aaa;
+  font-size: 11px;
+}
+
+.preview {
+  color: #ccc;
+  font-size: 13px;
+}
+
+.copy-button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 2px;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.copy-button:hover {
+  background: #555;
+}
+
+.copy-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Footer */
+.footer {
+  border-top: 1px solid #333;
+  padding-top: 8px;
+  text-align: center;
+}
+
+.footer .hint {
+  color: #666;
+  font-size: 11px;
+}
+
+/* Dark scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2d2d2d;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
