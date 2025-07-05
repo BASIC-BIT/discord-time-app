@@ -12,34 +12,35 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: transparent;
+  overflow: hidden;
 }
 
-/* App container */
+/* App container - fill the window exactly */
 .app {
   width: 100vw;
   height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
   background: transparent;
 }
 
-/* Overlay window */
+/* Overlay window - fill the entire app container */
 .overlay {
-  width: 480px;
-  max-width: 90vw;
+  width: 100%;
+  height: 100%;
   background: #1a1a1a;
-  border: 1px solid #333;
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   padding: 16px;
   color: #fff;
   outline: none;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Input section */
 .input-section {
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .input-textarea {
@@ -84,6 +85,8 @@ body {
 /* Results section */
 .results-section {
   margin-bottom: 16px;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .single-result {
@@ -178,6 +181,7 @@ body {
   border-top: 1px solid #333;
   padding-top: 8px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .footer .hint {

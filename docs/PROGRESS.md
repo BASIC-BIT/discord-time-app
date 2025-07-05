@@ -23,58 +23,119 @@ Building a Windows desktop application that converts natural language time expre
 - **`src/App.css`**: Dark theme styling for overlay interface
 
 ### Phase 3: Backend Implementation ✅
-- **`src-tauri/src/lib.rs`**: Tauri commands for database operations, global shortcuts, window management
-- **`src-tauri/tauri.conf.json`**: Window configuration (500x400, transparent, always on top, no decorations)
+- **`src-tauri/src/lib.rs`**: Tauri commands for database operations and global shortcuts
+- **`src-tauri/tauri.conf.json`**: Window configuration (480x350, borderless, always on top, no decorations)
 - **`src-tauri/Cargo.toml`**: Dependencies for plugins
 - **Global Shortcuts**: Implemented using `tauri-plugin-global-shortcut` with fallback shortcuts
+- **Permissions**: Added all required permissions in `src-tauri/capabilities/default.json`
 
-### Phase 4: Technical Challenges Resolved ✅
-1. **Missing pnpm**: Switched to npm for package management
-2. **Missing Rust**: User installed Rust toolchain
-3. **Cargo dependency syntax**: Fixed `--features sqlite` qualification issue
-4. **Missing npm packages**: Added `@tauri-apps/plugin-*` packages for frontend bindings
-5. **Port conflicts**: Resolved Vite development server port issues
-6. **Rust compilation errors**: 
-   - Fixed SQL plugin API usage (simplified to stubs)
-   - Corrected global shortcut registration patterns
-   - Resolved import and method signature issues
-   - Fixed unused variable warnings
+### Phase 4: Issues Resolved ✅
+
+#### 1. **Permissions Configuration** ✅
+- **Issue**: Missing permissions for window operations and clipboard access
+- **Solution**: Added comprehensive permissions to `src-tauri/capabilities/default.json`:
+  - `core:window:allow-set-always-on-top`
+  - `core:window:allow-hide`, `core:window:allow-show`
+  - `core:window:allow-set-focus`, `core:window:allow-center`
+  - `clipboard-manager:allow-read-text`, `clipboard-manager:allow-write-text`
+
+#### 2. **Window Management** ✅
+- **Issue**: Window was closing instead of hiding, breaking global shortcuts
+- **Solution**: Changed from `window.close()` to `window.hide()` to keep app running
+
+#### 3. **Window Sizing and Layout** ✅
+- **Issue**: White boundary around overlay content, mismatched window and content sizes
+- **Solution**: 
+  - Adjusted window size to 480x350 to match content
+  - Made overlay fill entire window (100% width/height)
+  - Removed centering and padding that created white space
+  - Added flex layout for proper content distribution
+
+#### 4. **Code Cleanup** ✅
+- **Issue**: Accumulated debugging code and unused functions from troubleshooting
+- **Solution**: 
+  - Removed all debug console.log statements
+  - Removed unused Tauri commands (`show_overlay`, `hide_overlay`, etc.)
+  - Simplified component logic back to essentials
+  - Cleaned up comments and unnecessary complexity
 
 ## Current Status
 
-### ✅ Working Features
-- **Application Compilation**: Builds successfully with minor warnings
-- **UI Components**: All React components render correctly
-- **Window Management**: Overlay window appears and can be styled
-- **Global Shortcut Registration**: Successfully registers shortcuts (Ctrl+Shift+H and fallbacks)
-- **Basic Architecture**: Clean separation of concerns implemented
+### ✅ **Working Features**
+- **Global Shortcuts**: `Ctrl+Shift+H` and fallback shortcuts work reliably
+- **Window Management**: Overlay shows on shortcut, hides on Esc/Enter
+- **Clipboard Integration**: Reads current clipboard on open, copies Discord timestamps
+- **Parsing**: Fallback parsing with chrono-node (OpenAI integration ready)
+- **UI/UX**: Clean dark theme, keyboard navigation, format selection
+- **Layout**: Perfect window sizing with no white boundaries
+- **Permissions**: All required permissions properly configured
 
-### ❌ Known Issues
+### Phase 5: Advanced Features Implementation ✅
 
-#### 1. Window Dismissal Problem
-- **Issue**: Once the overlay window appears, it doesn't dismiss properly
-- **Impact**: Window stays open, making the app unusable for repeated interactions
-- **Likely Cause**: Missing window close logic in keyboard handlers or improper event handling
+#### 1. **OpenAI LLM Integration** ✅
+- **Issue**: LLMs are bad at date math but good at understanding intent
+- **Solution**: Two-stage approach:
+  - **Stage 1**: LLM normalizes ambiguous input into clear text (e.g., "tomorrow at 5" → "tomorrow at 5:00 PM")
+  - **Stage 2**: chrono-node parses the normalized text with precise date math
+- **Environment**: Uses `VITE_OPENAI_API_KEY` environment variable
+- **Fallback**: Gracefully falls back to chrono-node if no API key configured
 
-#### 2. Global Shortcut Re-registration
-- **Issue**: Shortcut works once but doesn't trigger again after the first use
-- **Impact**: User can't reopen the overlay after closing it
-- **Likely Cause**: Shortcut event handler not properly resetting or window state interference
+#### 2. **Discord Timestamp Recognition** ✅
+- **Feature**: Detects existing Discord timestamps in clipboard
+- **Behavior**: When opening with `<t:1234567890:d>` in clipboard, extracts epoch and shows all format alternatives
+- **UX**: Auto-expands format list when timestamp detected, no parsing needed
 
-#### 3. Clipboard Copy Functionality
-- **Issue**: Copy to clipboard functionality isn't working
-- **Impact**: Core feature (copying Discord timestamps) is non-functional
-- **Likely Cause**: Missing clipboard write implementation or permission issues
+#### 3. **Request Optimization** ✅
+- **Debouncing**: 500ms debounce on input to prevent API spam
+- **Cancellation**: AbortController cancels previous requests when new ones start
+- **Race Condition Prevention**: Multiple abort checks throughout request lifecycle
+- **Performance**: Only processes final input, cancels intermediate requests
 
-#### 4. OpenAI API Key Configuration
-- **Issue**: No mechanism to set up OpenAI API key
-- **Impact**: LLM parsing will fail, falling back to chrono-node only
-- **Likely Cause**: Missing environment variable handling or user configuration UI
+#### 4. **Enhanced LLM Prompting** ✅
+- **Context**: Provides current date/time, timezone, and user's format preferences
+- **Examples**: Includes concrete Discord format examples in prompt
+- **Intent Mapping**: Clear guidance on when to use each format type
+- **Validation**: Robust response validation and error handling
 
-### 🔄 Partially Working
-- **Database Operations**: Stubbed but not fully implemented
-- **Statistics Tracking**: Interface exists but not connected to actual database
-- **Error Handling**: Basic error handling in place but needs refinement
+### 🔍 **Current Issues & Improvement Areas**
+
+#### **UI/UX Improvements**
+1. **Relative Time Display**: Shows "in X hours" instead of proper "days/months/years" like Discord
+2. **Click to Copy**: Remove copy button icon, just click row to copy and close
+3. **Window Height**: Expand window to show all formats, remove up/down scrolling
+4. **Focus Management**: Auto-close when window loses focus (configurable setting)
+
+#### **LLM & Parsing Issues**  
+5. **Date Interpretation**: "2 mondays from now at noon" returned 3 mondays away
+6. **Response Speed**: 500ms debounce feels slow, needs optimization
+7. **Ambiguous Times**: Should offer multiple interpretations with left/right navigation
+
+#### **Clipboard & Input**
+8. **Clipboard Control**: Setting to disable auto-loading clipboard
+9. **Input Replacement**: Typing should replace clipboard text, not append
+10. **Placeholder Text**: Show clipboard content as placeholder-style text
+
+#### **Configuration System**
+11. **Settings Menu**: Need configuration interface for:
+    - Global hotkey customization
+    - Auto-close on focus loss
+    - Clipboard auto-load behavior
+    - LLM vs fallback parsing preferences
+
+#### **Security Issues**
+12. **🚨 OpenAI API Key Exposure**: Currently the API key is embedded in frontend bundle
+    - **Problem**: `VITE_OPENAI_API_KEY` gets compiled into the frontend, visible to all users
+    - **Risk**: Anyone can extract the key from the built application and abuse it
+    - **Current Status**: Documented but not yet fixed (MVP uses user's own API key)
+    - **Future Solution**: Host backend API that proxies OpenAI requests with server-side key
+    - **Temporary Mitigation**: Users must provide their own API keys (current approach)
+
+### 📝 **Implementation Notes**
+- **Window Lifecycle**: App stays running in background, window shows/hides on demand
+- **State Management**: Overlay component unmounts/remounts for clean state reset
+- **Permissions**: All Tauri capabilities properly configured for security
+- **Architecture**: Clean separation between UI logic and system integration
+- **LLM Flow**: Intent normalization → precise parsing → format suggestion
 
 ## Technical Architecture
 
@@ -98,7 +159,9 @@ src/
 src-tauri/
 ├── src/
 │   └── lib.rs           # Tauri commands and global shortcut handling
-├── tauri.conf.json      # Window configuration and permissions
+├── capabilities/
+│   └── default.json     # Security permissions configuration
+├── tauri.conf.json      # Window configuration and settings
 └── Cargo.toml           # Rust dependencies
 ```
 
@@ -110,45 +173,6 @@ src-tauri/
 - **Clipboard**: `tauri-plugin-clipboard-manager`
 - **AI Processing**: OpenAI GPT-4o-mini via `openai` npm package
 - **Fallback Parser**: `chrono-node` for offline parsing
-
-## Next Steps Required
-
-### High Priority Fixes
-1. **Fix Window Dismissal**
-   - Implement proper Escape key handling in `Overlay.tsx`
-   - Add window close logic to keyboard event handlers
-   - Ensure window properly hides/closes after copy action
-
-2. **Fix Global Shortcut Re-registration**
-   - Debug shortcut event handler lifecycle
-   - Ensure shortcuts remain active after window operations
-   - Add proper event cleanup and re-registration
-
-3. **Implement Clipboard Copy**
-   - Complete clipboard write functionality in `Row.tsx`
-   - Add proper error handling for clipboard operations
-   - Test cross-platform clipboard compatibility
-
-4. **OpenAI API Key Setup**
-   - Add environment variable handling for `OPENAI_API_KEY`
-   - Implement settings UI for API key configuration
-   - Add secure storage for API key
-
-### Medium Priority Enhancements
-1. **Database Integration**
-   - Implement actual SQLite database operations
-   - Add proper statistics tracking
-   - Create database schema and migrations
-
-2. **Error Handling**
-   - Add comprehensive error handling throughout the app
-   - Implement user-friendly error messages
-   - Add logging for debugging
-
-3. **Testing & Polish**
-   - End-to-end functionality testing
-   - Performance optimization
-   - UI/UX improvements
 
 ## Development Commands
 ```bash
@@ -170,17 +194,14 @@ npm run dev
 ```
 
 ## Configuration Files
-- **`tauri.conf.json`**: Window settings, permissions, build configuration
+- **`tauri.conf.json`**: Window settings (480x350), permissions, build configuration
 - **`package.json`**: Frontend dependencies and scripts
 - **`Cargo.toml`**: Rust dependencies and build settings
+- **`src-tauri/capabilities/default.json`**: Security permissions
 - **`env.example`**: Environment variables template (copy to `.env` and configure)
 - **`.env`**: Environment variables (create from `env.example`, not in version control)
 
-## Known Warnings
-- Snake case naming warnings for FormatStats struct fields (cosmetic)
-- Unused import warnings (cleaned up in latest version)
-
 ---
 
-**Status**: Core functionality implemented but key features need debugging
-**Next Session Goal**: Fix window dismissal, clipboard copy, and shortcut re-registration 
+**Status**: ✅ **Advanced MVP Complete with LLM Integration**
+**Next Steps**: Polish UI/UX, add configuration system, implement settings menu 

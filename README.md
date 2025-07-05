@@ -14,6 +14,8 @@ A desktop overlay application for quickly converting natural language time expre
    ```
    VITE_OPENAI_API_KEY=your-openai-api-key-here
    ```
+   
+   **⚠️ Security Note**: The API key will be embedded in the built application. Only use your personal API key. For production deployment, consider hosting a backend API to proxy requests and keep the key server-side.
 
 3. **Run in development mode:**
    ```bash

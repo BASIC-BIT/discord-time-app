@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "HammerOverlay",
-        "width": 500,
-        "height": 400,
+        "width": 480,
+        "height": 350,
         "minWidth": 400,
-        "minHeight": 200,
+        "minHeight": 250,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
