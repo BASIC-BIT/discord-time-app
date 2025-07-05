@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { Row } from './Row';
@@ -22,7 +22,6 @@ export function Overlay({ onClose }: OverlayProps) {
   const [confidence, setConfidence] = useState(1);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const appWindow = getCurrentWindow();
 
   // Initialize and load clipboard content
   useEffect(() => {
@@ -132,6 +131,8 @@ export function Overlay({ onClose }: OverlayProps) {
   const handleCopy = async () => {
     if (epoch !== null) {
       try {
+        const discordCode = `<t:${epoch}:${formats[selectedIndex].code}>`;
+        await writeText(discordCode);
         await incrementFormatUsage(selectedIndex);
         onClose();
       } catch (error) {

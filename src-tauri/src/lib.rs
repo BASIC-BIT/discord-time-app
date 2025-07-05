@@ -45,8 +45,6 @@ async fn register_global_hotkey(_app: AppHandle, hotkey: String) -> Result<(), S
     Ok(())
 }
 
-
-
 // Show overlay window
 #[tauri::command]
 async fn show_overlay(window: Window) -> Result<(), String> {
@@ -100,9 +98,19 @@ pub fn run() {
                             if event.state == ShortcutState::Pressed {
                                 // Show the overlay window
                                 if let Some(window) = app.get_webview_window("main") {
+                                    println!("Global shortcut triggered, showing window");
+                                    
+                                    // First ensure the window is shown and focused
                                     let _ = window.show();
                                     let _ = window.set_focus();
                                     let _ = window.set_always_on_top(true);
+                                    
+                                    // Reset the window to center and ensure it's visible
+                                    let _ = window.center();
+                                    
+                                    println!("Window should now be visible");
+                                } else {
+                                    println!("Could not find main window");
                                 }
                             }
                         })

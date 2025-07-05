@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { formats, formatDiscordTimestamp, getFormatLabel } from '../lib/formats';
 
 interface RowProps {
@@ -20,8 +19,7 @@ export function Row({ epoch, formatIndex, isSelected, onClick, onCopy }: RowProp
   const handleCopy = async () => {
     setCopying(true);
     try {
-      await writeText(discordCode);
-      onCopy();
+      await onCopy();
     } catch (error) {
       console.error('Failed to copy:', error);
     } finally {

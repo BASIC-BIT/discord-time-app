@@ -8,8 +8,17 @@ function App() {
   const appWindow = getCurrentWindow();
 
   const handleClose = async () => {
-    setShowOverlay(false);
-    await appWindow.close();
+    try {
+      // First hide the overlay component
+      setShowOverlay(false);
+      
+      // Then hide the window
+      console.log("Hiding window...");
+      await appWindow.hide();
+      console.log("Window hidden successfully");
+    } catch (error) {
+      console.error("Error hiding window:", error);
+    }
   };
 
   useEffect(() => {
@@ -19,9 +28,6 @@ function App() {
         // Make window always on top
         await appWindow.setAlwaysOnTop(true);
         
-        // Set window to be focusable
-        await appWindow.setFocusable(true);
-        
         // Focus the window
         await appWindow.setFocus();
       } catch (error) {
@@ -30,6 +36,18 @@ function App() {
     };
 
     setupWindow();
+
+    // Listen for window focus changes to show overlay when window is shown
+    const unlistenFocus = appWindow.onFocusChanged(({ payload: focused }) => {
+      if (focused) {
+        console.log("Window gained focus, showing overlay");
+        setShowOverlay(true);
+      }
+    });
+
+    return () => {
+      unlistenFocus.then(fn => fn());
+    };
   }, []);
 
   return (
