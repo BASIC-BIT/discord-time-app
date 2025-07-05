@@ -37,6 +37,7 @@ export function Overlay({ onClose }: OverlayProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [confidence, setConfidence] = useState(1);
   const [isClipboardText, setIsClipboardText] = useState(false);
   
@@ -123,12 +124,13 @@ export function Overlay({ onClose }: OverlayProps) {
         // Parse as natural language with debounce
         setLoading(true);
         debounceTimeoutRef.current = setTimeout(() => {
-          parseInput(inputText.trim());
+          parseInput(inputText.trim(), isClipboardText);
         }, 300); // 300ms debounce for faster response
       }
     } else {
       setEpoch(null);
       setError(null);
+      setInfo(null);
       setLoading(false);
     }
   }, [inputText]);
@@ -147,7 +149,7 @@ export function Overlay({ onClose }: OverlayProps) {
     };
     
     resizeWindow();
-  }, [epoch, loading, error]); // Resize when content changes
+  }, [epoch, loading, error, info]); // Resize when content changes
 
   // Cleanup on unmount
   useEffect(() => {
@@ -161,12 +163,13 @@ export function Overlay({ onClose }: OverlayProps) {
     };
   }, []);
 
-  const parseInput = async (text: string) => {
+  const parseInput = async (text: string, isFromClipboard: boolean = false) => {
     // Create new abort controller for this request
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     
     setError(null);
+    setInfo(null);
     
     try {
       // Check if request was already cancelled
@@ -214,7 +217,11 @@ export function Overlay({ onClose }: OverlayProps) {
             setConfidence(result.confidence * 0.7); // Reduce confidence
           } else {
             setEpoch(null);
-            setError('Could not understand that time expression. Try something like "tomorrow at 2pm" or "next Friday".');
+            if (isFromClipboard) {
+              setInfo('Enter a date/time expression like "tomorrow at 2pm" or "next Friday"');
+            } else {
+              setError('Could not understand that time expression. Try something like "tomorrow at 2pm" or "next Friday".');
+            }
           }
         }
       } else {
@@ -228,7 +235,11 @@ export function Overlay({ onClose }: OverlayProps) {
           setConfidence(0.7); // Medium confidence for fallback
         } else {
           setEpoch(null);
-          setError('Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');
+          if (isFromClipboard) {
+            setInfo('Enter a date/time expression like "Jan 15 at 3pm" or "in 2 hours"');
+          } else {
+            setError('Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');
+          }
         }
       }
     } catch (error) {
@@ -256,10 +267,10 @@ export function Overlay({ onClose }: OverlayProps) {
       if (epoch !== null) {
         handleCopy();
       }
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
       e.preventDefault();
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formats.length - 1));
-    } else if (e.key === 'ArrowDown') {
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
       e.preventDefault();
       setSelectedIndex((prev) => (prev < formats.length - 1 ? prev + 1 : 0));
     }
@@ -288,6 +299,7 @@ export function Overlay({ onClose }: OverlayProps) {
     // If this is clipboard text and user is typing (not just selecting)
     if (isClipboardText && newValue !== inputText) {
       setIsClipboardText(false);
+      setInfo(null); // Clear info message when user starts typing
       // Replace the entire text with just what they typed
       const selectionStart = e.target.selectionStart;
       const selectionEnd = e.target.selectionEnd;
@@ -317,6 +329,7 @@ export function Overlay({ onClose }: OverlayProps) {
         />
         {loading && <div className="loading">Parsing...</div>}
         {error && <div className="error">{error}</div>}
+        {info && <div className="info">{info}</div>}
         {confidence < 0.5 && (
           <div className="warning">Low confidence - please check the result</div>
         )}
@@ -340,7 +353,7 @@ export function Overlay({ onClose }: OverlayProps) {
       )}
 
       <div className="footer">
-        <span className="hint">Enter to copy • Esc to close</span>
+        <span className="hint">Arrow keys/Tab to navigate • Enter to copy • Esc to close</span>
       </div>
     </div>
   );

@@ -63,13 +63,19 @@ body {
 }
 
 .loading {
-  color: #0078d4;
+  color: #aaa;
   font-size: 12px;
   margin-top: 4px;
 }
 
 .error {
   color: #ff6b6b;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.info {
+  color: #87ceeb;
   font-size: 12px;
   margin-top: 4px;
 }
