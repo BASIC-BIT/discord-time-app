@@ -52,8 +52,15 @@ export function Overlay({ onClose }: OverlayProps) {
         // Initialize stats database
         await initStats();
         
-        // Load clipboard content
-        const clipboardText = await readText();
+        // Load clipboard content (handle empty clipboard gracefully)
+        let clipboardText = '';
+        try {
+          clipboardText = await readText();
+        } catch (clipboardError) {
+          console.log('Clipboard is empty or unavailable:', clipboardError);
+          clipboardText = '';
+        }
+        
         if (clipboardText) {
           // Check if clipboard contains an existing Discord timestamp
           const existingTimestamp = parseExistingTimestamp(clipboardText);
@@ -73,16 +80,27 @@ export function Overlay({ onClose }: OverlayProps) {
           }
         }
         
-        // Focus the textarea
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          textareaRef.current.select();
+        // Focus the window
+        const window = getCurrentWindow();
+        try {
+          await window.setFocus();
+        } catch (error) {
+          console.error('Error focusing window:', error);
         }
+        
+        // Then focus the textarea after a short delay
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            if (clipboardText) {
+              textareaRef.current.select();
+            }
+          }
+        }, 10);
 
         // Auto-resize window to fit content
         setTimeout(async () => {
           try {
-            const window = getCurrentWindow();
             await window.setSize(new LogicalSize(480, Math.max(document.body.scrollHeight, 100)));
           } catch (error) {
             console.error('Error resizing window:', error);
@@ -267,10 +285,10 @@ export function Overlay({ onClose }: OverlayProps) {
       if (epoch !== null) {
         handleCopy();
       }
-    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
+    } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
       e.preventDefault();
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formats.length - 1));
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
+    } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
       e.preventDefault();
       setSelectedIndex((prev) => (prev < formats.length - 1 ? prev + 1 : 0));
     }
@@ -353,7 +371,7 @@ export function Overlay({ onClose }: OverlayProps) {
       )}
 
       <div className="footer">
-        <span className="hint">Arrow keys/Tab to navigate • Enter to copy • Esc to close</span>
+        <span className="hint">↑↓ arrows/Tab to navigate • Enter to copy • Esc to close</span>
       </div>
     </div>
   );
