@@ -145,10 +145,19 @@ Building a Windows desktop application that converts natural language time expre
   - Actionable guidance for users
 - **Impact**: Better user experience when things go wrong, less intimidating
 
+#### 8. **Discord-Style Relative Time Display** ✅
+- **Issue**: Basic relative time only showed hours, not proper "days/months/years" formatting like Discord
+- **Solution**: 
+  - Added Moment.js (^2.30.1) for accurate relative time calculations
+  - Created `discordRelative.ts` helper with `moment.unix(epoch).fromNow()`
+  - Configured `moment.relativeTimeRounding(Math.round)` to match Discord rounding
+  - Updated `:R` format case to use Discord-style formatting
+- **Impact**: Accurate relative times matching Discord's display (e.g., "in 3 days", "2 months ago")
+
 ### 🔍 **Current Issues & Improvement Areas**
 
 #### **UI/UX Improvements**
-1. **Relative Time Display**: Shows "in X hours" instead of proper "days/months/years" like Discord
+1. ✅ **Relative Time Display**: ~~Shows "in X hours" instead of proper "days/months/years" like Discord~~ **COMPLETED** (implemented Discord-style with Moment.js)
 2. ✅ **Click to Copy**: ~~Remove copy button icon, just click row to copy and close~~ **COMPLETED**
 3. ✅ **Window Height**: ~~Expand window to show all formats, remove up/down scrolling~~ **COMPLETED**
 4. **Focus Management**: Auto-close when window loses focus (configurable setting)

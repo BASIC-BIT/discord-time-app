@@ -278,9 +278,8 @@ export function Overlay({ onClose }: OverlayProps) {
     }
   };
 
-  const handleRowCopyAndClose = async (index: number) => {
+  const handleRowMouseEnter = (index: number) => {
     setSelectedIndex(index);
-    await handleCopy();
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -332,7 +331,8 @@ export function Overlay({ onClose }: OverlayProps) {
                 epoch={epoch}
                 formatIndex={index}
                 isSelected={index === selectedIndex}
-                onCopyAndClose={() => handleRowCopyAndClose(index)}
+                onCopyAndClose={handleCopy}
+                onMouseEnter={() => handleRowMouseEnter(index)}
               />
             ))}
           </div>

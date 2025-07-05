@@ -1,3 +1,5 @@
+import { discordRelative } from './discordRelative';
+
 // Discord timestamp formats
 export interface DiscordFormat {
   code: string;
@@ -81,13 +83,7 @@ export function getFormatLabel(epoch: number, formatIndex: number): string {
         hour12: true 
       });
     case ":R":
-      const now = new Date();
-      const diffMs = date.getTime() - now.getTime();
-      const diffHours = Math.round(diffMs / (1000 * 60 * 60));
-      
-      if (diffHours === 0) return "now";
-      if (diffHours > 0) return `in ${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
-      return `${Math.abs(diffHours)} hour${Math.abs(diffHours) !== 1 ? 's' : ''} ago`;
+      return discordRelative(epoch);
     default:
       return format.label;
   }

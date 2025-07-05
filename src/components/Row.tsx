@@ -6,9 +6,10 @@ interface RowProps {
   formatIndex: number;
   isSelected: boolean;
   onCopyAndClose: () => void;
+  onMouseEnter: () => void;
 }
 
-export function Row({ epoch, formatIndex, isSelected, onCopyAndClose }: RowProps) {
+export function Row({ epoch, formatIndex, isSelected, onCopyAndClose, onMouseEnter }: RowProps) {
   const [copying, setCopying] = useState(false);
   
   const format = formats[formatIndex];
@@ -32,6 +33,7 @@ export function Row({ epoch, formatIndex, isSelected, onCopyAndClose }: RowProps
     <div 
       className={`row ${isSelected ? 'selected' : ''} ${copying ? 'copying' : ''}`}
       onClick={handleClick}
+      onMouseEnter={onMouseEnter}
       style={{ cursor: 'pointer' }}
     >
       <div className="row-content">
