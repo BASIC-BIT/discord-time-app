@@ -97,33 +97,131 @@ Building a Windows desktop application that converts natural language time expre
 - **Intent Mapping**: Clear guidance on when to use each format type
 - **Validation**: Robust response validation and error handling
 
+### Phase 6: UI/UX Polish & Optimization ✅
+*Completed in rapid iteration session focusing on easy-to-implement improvements*
+
+#### 1. **Click-to-Copy Simplification** ✅
+- **Issue**: Separate copy button was confusing, users expected to click row to copy
+- **Solution**: Removed copy button entirely, entire row now clickable to copy and close
+- **Impact**: Cleaner UI, more intuitive user experience
+
+#### 2. **Response Speed Optimization** ✅
+- **Issue**: 500ms debounce felt sluggish for user input
+- **Solution**: Reduced debounce timeout to 300ms for faster response
+- **Impact**: More responsive LLM parsing, better user experience
+
+#### 3. **Always-Visible Format List** ✅
+- **Issue**: Hidden format expansion required arrow keys, not discoverable
+- **Solution**: 
+  - Expanded window height from 350px to 520px
+  - Always show all 7 Discord formats simultaneously
+  - Removed expand/collapse logic entirely
+- **Impact**: Full visibility of options, no hidden functionality
+
+#### 4. **Smart Input Replacement** ✅
+- **Issue**: Typing appended to clipboard text instead of replacing it
+- **Solution**: Track clipboard-loaded text, replace on first keystroke
+- **Impact**: More natural text input behavior, less frustrating UX
+
+#### 5. **Auto-Sizing Window Height** ✅
+- **Issue**: Fixed window height didn't adapt to content, either too tall or too short
+- **Solution**: 
+  - Dynamic window resizing using `document.body.scrollHeight`
+  - Auto-resize on content changes (when results appear/disappear)
+  - Added `core:window:allow-set-size` permission
+  - Set minimum height to 100px for compact empty state
+- **Impact**: Perfect content-fit, no wasted space, responsive to content changes
+
+#### 6. **Seamless Dark Theme** ✅
+- **Issue**: White flash during window resize created jarring visual experience
+- **Solution**: Set window `backgroundColor: "#1a1a1a"` to match overlay component
+- **Impact**: Smooth, professional appearance throughout resize operations
+
+#### 7. **User-Friendly Error Messages** ✅
+- **Issue**: Technical error messages like "Unable to parse even after normalization..." confused users
+- **Solution**: Rewrote all error messages with:
+  - Plain language instead of technical jargon
+  - Helpful examples of what works
+  - Actionable guidance for users
+- **Impact**: Better user experience when things go wrong, less intimidating
+
 ### 🔍 **Current Issues & Improvement Areas**
 
 #### **UI/UX Improvements**
 1. **Relative Time Display**: Shows "in X hours" instead of proper "days/months/years" like Discord
-2. **Click to Copy**: Remove copy button icon, just click row to copy and close
-3. **Window Height**: Expand window to show all formats, remove up/down scrolling
+2. ✅ **Click to Copy**: ~~Remove copy button icon, just click row to copy and close~~ **COMPLETED**
+3. ✅ **Window Height**: ~~Expand window to show all formats, remove up/down scrolling~~ **COMPLETED**
 4. **Focus Management**: Auto-close when window loses focus (configurable setting)
 
 #### **LLM & Parsing Issues**  
 5. **Date Interpretation**: "2 mondays from now at noon" returned 3 mondays away
-6. **Response Speed**: 500ms debounce feels slow, needs optimization
+6. ✅ **Response Speed**: ~~500ms debounce feels slow, needs optimization~~ **COMPLETED** (reduced to 300ms)
 7. **Ambiguous Times**: Should offer multiple interpretations with left/right navigation
 
 #### **Clipboard & Input**
 8. **Clipboard Control**: Setting to disable auto-loading clipboard
-9. **Input Replacement**: Typing should replace clipboard text, not append
+9. ✅ **Input Replacement**: ~~Typing should replace clipboard text, not append~~ **COMPLETED**
 10. **Placeholder Text**: Show clipboard content as placeholder-style text
 
+#### **Theming & Appearance**
+11. **System Theme Integration**: Respect user's system light/dark theme preference
+12. **Theme Settings**: Add theme selector in settings menu with options:
+    - Light theme
+    - Dark theme  
+    - Use system default (auto-detect)
+13. **Dynamic Theme Switching**: Update window background color and CSS variables based on theme choice
+
 #### **Configuration System**
-11. **Settings Menu**: Need configuration interface for:
+14. **Settings Menu**: Need configuration interface for:
     - Global hotkey customization
     - Auto-close on focus loss
     - Clipboard auto-load behavior
     - LLM vs fallback parsing preferences
+    - Theme selection (Light/Dark/System Default)
+    - OpenAI API key management
+    - Auto-start at boot toggle
+    - Auto-update preferences
+    - System tray behavior settings
+
+#### **Production & Distribution Features**
+15. **Professional Installer**: Create MSI/EXE installer package for Windows
+    - Proper installation wizard with license agreement
+    - Install to Program Files with proper uninstaller
+    - Registry entries for Add/Remove Programs
+    - Desktop shortcut creation option
+
+16. **Auto-Start at Boot**: Option to start HammerOverlay automatically on Windows startup
+    - Registry entry for startup programs
+    - Configurable in settings menu (on/off toggle)
+    - Silent startup (no window shown, runs in background)
+
+17. **System Tray Integration**: Professional system tray presence
+    - System tray icon (customizable, shows status)
+    - Right-click context menu with options:
+      - Show/Hide overlay
+      - Settings
+      - About
+      - Exit
+    - Left-click to show overlay (alternative to hotkey)
+
+18. **Auto-Updater System**: Automatic update checking and installation
+    - Check for updates on startup (configurable)
+    - Download and install updates silently
+    - Update notification in system tray
+    - GitHub releases integration
+
+19. **Digital Code Signing**: Sign the executable for Windows trust
+    - Code signing certificate for installer and executable
+    - Removes "Unknown Publisher" security warnings
+    - Essential for professional distribution
+
+20. **Windows Store Distribution**: Optional Microsoft Store publication
+    - MSIX packaging for Store compatibility
+    - Automatic updates through Store
+    - Enhanced security through Store sandboxing
 
 #### **Security Issues**
-12. **🚨 OpenAI API Key Exposure**: Currently the API key is embedded in frontend bundle
+21. **🚨 OpenAI API Key Exposure**: Currently the API key is embedded in frontend bundle
     - **Problem**: `VITE_OPENAI_API_KEY` gets compiled into the frontend, visible to all users
     - **Risk**: Anyone can extract the key from the built application and abuse it
     - **Current Status**: Documented but not yet fixed (MVP uses user's own API key)
@@ -132,10 +230,12 @@ Building a Windows desktop application that converts natural language time expre
 
 ### 📝 **Implementation Notes**
 - **Window Lifecycle**: App stays running in background, window shows/hides on demand
+- **Dynamic Sizing**: Window auto-resizes to content using `document.body.scrollHeight`
 - **State Management**: Overlay component unmounts/remounts for clean state reset
 - **Permissions**: All Tauri capabilities properly configured for security
 - **Architecture**: Clean separation between UI logic and system integration
 - **LLM Flow**: Intent normalization → precise parsing → format suggestion
+- **UX Polish**: Dark theme consistency, user-friendly errors, responsive interface
 
 ## Technical Architecture
 
@@ -203,5 +303,5 @@ npm run dev
 
 ---
 
-**Status**: ✅ **Advanced MVP Complete with LLM Integration**
-**Next Steps**: Polish UI/UX, add configuration system, implement settings menu 
+**Status**: ✅ **Highly Polished MVP with Advanced UI/UX Complete**
+**Next Steps**: Implement remaining features (focus management, relative time display, settings system), then production features (installer, system tray, auto-updater) 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { Row } from './Row';
 import { formats } from '../lib/formats';
@@ -35,10 +35,10 @@ export function Overlay({ onClose }: OverlayProps) {
   const [inputText, setInputText] = useState('');
   const [epoch, setEpoch] = useState<number | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confidence, setConfidence] = useState(1);
+  const [isClipboardText, setIsClipboardText] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
@@ -65,10 +65,10 @@ export function Overlay({ onClose }: OverlayProps) {
             // Find the format index that matches the current format code
             const formatIndex = formats.findIndex(f => f.code === existingTimestamp.formatCode);
             setSelectedIndex(formatIndex >= 0 ? formatIndex : 0);
-            setExpanded(true); // Show all formats so user can pick different ones
           } else {
             // Regular text - set as input for parsing
             setInputText(clipboardText);
+            setIsClipboardText(true);
           }
         }
         
@@ -77,6 +77,16 @@ export function Overlay({ onClose }: OverlayProps) {
           textareaRef.current.focus();
           textareaRef.current.select();
         }
+
+        // Auto-resize window to fit content
+        setTimeout(async () => {
+          try {
+            const window = getCurrentWindow();
+            await window.setSize(new LogicalSize(480, Math.max(document.body.scrollHeight, 100)));
+          } catch (error) {
+            console.error('Error resizing window:', error);
+          }
+        }, 100);
       } catch (error) {
         console.error('Error initializing overlay:', error);
       }
@@ -114,7 +124,7 @@ export function Overlay({ onClose }: OverlayProps) {
         setLoading(true);
         debounceTimeoutRef.current = setTimeout(() => {
           parseInput(inputText.trim());
-        }, 500); // 500ms debounce
+        }, 300); // 300ms debounce for faster response
       }
     } else {
       setEpoch(null);
@@ -122,6 +132,22 @@ export function Overlay({ onClose }: OverlayProps) {
       setLoading(false);
     }
   }, [inputText]);
+
+  // Auto-resize window when content changes
+  useEffect(() => {
+    const resizeWindow = async () => {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 50)); // Wait for DOM update
+        const window = getCurrentWindow();
+        const contentHeight = document.body.scrollHeight;
+        await window.setSize(new LogicalSize(480, Math.max(contentHeight, 100)));
+      } catch (error) {
+        console.error('Error resizing window:', error);
+      }
+    };
+    
+    resizeWindow();
+  }, [epoch, loading, error]); // Resize when content changes
 
   // Cleanup on unmount
   useEffect(() => {
@@ -188,7 +214,7 @@ export function Overlay({ onClose }: OverlayProps) {
             setConfidence(result.confidence * 0.7); // Reduce confidence
           } else {
             setEpoch(null);
-            setError(`Unable to parse even after normalization. LLM suggested: "${result.normalizedText}"`);
+            setError('Could not understand that time expression. Try something like "tomorrow at 2pm" or "next Friday".');
           }
         }
       } else {
@@ -202,7 +228,7 @@ export function Overlay({ onClose }: OverlayProps) {
           setConfidence(0.7); // Medium confidence for fallback
         } else {
           setEpoch(null);
-          setError('Unable to parse date/time. Please try a more specific format.');
+          setError('Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');
         }
       }
     } catch (error) {
@@ -213,7 +239,7 @@ export function Overlay({ onClose }: OverlayProps) {
       }
       
       console.error('Error parsing input:', error);
-      setError('Error parsing input. Please try again.');
+      setError('Something went wrong. Please try again or check your internet connection.');
     } finally {
       // Only set loading to false if this request wasn't aborted
       if (!abortController.signal.aborted) {
@@ -232,18 +258,10 @@ export function Overlay({ onClose }: OverlayProps) {
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (!expanded) {
-        setExpanded(true);
-      } else {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formats.length - 1));
-      }
+      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formats.length - 1));
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (!expanded) {
-        setExpanded(true);
-      } else {
-        setSelectedIndex((prev) => (prev < formats.length - 1 ? prev + 1 : 0));
-      }
+      setSelectedIndex((prev) => (prev < formats.length - 1 ? prev + 1 : 0));
     }
   };
 
@@ -260,8 +278,31 @@ export function Overlay({ onClose }: OverlayProps) {
     }
   };
 
-  const handleRowClick = (index: number) => {
+  const handleRowCopyAndClose = async (index: number) => {
     setSelectedIndex(index);
+    await handleCopy();
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newValue = e.target.value;
+    
+    // If this is clipboard text and user is typing (not just selecting)
+    if (isClipboardText && newValue !== inputText) {
+      setIsClipboardText(false);
+      // Replace the entire text with just what they typed
+      const selectionStart = e.target.selectionStart;
+      const selectionEnd = e.target.selectionEnd;
+      if (selectionStart === selectionEnd) {
+        // Single cursor position - replace everything
+        const lastChar = newValue[newValue.length - 1];
+        setInputText(lastChar || '');
+      } else {
+        // They selected and typed - use normal behavior
+        setInputText(newValue);
+      }
+    } else {
+      setInputText(newValue);
+    }
   };
 
   return (
@@ -270,7 +311,7 @@ export function Overlay({ onClose }: OverlayProps) {
         <textarea
           ref={textareaRef}
           value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
+          onChange={handleInputChange}
           placeholder="Enter date/time (e.g., 'tomorrow at 2pm', 'next Friday')"
           className="input-textarea"
           rows={2}
@@ -284,31 +325,17 @@ export function Overlay({ onClose }: OverlayProps) {
 
       {epoch !== null && (
         <div className="results-section">
-          {expanded ? (
-            <div className="format-list">
-              {formats.map((_, index) => (
-                <Row
-                  key={index}
-                  epoch={epoch}
-                  formatIndex={index}
-                  isSelected={index === selectedIndex}
-                  onClick={() => handleRowClick(index)}
-                  onCopy={handleCopy}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="single-result">
+          <div className="format-list">
+            {formats.map((_, index) => (
               <Row
+                key={index}
                 epoch={epoch}
-                formatIndex={selectedIndex}
-                isSelected={true}
-                onClick={() => setExpanded(true)}
-                onCopy={handleCopy}
+                formatIndex={index}
+                isSelected={index === selectedIndex}
+                onCopyAndClose={() => handleRowCopyAndClose(index)}
               />
-              <div className="hint">↑↓ to see more formats</div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
 

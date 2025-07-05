@@ -15,9 +15,8 @@
         "label": "main",
         "title": "HammerOverlay",
         "width": 480,
-        "height": 350,
         "minWidth": 400,
-        "minHeight": 250,
+        "minHeight": 100,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
@@ -25,7 +24,8 @@
         "visible": false,
         "center": true,
         "skipTaskbar": true,
-        "tabbingIdentifier": "main"
+        "tabbingIdentifier": "main",
+        "backgroundColor": "#1a1a1a"
       }
     ],
     "security": {

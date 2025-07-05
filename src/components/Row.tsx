@@ -5,21 +5,22 @@ interface RowProps {
   epoch: number;
   formatIndex: number;
   isSelected: boolean;
-  onClick: () => void;
-  onCopy: () => void;
+  onCopyAndClose: () => void;
 }
 
-export function Row({ epoch, formatIndex, isSelected, onClick, onCopy }: RowProps) {
+export function Row({ epoch, formatIndex, isSelected, onCopyAndClose }: RowProps) {
   const [copying, setCopying] = useState(false);
   
   const format = formats[formatIndex];
   const discordCode = formatDiscordTimestamp(epoch, formatIndex);
   const preview = getFormatLabel(epoch, formatIndex);
   
-  const handleCopy = async () => {
+  const handleClick = async () => {
+    if (copying) return; // Prevent double-clicks
+    
     setCopying(true);
     try {
-      await onCopy();
+      await onCopyAndClose();
     } catch (error) {
       console.error('Failed to copy:', error);
     } finally {
@@ -29,8 +30,9 @@ export function Row({ epoch, formatIndex, isSelected, onClick, onCopy }: RowProp
   
   return (
     <div 
-      className={`row ${isSelected ? 'selected' : ''}`}
-      onClick={onClick}
+      className={`row ${isSelected ? 'selected' : ''} ${copying ? 'copying' : ''}`}
+      onClick={handleClick}
+      style={{ cursor: 'pointer' }}
     >
       <div className="row-content">
         <div className="format-info">
@@ -39,16 +41,6 @@ export function Row({ epoch, formatIndex, isSelected, onClick, onCopy }: RowProp
         </div>
         <div className="preview">{preview}</div>
       </div>
-      <button 
-        className="copy-button"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleCopy();
-        }}
-        disabled={copying}
-      >
-        {copying ? '📋' : '📄'}
-      </button>
     </div>
   );
 } 
