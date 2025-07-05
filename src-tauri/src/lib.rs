@@ -1,7 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Window};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri::{AppHandle, Manager, Window};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FormatStats {
@@ -38,67 +37,15 @@ async fn increment_format_usage(_app: AppHandle, format: String) -> Result<(), S
     Ok(())
 }
 
-// Register global hotkey with callback
+// Register global hotkey (simplified version)
 #[tauri::command]
-async fn register_global_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-    
-    let shortcut = hotkey.parse::<Shortcut>()
-        .map_err(|e| format!("Invalid shortcut format: {}", e))?;
-    
-    // Register the shortcut with callback
-    match app.global_shortcut().register(shortcut) {
-        Ok(_) => {
-            println!("Successfully registered hotkey: {}", hotkey);
-            Ok(())
-        }
-        Err(e) => {
-            println!("Failed to register hotkey {}: {}", hotkey, e);
-            Err(format!("Failed to register shortcut: {}", e))
-        }
-    }
-}
-
-// Register hotkey with callback that shows the window
-fn register_hotkey_with_callback(app: AppHandle, hotkey: &str) -> Result<(), String> {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-    
-    let shortcut = hotkey.parse::<Shortcut>()
-        .map_err(|e| format!("Invalid shortcut format: {}", e))?;
-    
-    // Register the shortcut
-    app.global_shortcut().register(shortcut)
-        .map_err(|e| format!("Failed to register shortcut: {}", e))?;
-    
-    println!("Successfully registered hotkey: {}", hotkey);
+async fn register_global_hotkey(_app: AppHandle, hotkey: String) -> Result<(), String> {
+    // For now, just return success - global shortcuts are stubbed out
+    println!("Would register hotkey: {}", hotkey);
     Ok(())
 }
 
-// Try to register hotkey with fallback options
-async fn try_register_hotkey(app: AppHandle) -> Result<String, String> {
-    let hotkeys = vec![
-        "Ctrl+Shift+H",
-        "Ctrl+Alt+H", 
-        "Ctrl+Shift+T",
-        "Ctrl+Alt+T",
-        "Alt+Shift+H",
-    ];
-    
-    for hotkey in hotkeys {
-        match register_hotkey_with_callback(app.clone(), hotkey) {
-            Ok(_) => {
-                println!("Successfully registered hotkey: {}", hotkey);
-                return Ok(hotkey.to_string());
-            }
-            Err(e) => {
-                println!("Failed to register {}: {}", hotkey, e);
-                continue;
-            }
-        }
-    }
-    
-    Err("Could not register any hotkey".to_string())
-}
+
 
 // Show overlay window
 #[tauri::command]
@@ -128,7 +75,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             init_stats_db,
             get_format_stats,
@@ -139,20 +85,44 @@ pub fn run() {
             close_overlay
         ])
         .setup(|app| {
-            // Try to register a global hotkey with fallback options
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                match try_register_hotkey(app_handle).await {
-                    Ok(hotkey) => {
-                        println!("Application ready with hotkey: {}", hotkey);
-                        println!("Note: Hotkey registered but callback may not work - you can manually open the window");
+            // Register global shortcut plugin with handler
+            use tauri_plugin_global_shortcut::ShortcutState;
+            
+            let shortcuts = ["ctrl+shift+h", "ctrl+alt+h", "ctrl+shift+t", "ctrl+alt+t", "alt+shift+h"];
+            
+            // Try to register shortcuts with handler
+            for shortcut in &shortcuts {
+                // Build the plugin using the exact pattern from the documentation
+                let plugin_result = (|| -> Result<_, Box<dyn std::error::Error>> {
+                    let plugin = tauri_plugin_global_shortcut::Builder::new()
+                        .with_shortcuts([*shortcut])?
+                        .with_handler(|app, _shortcut, event| {
+                            if event.state == ShortcutState::Pressed {
+                                // Show the overlay window
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                    let _ = window.set_always_on_top(true);
+                                }
+                            }
+                        })
+                        .build();
+                    
+                    app.handle().plugin(plugin)?;
+                    Ok(())
+                })();
+                
+                match plugin_result {
+                    Ok(_) => {
+                        println!("Successfully registered global shortcut: {}", shortcut);
+                        break;
                     }
                     Err(e) => {
-                        println!("Warning: No hotkey registered - {}", e);
-                        println!("You can still use the application by opening it manually");
+                        println!("Failed to register {}: {}", shortcut, e);
+                        continue;
                     }
                 }
-            });
+            }
             
             Ok(())
         })
