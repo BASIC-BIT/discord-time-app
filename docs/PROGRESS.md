@@ -154,13 +154,47 @@ Building a Windows desktop application that converts natural language time expre
   - Updated `:R` format case to use Discord-style formatting
 - **Impact**: Accurate relative times matching Discord's display (e.g., "in 3 days", "2 months ago")
 
+#### 9. **Mouseover Selection Fix** ✅
+- **Issue**: Click-to-copy was using currently selected row instead of clicked row due to async state updates
+- **Solution**: 
+  - Added `onMouseEnter` prop to Row component to select items on hover
+  - Simplified click handler to use current selection instead of passing index
+  - Enhanced UX with immediate visual feedback on hover
+- **Impact**: Clicking any row now correctly copies that specific row's timestamp
+
+#### 10. **Graceful Clipboard UX** ✅
+- **Issue**: Random clipboard content (URLs, text, etc.) immediately showed harsh error messages
+- **Solution**: 
+  - Added separate `info` state for gentle guidance vs `error` state for actual errors
+  - Differentiated between clipboard-loaded vs user-typed content
+  - Show helpful blue informational text for clipboard content instead of red errors
+  - Added pleasant light blue `#87ceeb` color for info messages
+- **Impact**: Much friendlier first impression when opening with random clipboard content
+
+#### 11. **Enhanced Keyboard Navigation** ✅
+- **Issue**: Limited navigation options (only Up/Down arrows)
+- **Solution**: 
+  - Added Left/Right arrow keys for navigation
+  - Added Tab/Shift+Tab for accessibility compliance
+  - Updated hint text to reflect all available shortcuts
+- **Impact**: Better accessibility and accommodates different user preferences
+
+#### 12. **Visual Polish** ✅
+- **Issue**: Harsh blue "Parsing..." text looked jarring against dark theme
+- **Solution**: Changed loading text color from `#0078d4` to `#aaa` for better aesthetic
+- **Impact**: More pleasant and cohesive dark theme appearance
+
 ### 🔍 **Current Issues & Improvement Areas**
 
 #### **UI/UX Improvements**
-1. ✅ **Relative Time Display**: ~~Shows "in X hours" instead of proper "days/months/years" like Discord~~ **COMPLETED** (implemented Discord-style with Moment.js)
+1. ✅ **Relative Time Display**: ~~Shows "in X hours" instead of proper "days/months/years" like Discord~~ **COMPLETED**
 2. ✅ **Click to Copy**: ~~Remove copy button icon, just click row to copy and close~~ **COMPLETED**
 3. ✅ **Window Height**: ~~Expand window to show all formats, remove up/down scrolling~~ **COMPLETED**
-4. **Focus Management**: Auto-close when window loses focus (configurable setting)
+4. ✅ **Mouseover Selection**: ~~Click was using wrong row due to async state~~ **COMPLETED**
+5. ✅ **Clipboard UX**: ~~Harsh errors for random clipboard content~~ **COMPLETED**
+6. ✅ **Keyboard Navigation**: ~~Limited to Up/Down arrows only~~ **COMPLETED**
+7. ✅ **Visual Polish**: ~~Harsh blue "Parsing..." text~~ **COMPLETED**
+8. **Focus Management**: Auto-close when window loses focus (configurable setting)
 
 #### **LLM & Parsing Issues**  
 5. **Date Interpretation**: "2 mondays from now at noon" returned 3 mondays away
@@ -282,6 +316,7 @@ src-tauri/
 - **Clipboard**: `tauri-plugin-clipboard-manager`
 - **AI Processing**: OpenAI GPT-4o-mini via `openai` npm package
 - **Fallback Parser**: `chrono-node` for offline parsing
+- **Time Formatting**: `moment` ^2.30.1 for Discord-style relative time display
 
 ## Development Commands
 ```bash
@@ -312,5 +347,6 @@ npm run dev
 
 ---
 
-**Status**: ✅ **Highly Polished MVP with Advanced UI/UX Complete**
-**Next Steps**: Implement remaining features (focus management, relative time display, settings system), then production features (installer, system tray, auto-updater) 
+**Status**: ✅ **Feature-Complete MVP - Superior to Original Hammer Time**
+**Achievement**: Fully functional Discord timestamp converter with advanced UI/UX polish, LLM integration, and comprehensive keyboard navigation
+**Next Steps**: Backend API implementation for secure OpenAI key management, then production features (installer, system tray, auto-updater)
