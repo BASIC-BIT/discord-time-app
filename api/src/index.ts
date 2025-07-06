@@ -1,9 +1,10 @@
-import fastify from 'fastify';
+import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { ParseRequest, ParseResponse, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
+import { ParseRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
 import { db, getDatabase } from './database';
 import { createOpenAIParser } from './openai';
+import { parseFallback } from './parse';
 
 /**
  * Create Fastify server instance
@@ -31,7 +32,7 @@ function createLoggerConfig() {
   }
 }
 
-const server = fastify({
+const server = Fastify({
   logger: createLoggerConfig(),
   trustProxy: true,
 });
@@ -56,23 +57,23 @@ server.register(rateLimit, {
  */
 const parseRequestSchema = {
   type: 'object',
+  required: ['text'],
   properties: {
-    text: { type: 'string', maxLength: 512 },
-    tz: { type: 'string' }
-  },
-  required: ['text', 'tz'],
-  additionalProperties: false
-};
+    text: { type: 'string', minLength: 1 },
+    tz: { type: 'string', default: 'UTC' }
+  }
+} as const;
 
 const parseResponseSchema = {
   type: 'object',
+  required: ['epoch', 'suggestedFormatIndex', 'confidence', 'method'],
   properties: {
     epoch: { type: 'number' },
-    suggestedFormatIndex: { type: 'number', minimum: 0, maximum: 6 },
-    confidence: { type: 'number', minimum: 0, maximum: 1 }
-  },
-  required: ['epoch', 'suggestedFormatIndex', 'confidence']
-};
+    suggestedFormatIndex: { type: 'number' },
+    confidence: { type: 'number' },
+    method: { type: 'string' }
+  }
+} as const;
 
 const errorResponseSchema = {
   type: 'object',
@@ -138,90 +139,98 @@ server.get('/health', async (_request, reply) => {
 });
 
 /**
- * Parse endpoint
+ * Parse endpoint with OpenAI + chrono-node fallback
  */
-server.post<{
-  Body: ParseRequest;
-  Reply: ParseResponse | ErrorResponse;
-}>('/parse', {
+server.post<{ Body: ParseRequest }>('/parse', {
   schema: {
     body: parseRequestSchema,
     response: {
       200: parseResponseSchema,
       400: errorResponseSchema,
-      401: errorResponseSchema,
-      429: errorResponseSchema,
       500: errorResponseSchema
     }
   }
 }, async (request, reply) => {
-  const { text, tz } = request.body;
-  const clientIP = request.ip;
-  
+  const { text, tz = 'UTC' } = request.body;
+
   try {
-    // Validate input
-    if (!text.trim()) {
-      const error: ErrorResponse = {
-        error: 'bad_request',
-        message: 'Text cannot be empty'
-      };
-      reply.status(400).send(error);
-      return;
+    let epoch: number | null = null;
+    let suggestedFormatIndex = 4; // Default to :f format
+    let confidence = 0.5;
+    let method = 'fallback';
+
+    // Try OpenAI parsing first (if API key available)
+    if (config.openaiApiKey) {
+      try {
+        const openaiParser = createOpenAIParser(config.openaiApiKey);
+        const llmResult = await openaiParser.parseTime(text, tz);
+        
+        console.log('LLM Result:', llmResult);
+        
+        // Use chrono-node to parse the normalized text
+        const normalizedEpoch = parseFallback(llmResult.normalizedText);
+        
+        if (normalizedEpoch) {
+          epoch = normalizedEpoch;
+          suggestedFormatIndex = llmResult.suggestedFormatIndex;
+          confidence = llmResult.confidence;
+          method = 'openai';
+        } else {
+          // If normalized text fails, try original text as fallback
+          const fallbackEpoch = parseFallback(text);
+          if (fallbackEpoch) {
+            epoch = fallbackEpoch;
+            suggestedFormatIndex = llmResult.suggestedFormatIndex;
+            confidence = llmResult.confidence * 0.7; // Reduce confidence
+            method = 'openai-fallback';
+          }
+        }
+      } catch (openaiError) {
+        console.error('OpenAI parsing failed:', openaiError);
+        // Fall through to chrono-node fallback
+      }
     }
 
-    // Create OpenAI parser
-    const parser = createOpenAIParser(config.openaiApiKey);
-    
-    // Parse using OpenAI
-    const result = await parser.parseTime(text.trim(), tz);
-    
-    // Log usage to database
+    // Fallback to chrono-node only if OpenAI failed
+    if (epoch === null) {
+      epoch = parseFallback(text);
+      if (epoch) {
+        confidence = 0.7; // Medium confidence for fallback
+        method = 'fallback';
+      }
+    }
+
+    // If all parsing failed
+    if (epoch === null) {
+      return reply.status(400).send({
+        error: 'Could not parse time expression',
+        message: 'Unable to understand the time expression. Please try being more specific.'
+      });
+    }
+
+    // Log successful parse
     db.logUsage({
-      text: text.trim(),
-      tz: tz,
-      epoch: result.epoch,
-      format: result.suggestedFormatIndex,
-      conf: result.confidence,
-      ip: clientIP
+      text,
+      tz,
+      epoch,
+      format: suggestedFormatIndex,
+      conf: confidence,
+      ip: request.ip
     });
 
-    // Return response
-    reply.send({
-      epoch: result.epoch,
-      suggestedFormatIndex: result.suggestedFormatIndex,
-      confidence: result.confidence
-    });
+    return {
+      epoch,
+      suggestedFormatIndex,
+      confidence,
+      method
+    };
 
   } catch (error) {
-    server.log.error('Parse error:', error);
-    
-    // Handle different error types
-    if (error instanceof Error) {
-      if (error.message.includes('API key')) {
-        const errorResponse: ErrorResponse = {
-          error: 'server_error',
-          message: 'OpenAI API configuration error'
-        };
-        reply.status(500).send(errorResponse);
-        return;
-      }
-      
-      if (error.message.includes('rate limit')) {
-        const errorResponse: ErrorResponse = {
-          error: 'server_error',
-          message: 'External API rate limit exceeded'
-        };
-        reply.status(500).send(errorResponse);
-        return;
-      }
-    }
-    
-    // Generic server error
-    const errorResponse: ErrorResponse = {
-      error: 'server_error',
-      message: 'Failed to parse time expression'
-    };
-    reply.status(500).send(errorResponse);
+    console.error('Parse endpoint error:', error);
+    return reply.status(500).send({
+      error: 'Internal server error',
+      message: 'An unexpected error occurred while parsing the time expression'
+    });
   }
 });
 

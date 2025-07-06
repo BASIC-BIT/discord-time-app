@@ -13,6 +13,7 @@ export interface ParseResponse {
   epoch: number;
   suggestedFormatIndex: number;
   confidence: number;
+  method: string;
 }
 
 // Error response interface
@@ -33,11 +34,14 @@ export interface UsageRecord {
   ts: string;
 }
 
-// OpenAI response interface
+/**
+ * OpenAI parsing result structure
+ */
 export interface OpenAIParseResult {
-  epoch: number;
+  normalizedText: string;
   suggestedFormatIndex: number;
   confidence: number;
+  reasoning: string;
 }
 
 // Environment variables interface
