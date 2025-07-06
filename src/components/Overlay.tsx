@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
 import { Row } from './Row';
 import { formats } from '../lib/formats';
 import { parseWithLLM, getUserTimezone, LLMResponse } from '../lib/prompt';

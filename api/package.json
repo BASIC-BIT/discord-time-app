@@ -1,0 +1,33 @@
+{
+  "name": "hammertime-api",
+  "version": "1.0.0",
+  "description": "Time-Parse API server for HammerTime Overlay",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc --strict",
+    "start": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["api", "discord", "timestamp", "time-parsing"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "@fastify/rate-limit": "^10.1.1",
+    "better-sqlite3": "^9.0.0",
+    "openai": "^5.8.2",
+    "ajv": "^8.12.0",
+    "ajv-formats": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/better-sqlite3": "^7.6.9",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.5",
+    "pino-pretty": "^11.0.0"
+  },
+  "engines": {
+    "node": ">=20.14.0"
+  }
+} 
