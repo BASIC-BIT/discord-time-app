@@ -3,7 +3,8 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { Row } from './Row';
 import { formats } from '../lib/formats';
-import { parseWithLLM, getUserTimezone, LLMResponse } from '../lib/prompt';
+import { getUserTimezone } from '../lib/prompt';
+import { createAPIClient } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 
@@ -203,13 +204,21 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      // Try LLM parsing first
-      const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-      let result: LLMResponse | null = null;
+      // Try backend API parsing first
+      const apiClient = createAPIClient();
+      let result: { epoch: number; suggestedFormatIndex: number; confidence: number; method: string } | null = null;
       
-      if (apiKey && apiKey !== 'your-openai-api-key-here') {
-        result = await parseWithLLM(text, timezone, stats, apiKey, abortController.signal);
-        console.log("LLM Result: ", result);
+      if (apiClient) {
+        try {
+          result = await apiClient.parseTime(text, timezone, abortController.signal);
+          console.log("API Result: ", result);
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            throw error; // Re-throw abort errors
+          }
+          console.error('API parsing failed:', error);
+          // Fall through to chrono-node fallback
+        }
       }
 
       // Check if request was cancelled after API call
@@ -217,30 +226,12 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      if (result) {
-        // LLM normalization successful - now parse the normalized text
-        console.log('LLM normalized:', result.normalizedText, 'Reasoning:', result.reasoning);
-        const normalizedEpoch = parseFallback(result.normalizedText);
-        if (normalizedEpoch) {
-          setEpoch(normalizedEpoch);
-          setSelectedIndex(result.suggestedFormatIndex);
-          setConfidence(result.confidence);
-        } else {
-          // If normalized text still fails, try original text as fallback
-          const fallbackEpoch = parseFallback(text);
-          if (fallbackEpoch) {
-            setEpoch(fallbackEpoch);
-            setSelectedIndex(result.suggestedFormatIndex);
-            setConfidence(result.confidence * 0.7); // Reduce confidence
-          } else {
-            setEpoch(null);
-            if (isFromClipboard) {
-              setInfo('Enter a date/time expression like "tomorrow at 2pm" or "next Friday"');
-            } else {
-              setError('Could not understand that time expression. Try something like "tomorrow at 2pm" or "next Friday".');
-            }
-          }
-        }
+      if (result && result.epoch) {
+        // API parsing successful - we already have the epoch
+        console.log('API parsed successfully:', result);
+        setEpoch(result.epoch);
+        setSelectedIndex(result.suggestedFormatIndex);
+        setConfidence(result.confidence);
       } else {
         // Fallback to chrono-node directly
         const fallbackEpoch = parseFallback(text);

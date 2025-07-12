@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+// OpenAI import removed - now using backend API
 
 export interface FormatStats {
   [key: string]: number;
@@ -80,95 +80,11 @@ Please normalize the user input into clear, unambiguous text that a date parser 
 }
 
 /**
- * Call OpenAI API to parse the timestamp
+ * DEPRECATED: Direct OpenAI API calls are no longer used
+ * This function is kept for reference but should not be called
+ * Use the backend API via api-client.ts instead
  */
-export async function parseWithLLM(
-  text: string,
-  timezone: string,
-  formatStats: FormatStats,
-  apiKey: string,
-  abortSignal?: AbortSignal
-): Promise<LLMResponse | null> {
-  try {
-    // Initialize OpenAI client
-    const openai = new OpenAI({
-      apiKey: apiKey,
-      dangerouslyAllowBrowser: true // Required for browser usage
-    });
-
-    const systemPrompt = buildSystemPrompt();
-    const userPrompt = buildUserPrompt(text, timezone, formatStats);
-
-    console.log('Making OpenAI API call...');
-    console.log('System prompt length:', systemPrompt.length);
-    console.log('User prompt:', userPrompt);
-
-    // Make API call with timeout and abort signal
-    const response = await Promise.race([
-      openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        max_tokens: 200,
-        temperature: 0.1,
-      }, {
-        signal: abortSignal // Pass abort signal to OpenAI
-      }),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('API timeout after 5 seconds')), 5000)
-      )
-    ]) as OpenAI.Chat.Completions.ChatCompletion;
-
-    console.log('OpenAI API call completed successfully');
-    console.log('Response:', response);
-
-    // Parse the response
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No content in API response');
-    }
-
-    console.log('Raw content:', content);
-
-    // Clean up the response and parse JSON
-    const cleanContent = content.trim();
-    const parsed = JSON.parse(cleanContent) as LLMResponse;
-
-    // Validate the response
-    if (
-      typeof parsed.normalizedText !== 'string' ||
-      typeof parsed.suggestedFormatIndex !== 'number' ||
-      typeof parsed.confidence !== 'number' ||
-      typeof parsed.reasoning !== 'string' ||
-      parsed.suggestedFormatIndex < 0 ||
-      parsed.suggestedFormatIndex > 6 ||
-      parsed.confidence < 0 ||
-      parsed.confidence > 1 ||
-      parsed.normalizedText.trim().length === 0
-    ) {
-      throw new Error('Invalid response format');
-    }
-
-    console.log('Parsed LLM response successfully:', parsed);
-    return parsed;
-  } catch (error) {
-    // Handle abort errors gracefully
-    if (error instanceof Error && error.name === 'AbortError') {
-      console.log('LLM request aborted');
-      return null;
-    }
-    
-    console.error('LLM parsing error:', error);
-    if (error instanceof Error) {
-      console.error('Error name:', error.name);
-      console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
-    }
-    return null;
-  }
-}
+// export async function parseWithLLM(...) - removed for security
 
 /**
  * Get the user's timezone
