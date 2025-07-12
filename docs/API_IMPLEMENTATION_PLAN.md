@@ -42,7 +42,7 @@ It includes every decision, version pin, schema, and guardrail we agreed on for 
 | **5. OpenAI call**       | `ts const client = new OpenAI(); const prompt = buildPrompt(body.text, body.tz); const res = await client.chat.completions.create({ model:'gpt-4o-mini', max_tokens:50, temperature:0, messages:[{role:'system',content:SYSTEM_PROMPT},{role:'user',content:prompt}]});` Parse JSON from `res.choices[0].message.content`. |
 | **6. Response & log**    | Return `{epoch,suggestedFormatIndex,confidence}`.<br>Insert row in `usage` table.                                                                                                                                                                                                                                          |
 | **7. Errors**            | `400` on validation fail; `401` on bad key; `429` via plugin; `500` on OpenAI/DB errors.                                                                                                                                                                                                                                   |
-| **8. Start**             | `app.listen({host:'0.0.0.0',port:8080})`.                                                                                                                                                                                                                                                                                  |
+| **8. Start**             | `app.listen({host:'0.0.0.0',port:8857})`.                                                                                                                                                                                                                                                                                  |
 | **9. Docker (optional)** | `FROM node:20-slim`, copy dist, `CMD ["node","dist/index.js"]`.                                                                                                                                                                                                                                                            |
 
 ---
@@ -123,7 +123,7 @@ components:
 | ---------------- | ------------------------------------------------- |
 | `OPENAI_API_KEY` | Secret for upstream LLM                           |
 | `STATIC_API_KEY` | Must equal client header value (`STATIC_KEY_123`) |
-| `PORT` *(opt)*   | Override default 8080                             |
+| `PORT` *(opt)*   | Override 8857                             |
 
 ---
 
