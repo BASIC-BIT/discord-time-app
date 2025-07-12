@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Row } from './Row';
 import { formats } from '../lib/formats';
 import { getUserTimezone } from '../lib/prompt';
@@ -98,14 +98,7 @@ export function Overlay({ onClose }: OverlayProps) {
           }
         }, 10);
 
-        // Auto-resize window to fit content
-        setTimeout(async () => {
-          try {
-            await window.setSize(new LogicalSize(480, Math.max(document.body.scrollHeight, 100)));
-          } catch (error) {
-            console.error('Error resizing window:', error);
-          }
-        }, 100);
+        // Window size is now properly set in tauri.conf.json
       } catch (error) {
         console.error('Error initializing overlay:', error);
       }
@@ -153,21 +146,7 @@ export function Overlay({ onClose }: OverlayProps) {
     }
   }, [inputText]);
 
-  // Auto-resize window when content changes
-  useEffect(() => {
-    const resizeWindow = async () => {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 50)); // Wait for DOM update
-        const window = getCurrentWindow();
-        const contentHeight = document.body.scrollHeight;
-        await window.setSize(new LogicalSize(480, Math.max(contentHeight, 100)));
-      } catch (error) {
-        console.error('Error resizing window:', error);
-      }
-    };
-    
-    resizeWindow();
-  }, [epoch, loading, error, info]); // Resize when content changes
+  // Window resizing removed - now handled by proper height in tauri.conf.json
 
   // Cleanup on unmount
   useEffect(() => {

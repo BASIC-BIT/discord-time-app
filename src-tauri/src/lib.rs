@@ -1,7 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Emitter, menu::{MenuBuilder, MenuItemBuilder}, tray::TrayIconBuilder};
-use tauri_plugin_store::StoreExt;
+use tauri_plugin_store::{StoreExt, StoreBuilder};
 use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use single_instance::SingleInstance;
@@ -62,10 +62,19 @@ async fn increment_format_usage(_app: AppHandle, format: String) -> Result<(), S
 async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     log::debug!("Loading app settings");
     
-    let store = app.store("settings.json").map_err(|e| {
-        log::error!("Failed to access settings store: {}", e);
+    // Create store with explicit path builder
+    let store = tauri_plugin_store::StoreBuilder::new("settings.json")
+        .build(app.handle())
+        .map_err(|e| {
+            log::error!("Failed to build settings store: {}", e);
+            e.to_string()
+        })?;
+    
+    // Try to load the store from disk first
+    store.load().map_err(|e| {
+        log::warn!("Failed to load store from disk (this is normal on first run): {}", e);
         e.to_string()
-    })?;
+    }).ok();
     
     let settings = if let Some(settings_value) = store.get("settings") {
         match serde_json::from_value(settings_value.clone()) {
@@ -90,19 +99,25 @@ async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
 async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     log::info!("Saving app settings");
     
-    let store = app.store("settings.json").map_err(|e| {
-        log::error!("Failed to access settings store: {}", e);
-        e.to_string()
-    })?;
+    // Create store with explicit path builder
+    let store = tauri_plugin_store::StoreBuilder::new("settings.json")
+        .build(app.handle())
+        .map_err(|e| {
+            log::error!("Failed to build settings store: {}", e);
+            e.to_string()
+        })?;
     
     let settings_value = serde_json::to_value(&settings).map_err(|e| {
         log::error!("Failed to serialize settings: {}", e);
         e.to_string()
     })?;
     
-    store.set("settings", settings_value);
+    // Use set method with proper error handling
+    store.set("settings".to_string(), settings_value);
+    
+    // Explicitly save the store
     store.save().map_err(|e| {
-        log::error!("Failed to save settings: {}", e);
+        log::error!("Failed to save settings to disk: {}", e);
         e.to_string()
     })?;
     
@@ -201,6 +216,37 @@ async fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
     autostart_manager.is_enabled().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn debug_store_location(app: AppHandle) -> Result<String, String> {
+    use tauri::path::BaseDirectory;
+    use tauri::Manager;
+    
+    let mut debug_info = String::new();
+    
+    // Get various app directories
+    if let Ok(app_data) = app.path().app_data_dir() {
+        debug_info.push_str(&format!("AppData: {:?}\n", app_data));
+    }
+    
+    if let Ok(app_local_data) = app.path().app_local_data_dir() {
+        debug_info.push_str(&format!("AppLocalData: {:?}\n", app_local_data));
+    }
+    
+    if let Ok(app_config) = app.path().app_config_dir() {
+        debug_info.push_str(&format!("AppConfig: {:?}\n", app_config));
+    }
+    
+    // Try to get the actual store path
+    let store = StoreBuilder::new("settings.json")
+        .build(app.handle())
+        .map_err(|e| format!("Failed to build store: {}", e))?;
+    
+    // Get store path using the path method if available
+    debug_info.push_str("\nStore file should be in one of the above directories with filename: settings.json");
+    
+    Ok(debug_info)
+}
+
 fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     let show_item = MenuItemBuilder::with_id("show", "Show HammerOverlay")
         .enabled(true)
@@ -278,32 +324,59 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
     
     log::info!("Setting up global shortcuts");
     
-    let shortcuts = ["ctrl+shift+h", "ctrl+alt+h", "ctrl+shift+t", "ctrl+alt+t", "alt+shift+h"];
+    // Load user settings to get the preferred hotkey
+    let app_handle = app.clone();
+    let settings_result = tauri::async_runtime::block_on(async {
+        get_settings(app_handle).await
+    });
     
-    for shortcut in &shortcuts {
-        let plugin_result = (|| -> Result<_, Box<dyn std::error::Error>> {
-            let plugin = tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([*shortcut])?
-                .with_handler(|app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        log::debug!("Global shortcut activated: {}", _shortcut);
-                        show_main_window(app);
-                    }
-                })
-                .build();
-            
-            app.plugin(plugin)?;
-            Ok(())
-        })();
+    let hotkey = match settings_result {
+        Ok(settings) => settings.global_hotkey,
+        Err(e) => {
+            log::warn!("Failed to load settings for hotkey, using default: {}", e);
+            "ctrl+shift+h".to_string()
+        }
+    };
+    
+    log::info!("Attempting to register hotkey: {}", hotkey);
+    
+    let plugin_result = (|| -> Result<_, Box<dyn std::error::Error>> {
+        let plugin = tauri_plugin_global_shortcut::Builder::new()
+            .with_shortcuts([&hotkey])?
+            .with_handler(|app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    log::debug!("Global shortcut activated: {}", _shortcut);
+                    show_main_window(app);
+                }
+            })
+            .build();
         
-        match plugin_result {
-            Ok(_) => {
-                log::info!("Successfully registered global shortcut: {}", shortcut);
-                break;
-            }
-            Err(e) => {
-                log::warn!("Failed to register {}: {}", shortcut, e);
-                continue;
+        app.plugin(plugin)?;
+        Ok(())
+    })();
+    
+    match plugin_result {
+        Ok(_) => {
+            log::info!("Successfully registered global shortcut: {}", hotkey);
+        }
+        Err(e) => {
+            log::error!("Failed to register hotkey '{}': {}", hotkey, e);
+            
+            // Try default hotkey as fallback
+            if hotkey != "ctrl+shift+h" {
+                log::info!("Attempting to register default hotkey as fallback");
+                let fallback_plugin = tauri_plugin_global_shortcut::Builder::new()
+                    .with_shortcuts(["ctrl+shift+h"])?
+                    .with_handler(|app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            log::debug!("Global shortcut activated: {}", _shortcut);
+                            show_main_window(app);
+                        }
+                    })
+                    .build();
+                
+                app.plugin(fallback_plugin)?;
+                log::info!("Successfully registered fallback hotkey: ctrl+shift+h");
             }
         }
     }
@@ -346,6 +419,7 @@ pub fn run() {
             install_update,
             toggle_autostart,
             is_autostart_enabled,
+            debug_store_location,
         ])
         .setup(|app| {
             // Initialize logging

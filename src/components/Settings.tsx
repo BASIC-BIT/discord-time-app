@@ -121,17 +121,14 @@ export function Settings({ onClose }: SettingsProps) {
             <h3>Global Hotkey</h3>
             <div className="setting-item">
               <label htmlFor="hotkey">Hotkey to show overlay:</label>
-              <select
+              <input
+                type="text"
                 id="hotkey"
                 value={settings.global_hotkey}
                 onChange={(e) => handleSettingChange('global_hotkey', e.target.value)}
-              >
-                <option value="ctrl+shift+h">Ctrl+Shift+H</option>
-                <option value="ctrl+alt+h">Ctrl+Alt+H</option>
-                <option value="ctrl+shift+t">Ctrl+Shift+T</option>
-                <option value="ctrl+alt+t">Ctrl+Alt+T</option>
-                <option value="alt+shift+h">Alt+Shift+H</option>
-              </select>
+                placeholder="e.g., ctrl+shift+h"
+                className="hotkey-input"
+              />
             </div>
           </div>
 
@@ -159,7 +156,7 @@ export function Settings({ onClose }: SettingsProps) {
                 checked={settings.use_llm_parsing}
                 onChange={(e) => handleSettingChange('use_llm_parsing', e.target.checked)}
               />
-              <span>Use AI parsing for better time understanding (requires API key)</span>
+              <span>Use AI parsing for better time understanding</span>
             </label>
           </div>
 
