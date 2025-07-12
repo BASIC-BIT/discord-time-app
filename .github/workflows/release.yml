@@ -1,0 +1,237 @@
+name: 'Build and Release'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        default: 'v0.1.0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest]
+        
+    runs-on: ${{ matrix.platform }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Extract version from tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_ENV
+          echo "Building version: $VERSION"
+
+      - name: Update version in files
+        shell: bash
+        run: |
+          # Update package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ env.VERSION_NUMBER }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+          
+          # Update Cargo.toml
+          sed -i 's/^version = ".*"/version = "${{ env.VERSION_NUMBER }}"/' src-tauri/Cargo.toml
+          
+          # Update tauri.conf.json
+          node -e "
+            const fs = require('fs');
+            const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+            config.version = '${{ env.VERSION_NUMBER }}';
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2));
+          "
+
+      - name: Build Tauri application
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        run: |
+          npm run tauri build
+
+      - name: Code sign (Windows)
+        if: matrix.platform == 'windows-latest'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: powershell
+        run: |
+          # Only sign if certificate is available
+          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
+            Write-Host "No signing certificate provided - skipping code signing"
+            exit 0
+          }
+          
+          # Decode certificate
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [IO.File]::WriteAllBytes("certificate.p12", $bytes)
+          
+          # Sign the MSI
+          $msiPath = Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Name "*.msi" | Select-Object -First 1
+          if ($msiPath) {
+            $fullPath = "src-tauri/target/release/bundle/msi/$msiPath"
+            signtool sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $fullPath
+            Write-Host "Signed: $fullPath"
+          } else {
+            Write-Host "No MSI file found to sign"
+          }
+          
+          # Clean up certificate
+          Remove-Item certificate.p12
+
+      - name: Generate update manifest
+        shell: bash
+        run: |
+          # Find the MSI file
+          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
+          MSI_NAME=$(basename "$MSI_PATH")
+          
+          # Generate signature if we have the private key
+          if [ -n "${{ secrets.TAURI_PRIVATE_KEY }}" ]; then
+            SIGNATURE=$(cat "$MSI_PATH" | openssl dgst -sha256 -sign <(echo "${{ secrets.TAURI_PRIVATE_KEY }}") | openssl base64 -A)
+          else
+            SIGNATURE=""
+          fi
+          
+          # Create update manifest
+          cat > updater/latest.json << EOF
+          {
+            "version": "${{ env.VERSION_NUMBER }}",
+            "notes": "Release ${{ env.VERSION }}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$SIGNATURE",
+                "url": "https://github.com/BASIC-BIT/discord-time-app/releases/download/${{ env.VERSION }}/$MSI_NAME"
+              }
+            }
+          }
+          EOF
+          
+          echo "Generated update manifest:"
+          cat updater/latest.json
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.VERSION }}
+          release_name: HammerOverlay ${{ env.VERSION }}
+          body: |
+            ## HammerOverlay ${{ env.VERSION }}
+            
+            ### Download
+            - **Windows:** Download the `.msi` installer below
+            
+            ### What's New
+            - System tray integration with professional menu
+            - Comprehensive settings management
+            - Auto-updater system with user control
+            - Auto-start functionality for Windows boot
+            - Production-grade logging and error handling
+            - Single instance prevention
+            
+            ### Installation
+            1. Download `HammerOverlay_${{ env.VERSION_NUMBER }}_x64_en-US.msi`
+            2. Run the installer (you may see a Windows SmartScreen warning - click "More info" then "Run anyway")
+            3. The app will start in your system tray
+            4. Use `Ctrl+Shift+H` to open the overlay
+            
+            ### System Requirements
+            - Windows 10 or later (x64)
+            - .NET Framework 4.8 or later (usually pre-installed)
+            
+            ---
+            
+            **Full Changelog**: https://github.com/BASIC-BIT/discord-time-app/compare/v0.0.1...${{ env.VERSION }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Assets
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find and upload MSI
+          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
+          if [ -f "$MSI_PATH" ]; then
+            MSI_NAME=$(basename "$MSI_PATH")
+            echo "Uploading MSI: $MSI_NAME"
+            
+            gh release upload ${{ env.VERSION }} "$MSI_PATH" --clobber
+          fi
+          
+          # Upload update manifest
+          echo "Uploading update manifest"
+          gh release upload ${{ env.VERSION }} updater/latest.json --clobber
+
+      - name: Update latest release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Copy the update manifest to latest.json for the updater
+          cp updater/latest.json latest.json
+          gh release upload ${{ env.VERSION }} latest.json --clobber
+
+      - name: Print build summary
+        shell: bash
+        run: |
+          echo "🎉 Build completed successfully!"
+          echo "📦 Version: ${{ env.VERSION }}"
+          echo "🏠 Repository: BASIC-BIT/discord-time-app"
+          echo "🔗 Release: https://github.com/BASIC-BIT/discord-time-app/releases/tag/${{ env.VERSION }}"
+          echo ""
+          echo "📝 Next steps:"
+          echo "1. Verify the release assets were uploaded correctly"
+          echo "2. Test the auto-updater with the new version"
+          echo "3. Announce the release to users"
+          
+          # List uploaded files
+          echo ""
+          echo "📁 Uploaded files:"
+          find src-tauri/target/release/bundle/ -name "*.msi" -exec basename {} \;
+          echo "latest.json (update manifest)" 

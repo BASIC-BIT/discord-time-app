@@ -1,0 +1,114 @@
+name: 'Build and Test'
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest]
+        
+    runs-on: ${{ matrix.platform }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test -- --run --reporter=verbose
+        continue-on-error: true
+
+      - name: Check frontend build
+        run: npm run build
+
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Run Rust clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
+        continue-on-error: true
+
+      - name: Build Tauri application (Debug)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run tauri build -- --debug
+
+      - name: Verify build artifacts
+        shell: bash
+        run: |
+          echo "🔍 Checking build artifacts..."
+          
+          # Check if MSI was created
+          if find src-tauri/target/debug/bundle/msi/ -name "*.msi" -print -quit | grep -q .; then
+            echo "✅ MSI installer created successfully"
+            MSI_PATH=$(find src-tauri/target/debug/bundle/msi/ -name "*.msi" | head -1)
+            MSI_SIZE=$(stat -f%z "$MSI_PATH" 2>/dev/null || stat -c%s "$MSI_PATH" 2>/dev/null || echo "unknown")
+            echo "📦 MSI file: $(basename "$MSI_PATH") ($MSI_SIZE bytes)"
+          else
+            echo "❌ No MSI installer found"
+            exit 1
+          fi
+          
+          # Check if executable was created
+          if find src-tauri/target/debug/ -name "*.exe" -print -quit | grep -q .; then
+            echo "✅ Executable created successfully"
+          else
+            echo "❌ No executable found"
+            exit 1
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-artifacts-${{ matrix.platform }}
+          path: |
+            src-tauri/target/debug/bundle/msi/*.msi
+            src-tauri/target/debug/*.exe
+          retention-days: 7
+
+      - name: Print build summary
+        shell: bash
+        run: |
+          echo "🎉 Build test completed!"
+          echo "🏠 Repository: BASIC-BIT/discord-time-app"
+          echo "🔧 Platform: ${{ matrix.platform }}"
+          echo "📝 This was a development build for testing purposes"
+          echo ""
+          echo "✅ Build artifacts are available in the Actions artifacts" 

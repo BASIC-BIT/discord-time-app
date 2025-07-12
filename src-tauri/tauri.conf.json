@@ -49,6 +49,26 @@
     },
     "sql": {
       "preload": ["sqlite:hammer_overlay.db"]
+    },
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/BASIC-BIT/discord-time-app/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": ""
+    },
+    "log": {
+      "targets": [
+        {
+          "target": "LogTarget::Folder",
+          "level": "Info"
+        },
+        {
+          "target": "LogTarget::Stdout",
+          "level": "Debug"
+        }
+      ]
     }
   }
 }

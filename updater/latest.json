@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "notes": "Initial release with system tray, settings, and auto-update support",
+  "pub_date": "2024-01-15T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "",
+      "url": "https://github.com/BASIC-BIT/discord-time-app/releases/latest/download/HammerOverlay_0.1.0_x64_en-US.msi"
+    }
+  }
+} 

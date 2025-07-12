@@ -1,6 +1,10 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Emitter, menu::{MenuBuilder, MenuItemBuilder}, tray::TrayIconBuilder};
+use tauri_plugin_store::StoreExt;
+use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use single_instance::SingleInstance;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FormatStats {
@@ -11,6 +15,29 @@ pub struct FormatStats {
     pub f: u32,
     pub F: u32,
     pub R: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub auto_start: bool,
+    pub global_hotkey: String,
+    pub auto_close_on_focus_loss: bool,
+    pub auto_load_clipboard: bool,
+    pub use_llm_parsing: bool,
+    pub theme: String, // "dark", "light", "system"
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            auto_start: false,
+            global_hotkey: "ctrl+shift+h".to_string(),
+            auto_close_on_focus_loss: false,
+            auto_load_clipboard: true,
+            use_llm_parsing: true,
+            theme: "dark".to_string(),
+        }
+    }
 }
 
 #[tauri::command]
@@ -31,57 +58,338 @@ async fn increment_format_usage(_app: AppHandle, format: String) -> Result<(), S
     Ok(())
 }
 
+#[tauri::command]
+async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
+    log::debug!("Loading app settings");
+    
+    let store = app.store("settings.json").map_err(|e| {
+        log::error!("Failed to access settings store: {}", e);
+        e.to_string()
+    })?;
+    
+    let settings = if let Some(settings_value) = store.get("settings") {
+        match serde_json::from_value(settings_value.clone()) {
+            Ok(settings) => {
+                log::debug!("Successfully loaded settings from store");
+                settings
+            }
+            Err(e) => {
+                log::warn!("Failed to parse settings, using defaults: {}", e);
+                AppSettings::default()
+            }
+        }
+    } else {
+        log::info!("No settings found, using defaults");
+        AppSettings::default()
+    };
+    
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
+    log::info!("Saving app settings");
+    
+    let store = app.store("settings.json").map_err(|e| {
+        log::error!("Failed to access settings store: {}", e);
+        e.to_string()
+    })?;
+    
+    let settings_value = serde_json::to_value(&settings).map_err(|e| {
+        log::error!("Failed to serialize settings: {}", e);
+        e.to_string()
+    })?;
+    
+    store.set("settings", settings_value);
+    store.save().map_err(|e| {
+        log::error!("Failed to save settings: {}", e);
+        e.to_string()
+    })?;
+    
+    log::info!("Settings saved successfully");
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> Result<bool, String> {
+    log::info!("Checking for updates");
+    
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    log::info!("Update available: {}", update.version);
+                    Ok(true)
+                }
+                Ok(None) => {
+                    log::info!("No updates available");
+                    Ok(false)
+                }
+                Err(e) => {
+                    log::error!("Error checking for updates: {}", e);
+                    Err(format!("Failed to check for updates: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Updater not available: {}", e);
+            Err(format!("Updater not available: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    match update.download_and_install(
+                        |_chunk_length, _content_length| {},
+                        || {}
+                    ).await {
+                        Ok(_) => {
+                            log::info!("Update installed successfully");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Error installing update: {}", e);
+                            Err(format!("Failed to install update: {}", e))
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::info!("No update available to install");
+                    Err("No update available".to_string())
+                }
+                Err(e) => {
+                    log::error!("Error checking for update: {}", e);
+                    Err(format!("Failed to check for update: {}", e))
+                }
+            }
+        }
+        Err(e) => Err(format!("Updater not available: {}", e)),
+    }
+}
+
+#[tauri::command]
+async fn toggle_autostart(app: AppHandle, enable: bool) -> Result<(), String> {
+    let autostart_manager = app.autolaunch();
+    
+    if enable {
+        log::info!("Enabling auto-start");
+        autostart_manager.enable().map_err(|e| {
+            log::error!("Failed to enable auto-start: {}", e);
+            e.to_string()
+        })?;
+        log::info!("Auto-start enabled successfully");
+    } else {
+        log::info!("Disabling auto-start");
+        autostart_manager.disable().map_err(|e| {
+            log::error!("Failed to disable auto-start: {}", e);
+            e.to_string()
+        })?;
+        log::info!("Auto-start disabled successfully");
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    let autostart_manager = app.autolaunch();
+    autostart_manager.is_enabled().map_err(|e| e.to_string())
+}
+
+fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
+    let show_item = MenuItemBuilder::with_id("show", "Show HammerOverlay")
+        .enabled(true)
+        .build(app)?;
+    let settings_item = MenuItemBuilder::with_id("settings", "Settings")
+        .enabled(true)
+        .build(app)?;
+    let check_updates_item = MenuItemBuilder::with_id("check_updates", "Check for Updates")
+        .enabled(true)
+        .build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "Quit")
+        .enabled(true)
+        .build(app)?;
+    
+    MenuBuilder::new(app)
+        .item(&show_item)
+        .item(&settings_item)
+        .item(&check_updates_item)
+        .item(&quit_item)
+        .build()
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.set_always_on_top(true);
+        let _ = window.center();
+    }
+}
+
+fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!("Setting up system tray");
+    
+    let menu = create_system_tray_menu(app)?;
+    
+    let _tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .tooltip("HammerOverlay - Discord Timestamp Converter")
+        .on_menu_event(|app, event| {
+            log::debug!("System tray menu event: {}", event.id.as_ref());
+            
+            match event.id.as_ref() {
+                "show" => {
+                    log::info!("Show window requested from system tray");
+                    show_main_window(app);
+                }
+                "settings" => {
+                    log::info!("Settings requested from system tray");
+                    show_main_window(app);
+                    let _ = app.emit("show-settings", ());
+                }
+                "check_updates" => {
+                    log::info!("Update check requested from system tray");
+                    show_main_window(app);
+                    let _ = app.emit("show-update-checker", ());
+                }
+                "quit" => {
+                    log::info!("Application exit requested from system tray");
+                    app.exit(0);
+                }
+                _ => {
+                    log::warn!("Unknown system tray menu event: {}", event.id.as_ref());
+                }
+            }
+        })
+        .build(app)?;
+    
+    log::info!("System tray setup completed");
+    Ok(())
+}
+
+fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri_plugin_global_shortcut::ShortcutState;
+    
+    log::info!("Setting up global shortcuts");
+    
+    let shortcuts = ["ctrl+shift+h", "ctrl+alt+h", "ctrl+shift+t", "ctrl+alt+t", "alt+shift+h"];
+    
+    for shortcut in &shortcuts {
+        let plugin_result = (|| -> Result<_, Box<dyn std::error::Error>> {
+            let plugin = tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts([*shortcut])?
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        log::debug!("Global shortcut activated: {}", _shortcut);
+                        show_main_window(app);
+                    }
+                })
+                .build();
+            
+            app.plugin(plugin)?;
+            Ok(())
+        })();
+        
+        match plugin_result {
+            Ok(_) => {
+                log::info!("Successfully registered global shortcut: {}", shortcut);
+                break;
+            }
+            Err(e) => {
+                log::warn!("Failed to register {}: {}", shortcut, e);
+                continue;
+            }
+        }
+    }
+    
+    log::info!("Global shortcuts setup completed");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Check for single instance
+    let instance = SingleInstance::new("hammer-overlay-app").unwrap();
+    if !instance.is_single() {
+        log::warn!("Another instance of HammerOverlay is already running");
+        eprintln!("HammerOverlay is already running!");
+        
+        // Try to show the existing instance window
+        // This would require implementing inter-process communication
+        // For now, just exit gracefully
+        std::process::exit(1);
+    }
+    
+    log::info!("Single instance check passed");
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
+        .plugin(tauri_plugin_log::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             init_stats_db,
             get_format_stats,
             increment_format_usage,
+            get_settings,
+            save_settings,
+            check_for_updates,
+            install_update,
+            toggle_autostart,
+            is_autostart_enabled,
         ])
         .setup(|app| {
-            // Register global shortcut plugin with handler
-            use tauri_plugin_global_shortcut::ShortcutState;
+            // Initialize logging
+            log::info!("HammerOverlay starting up...");
+            log::info!("Application version: {}", env!("CARGO_PKG_VERSION"));
             
-            let shortcuts = ["ctrl+shift+h", "ctrl+alt+h", "ctrl+shift+t", "ctrl+alt+t", "alt+shift+h"];
-            
-            // Try to register shortcuts with handler
-            for shortcut in &shortcuts {
-                // Build the plugin using the exact pattern from the documentation
-                let plugin_result = (|| -> Result<_, Box<dyn std::error::Error>> {
-                    let plugin = tauri_plugin_global_shortcut::Builder::new()
-                        .with_shortcuts([*shortcut])?
-                        .with_handler(|app, _shortcut, event| {
-                            if event.state == ShortcutState::Pressed {
-                                if let Some(window) = app.get_webview_window("main") {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                    let _ = window.set_always_on_top(true);
-                                    let _ = window.center();
-                                }
-                            }
-                        })
-                        .build();
-                    
-                    app.handle().plugin(plugin)?;
-                    Ok(())
-                })();
-                
-                match plugin_result {
-                    Ok(_) => {
-                        println!("Successfully registered global shortcut: {}", shortcut);
-                        break;
-                    }
-                    Err(e) => {
-                        println!("Failed to register {}: {}", shortcut, e);
-                        continue;
-                    }
-                }
+            // Set up system tray
+            if let Err(e) = setup_system_tray(app.handle()) {
+                log::error!("Failed to setup system tray: {}", e);
+                eprintln!("Failed to setup system tray: {}", e);
             }
             
+            // Set up global shortcuts
+            if let Err(e) = setup_global_shortcuts(app.handle()) {
+                log::error!("Failed to setup global shortcuts: {}", e);
+                eprintln!("Failed to setup global shortcuts: {}", e);
+            }
+            
+            // Initialize auto-start based on user settings
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(settings) = get_settings(app_handle.clone()).await {
+                    if settings.auto_start {
+                        if let Err(e) = toggle_autostart(app_handle, true).await {
+                            log::warn!("Failed to enable auto-start: {}", e);
+                        } else {
+                            log::info!("Auto-start enabled based on user settings");
+                        }
+                    }
+                }
+            });
+            
+            // Single instance check completed during app initialization
+            log::debug!("Single instance enforcement active");
+            
+            // Hide window by default (start in system tray)
+            if let Some(window) = app.get_webview_window("main") {
+                log::info!("Hiding main window on startup");
+                let _ = window.hide();
+            } else {
+                log::warn!("Main window not found during startup");
+            }
+            
+            log::info!("HammerOverlay startup completed successfully");
             Ok(())
         })
         .run(tauri::generate_context!())
