@@ -25,14 +25,14 @@ npm install
 npm run dev
 ```
 
-The API will start on http://localhost:8080 (default port)
+The API will start on http://localhost:8857
 
 ### 3. Frontend Configuration
 
 In the root directory, update `.env`:
 
 ```env
-VITE_API_BASE_URL=http://localhost:8080
+VITE_API_BASE_URL=http://localhost:8857
 VITE_API_KEY=<same as STATIC_API_KEY from backend>
 ```
 

@@ -3,7 +3,7 @@
 # Simple API test script
 # Tests the HammerTime API endpoints
 
-BASE_URL="http://localhost:8080"
+BASE_URL="http://localhost:8857"
 API_KEY="STATIC_KEY_123"
 
 echo "🧪 Testing HammerTime API"

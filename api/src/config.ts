@@ -18,7 +18,7 @@ export class Config {
     return {
       OPENAI_API_KEY: this.getEnvVar('OPENAI_API_KEY'),
       STATIC_API_KEY: this.getEnvVar('STATIC_API_KEY', 'STATIC_KEY_123'),
-      PORT: parseInt(this.getEnvVar('PORT', '8080'), 10),
+      PORT: parseInt(this.getEnvVar('PORT', '8857'), 10),
       DB_PATH: this.getEnvVar('DB_PATH', 'usage.db')
     };
   }

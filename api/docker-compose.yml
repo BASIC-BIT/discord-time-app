@@ -6,19 +6,19 @@ services:
     container_name: hammertime-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8857:8857"
     environment:
       - NODE_ENV=production
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - STATIC_API_KEY=${STATIC_API_KEY:-STATIC_KEY_123}
-      - PORT=8080
+      - PORT=8857
       - DB_PATH=/app/data/usage.db
     volumes:
       - ./data:/app/data
     networks:
       - hammertime-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8857/health"]
       interval: 30s
       timeout: 10s
       retries: 3

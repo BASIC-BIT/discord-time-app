@@ -62,8 +62,8 @@ OPENAI_API_KEY=sk-your-openai-api-key-here
 # API authentication key (must match client header)
 STATIC_API_KEY=STATIC_KEY_123
 
-# Server port (optional, defaults to 8080)
-PORT=8080
+# Server port (optional, defaults to 8857)
+PORT=8857
 
 # Database path (optional, defaults to usage.db)
 DB_PATH=usage.db
@@ -126,7 +126,7 @@ Health check endpoint for monitoring.
   "config": {
     "OPENAI_API_KEY": "sk-proj...",
     "STATIC_API_KEY": "STATIC...",
-    "PORT": 8080,
+    "PORT": 8857,
     "DB_PATH": "usage.db"
   }
 }
@@ -195,7 +195,7 @@ All errors follow a consistent format:
 
 3. **Check health:**
    ```bash
-   curl http://localhost:8080/health
+   curl http://localhost:8857/health
    ```
 
 ### Using Docker directly
@@ -209,7 +209,7 @@ All errors follow a consistent format:
    ```bash
    docker run -d \
      --name hammertime-api \
-     -p 8080:8080 \
+     -p 8857:8857 \
      -e OPENAI_API_KEY=sk-your-key \
      -e STATIC_API_KEY=STATIC_KEY_123 \
      -v $(pwd)/data:/app/data \
@@ -235,17 +235,17 @@ docker-compose --profile production up -d
 
 ```bash
 # Parse a time expression
-curl -X POST http://localhost:8080/parse \
+curl -X POST http://localhost:8857/parse \
   -H "X-API-Key: STATIC_KEY_123" \
   -H "X-API-Version: 1" \
   -H "Content-Type: application/json" \
   -d '{"text": "tomorrow at 2pm", "tz": "America/New_York"}'
 
 # Health check
-curl http://localhost:8080/health
+curl http://localhost:8857/health
 
 # Get usage stats
-curl http://localhost:8080/stats \
+curl http://localhost:8857/stats \
   -H "X-API-Key: STATIC_KEY_123" \
   -H "X-API-Version: 1"
 ```
@@ -265,7 +265,7 @@ interface ParseResponse {
 }
 
 async function parseTime(text: string, timezone: string): Promise<ParseResponse> {
-  const response = await fetch('http://localhost:8080/parse', {
+  const response = await fetch('http://localhost:8857/parse', {
     method: 'POST',
     headers: {
       'X-API-Key': 'STATIC_KEY_123',
@@ -384,7 +384,7 @@ For development, you can use a `.env` file:
 NODE_ENV=development
 OPENAI_API_KEY=sk-your-dev-key
 STATIC_API_KEY=dev-key-123
-PORT=8080
+PORT=8857
 DB_PATH=./dev-usage.db
 ```
 

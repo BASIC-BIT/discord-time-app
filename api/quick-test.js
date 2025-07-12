@@ -1,14 +1,14 @@
 // Quick test script for the HammerTime API
 const http = require('http');
 
-const API_BASE = 'http://localhost:8080';
+const API_BASE = 'http://localhost:8857';
 const API_KEY = 'STATIC_KEY_123';
 
 function makeRequest(path, method = 'GET', data = null) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
-      port: 8080,
+      port: 8857,
       path: path,
       method: method,
       headers: {
