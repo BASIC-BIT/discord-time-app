@@ -1,4 +1,6 @@
+import 'dotenv/config'; // Load .env file
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { ParseRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
@@ -35,6 +37,15 @@ function createLoggerConfig() {
 const server = Fastify({
   logger: createLoggerConfig(),
   trustProxy: true,
+});
+
+/**
+ * Register CORS plugin
+ */
+server.register(cors, {
+  origin: ['http://localhost:1420', 'tauri://localhost'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'x-api-key', 'x-api-version']
 });
 
 /**

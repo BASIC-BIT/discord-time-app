@@ -96,10 +96,17 @@ export function createAPIClient(): TimeParserAPIClient | null {
   const baseUrl = import.meta.env.VITE_API_BASE_URL;
   const apiKey = import.meta.env.VITE_API_KEY;
 
+  console.log('API Client Configuration:', {
+    baseUrl,
+    apiKey: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
+    env: import.meta.env
+  });
+
   if (!baseUrl || !apiKey) {
     console.warn('API configuration missing, backend parsing will be disabled');
     return null;
   }
 
+  console.log('Creating API client with base URL:', baseUrl);
   return new TimeParserAPIClient(baseUrl, apiKey);
 }

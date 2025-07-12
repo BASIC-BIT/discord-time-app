@@ -30,6 +30,10 @@
     ],
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.ico",
+      "tooltip": "HammerOverlay - Discord Timestamp Converter"
     }
   },
   "bundle": {
@@ -57,18 +61,6 @@
       ],
       "dialog": false,
       "pubkey": ""
-    },
-    "log": {
-      "targets": [
-        {
-          "target": "LogTarget::Folder",
-          "level": "Info"
-        },
-        {
-          "target": "LogTarget::Stdout",
-          "level": "Debug"
-        }
-      ]
     }
   }
 }
