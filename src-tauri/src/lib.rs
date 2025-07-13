@@ -1,9 +1,10 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Emitter, menu::{MenuBuilder, MenuItemBuilder}, tray::TrayIconBuilder};
-use tauri_plugin_store::{StoreExt, StoreBuilder};
+use tauri_plugin_store::StoreBuilder;
 use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use single_instance::SingleInstance;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,17 +63,17 @@ async fn increment_format_usage(_app: AppHandle, format: String) -> Result<(), S
 async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     log::debug!("Loading app settings");
     
-    // Create store with explicit path builder
-    let store = tauri_plugin_store::StoreBuilder::new("settings.json")
-        .build(app.handle())
+    // Create store with manager and path
+    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+        .build()
         .map_err(|e| {
             log::error!("Failed to build settings store: {}", e);
             e.to_string()
         })?;
     
-    // Try to load the store from disk first
-    store.load().map_err(|e| {
-        log::warn!("Failed to load store from disk (this is normal on first run): {}", e);
+    // Try to reload the store from disk first
+    store.reload().map_err(|e| {
+        log::warn!("Failed to reload store from disk (this is normal on first run): {}", e);
         e.to_string()
     }).ok();
     
@@ -99,9 +100,9 @@ async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
 async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     log::info!("Saving app settings");
     
-    // Create store with explicit path builder
-    let store = tauri_plugin_store::StoreBuilder::new("settings.json")
-        .build(app.handle())
+    // Create store with manager and path
+    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+        .build()
         .map_err(|e| {
             log::error!("Failed to build settings store: {}", e);
             e.to_string()
@@ -193,11 +194,23 @@ async fn toggle_autostart(app: AppHandle, enable: bool) -> Result<(), String> {
     
     if enable {
         log::info!("Enabling auto-start");
-        autostart_manager.enable().map_err(|e| {
-            log::error!("Failed to enable auto-start: {}", e);
-            e.to_string()
-        })?;
-        log::info!("Auto-start enabled successfully");
+        
+        // In development, this might fail because the executable path is different
+        if cfg!(debug_assertions) {
+            log::warn!("Auto-start may not work correctly in development mode");
+        }
+        
+        // Don't fail the entire operation if auto-start fails
+        match autostart_manager.enable() {
+            Ok(_) => {
+                log::info!("Auto-start enabled successfully");
+            }
+            Err(e) => {
+                log::error!("Failed to enable auto-start: {}", e);
+                // Don't return error, just log it
+                // This is common in development and shouldn't break settings save
+            }
+        }
     } else {
         log::info!("Disabling auto-start");
         autostart_manager.disable().map_err(|e| {
@@ -217,8 +230,48 @@ async fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+async fn reload_global_shortcuts(app: AppHandle) -> Result<(), String> {
+    log::info!("Reloading global shortcuts");
+    
+    // Get the latest settings
+    let settings = get_settings(app.clone()).await?;
+    
+    // Unregister all current shortcuts
+    if let Err(e) = app.global_shortcut().unregister_all() {
+        log::warn!("Failed to unregister shortcuts: {}", e);
+    }
+    
+    // Re-register with new hotkey
+    use tauri_plugin_global_shortcut::ShortcutState;
+    
+    let hotkey = settings.global_hotkey;
+    log::info!("Registering new hotkey: {}", hotkey);
+    
+    match app.global_shortcut().on_shortcut(hotkey.as_str(), move |app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            log::debug!("Global shortcut activated: {}", _shortcut);
+            show_main_window(app);
+        }
+    }) {
+        Ok(_) => {
+            log::info!("Successfully registered global shortcut: {}", hotkey);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("Failed to register hotkey '{}': {}", hotkey, e);
+            // Try default as fallback
+            app.global_shortcut().on_shortcut("ctrl+shift+h", move |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    show_main_window(app);
+                }
+            }).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+    }
+}
+
+#[tauri::command]
 async fn debug_store_location(app: AppHandle) -> Result<String, String> {
-    use tauri::path::BaseDirectory;
     use tauri::Manager;
     
     let mut debug_info = String::new();
@@ -237,8 +290,8 @@ async fn debug_store_location(app: AppHandle) -> Result<String, String> {
     }
     
     // Try to get the actual store path
-    let store = StoreBuilder::new("settings.json")
-        .build(app.handle())
+    let _store = StoreBuilder::new(&app, "settings.json")
+        .build()
         .map_err(|e| format!("Failed to build store: {}", e))?;
     
     // Get store path using the path method if available
@@ -296,13 +349,67 @@ fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                 }
                 "settings" => {
                     log::info!("Settings requested from system tray");
-                    show_main_window(app);
-                    let _ = app.emit("show-settings", ());
+                    
+                    // Check if settings window already exists
+                    if let Some(settings_window) = app.get_webview_window("settings") {
+                        // If it exists, just show and focus it
+                        let _ = settings_window.show();
+                        let _ = settings_window.set_focus();
+                    } else {
+                        // Create a new settings window
+                        match tauri::WebviewWindowBuilder::new(
+                            app,
+                            "settings",
+                            tauri::WebviewUrl::App("index.html".into())
+                        )
+                        .title("HammerOverlay Settings")
+                        .inner_size(500.0, 400.0) // Start with reasonable height
+                        .resizable(false)
+                        .decorations(false) // No title bar
+                        .always_on_top(true) // Keep on top like main window
+                        .center()
+                        .build() {
+                            Ok(window) => {
+                                // Emit event to the new window to show settings
+                                let _ = window.emit("show-settings-view", ());
+                            }
+                            Err(e) => {
+                                log::error!("Failed to create settings window: {}", e);
+                            }
+                        }
+                    }
                 }
                 "check_updates" => {
                     log::info!("Update check requested from system tray");
-                    show_main_window(app);
-                    let _ = app.emit("show-update-checker", ());
+                    
+                    // Check if update checker window already exists
+                    if let Some(update_window) = app.get_webview_window("updater") {
+                        // If it exists, just show and focus it
+                        let _ = update_window.show();
+                        let _ = update_window.set_focus();
+                    } else {
+                        // Create a new update checker window
+                        match tauri::WebviewWindowBuilder::new(
+                            app,
+                            "updater",
+                            tauri::WebviewUrl::App("index.html".into())
+                        )
+                        .title("Check for Updates")
+                        .inner_size(400.0, 300.0) // Smaller window for update checker
+                        .resizable(false)
+                        .decorations(false) // No title bar
+                        .always_on_top(true)
+                        .center()
+                        .build() {
+                            Ok(window) => {
+                                // Emit event to the new window to show update checker
+                                let _ = window.emit("show-update-checker-view", ());
+                            }
+                            Err(e) => {
+                                log::error!("Failed to create update checker window: {}", e);
+                            }
+                        }
+                    }
                 }
                 "quit" => {
                     log::info!("Application exit requested from system tray");
@@ -342,7 +449,7 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
     
     let plugin_result = (|| -> Result<_, Box<dyn std::error::Error>> {
         let plugin = tauri_plugin_global_shortcut::Builder::new()
-            .with_shortcuts([&hotkey])?
+            .with_shortcuts([hotkey.as_str()])?
             .with_handler(|app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
                     log::debug!("Global shortcut activated: {}", _shortcut);
@@ -419,6 +526,7 @@ pub fn run() {
             install_update,
             toggle_autostart,
             is_autostart_enabled,
+            reload_global_shortcuts,
             debug_store_location,
         ])
         .setup(|app| {

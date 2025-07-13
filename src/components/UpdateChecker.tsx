@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 interface UpdateCheckerProps {
   onClose: () => void;
@@ -11,6 +12,28 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
   const [hasUpdate, setHasUpdate] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  
+  // Auto-resize window height based on content (only for updater window)
+  useEffect(() => {
+    const window = getCurrentWindow();
+    // Only resize if this is the updater window
+    if (window.label !== 'updater') return;
+    
+    const resizeWindow = async () => {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 250)); // Wait for DOM update and animations
+        const container = document.querySelector('.settings-container');
+        const contentHeight = container ? container.scrollHeight : document.body.scrollHeight;
+        // Ensure reasonable height with more padding
+        const finalHeight = Math.max(250, Math.min(contentHeight + 60, 500));
+        await window.setSize(new LogicalSize(400, finalHeight));
+      } catch (error) {
+        console.error('Error resizing updater window:', error);
+      }
+    };
+    
+    resizeWindow();
+  }, [checking, hasUpdate, error, success]); // Resize when state changes
 
   const checkForUpdates = async () => {
     try {

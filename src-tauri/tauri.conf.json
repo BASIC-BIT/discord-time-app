@@ -15,7 +15,6 @@
         "label": "main",
         "title": "HammerOverlay",
         "width": 480,
-        "height": 450,
         "minWidth": 400,
         "minHeight": 100,
         "resizable": false,

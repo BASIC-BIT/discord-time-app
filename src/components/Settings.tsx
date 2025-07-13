@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 interface AppSettings {
   auto_start: boolean;
@@ -35,6 +36,33 @@ export function Settings({ onClose }: SettingsProps) {
     loadSettings();
   }, []);
 
+  // Auto-resize window height based on content (only for settings window)
+  useEffect(() => {
+    const window = getCurrentWindow();
+    // Only resize if this is the settings window
+    if (window.label !== 'settings') return;
+    
+    const resizeWindow = async () => {
+      try {
+        // Wait for next frame to ensure DOM is updated
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const container = document.querySelector('.settings-container');
+            const contentHeight = container ? container.scrollHeight : document.body.scrollHeight;
+            // Ensure minimum height and add padding for buttons
+            const finalHeight = Math.max(500, Math.min(contentHeight + 40, 800)); // More padding
+            window.setSize(new LogicalSize(500, finalHeight)).catch(console.error);
+          }, 100);
+        });
+      } catch (error) {
+        console.error('Error resizing settings window:', error);
+      }
+    };
+    
+    // Always resize, whether loading or not
+    resizeWindow();
+  }, [loading, error, success]); // Resize when any state changes
+
   const loadSettings = async () => {
     try {
       setLoading(true);
@@ -55,8 +83,16 @@ export function Settings({ onClose }: SettingsProps) {
       
       await invoke('save_settings', { settings });
       
-      // Handle auto-start toggle
-      await invoke('toggle_autostart', { enable: settings.auto_start });
+      // Handle auto-start toggle (don't fail if this errors in dev mode)
+      try {
+        await invoke('toggle_autostart', { enable: settings.auto_start });
+      } catch (autoStartError) {
+        console.warn('Auto-start toggle failed (this is normal in development):', autoStartError);
+        // Don't show this error to the user - settings still saved successfully
+      }
+      
+      // Reload global shortcuts with new settings
+      await invoke('reload_global_shortcuts');
       
       setSuccess('Settings saved successfully!');
       setTimeout(() => setSuccess(null), 3000);

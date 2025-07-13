@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important Guidelines
+
+- **Never commit code before testing**: Always ensure changes work through automated testing, test scripts, or manual verification before committing
+- **No Claude Code signatures in commits**: Don't add "Generated with Claude Code" or similar signatures to commit messages
+- **Update this file when needed**: When discovering important patterns, conventions, or guidelines while working on the codebase, add them to this file for future Claude instances
+
 ## Project Overview
 
 HammerOverlay is a Windows desktop application that converts natural language time expressions into Discord timestamp formats. Built with Tauri (Rust backend) + React (TypeScript frontend).
@@ -67,6 +73,15 @@ npm run preview
 ## Testing & Linting
 
 Currently no test framework is implemented. No linting commands are configured in package.json.
+
+## Windows Process Management
+
+To kill the app on Windows, use PowerShell:
+```powershell
+powershell -Command "Stop-Process -Name 'hammer-overlay' -Force"
+```
+
+DO NOT use `taskkill /F /IM` - it doesn't work correctly in this environment.
 
 ## CI/CD (GitHub Actions)
 
