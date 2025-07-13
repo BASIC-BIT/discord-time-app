@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
@@ -14,25 +14,34 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
   const [success, setSuccess] = useState<string | null>(null);
   
   // Auto-resize window height based on content (only for updater window)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const window = getCurrentWindow();
     // Only resize if this is the updater window
     if (window.label !== 'updater') return;
     
-    const resizeWindow = async () => {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 250)); // Wait for DOM update and animations
-        const container = document.querySelector('.settings-container');
-        const contentHeight = container ? container.scrollHeight : document.body.scrollHeight;
-        // Ensure reasonable height with more padding
-        const finalHeight = Math.max(250, Math.min(contentHeight + 60, 500));
-        await window.setSize(new LogicalSize(400, finalHeight));
-      } catch (error) {
-        console.error('Error resizing updater window:', error);
-      }
+    const container = document.querySelector('.settings-container');
+    if (!container) return;
+    
+    const resizeWindow = () => {
+      const contentHeight = container.scrollHeight;
+      const finalHeight = Math.max(250, Math.min(contentHeight + 60, 500));
+      window.setSize(new LogicalSize(400, finalHeight)).catch(console.error);
     };
     
+    // Immediate resize for first render
     resizeWindow();
+    
+    // Set up ResizeObserver for future content changes
+    const resizeObserver = new ResizeObserver(() => {
+      resizeWindow();
+    });
+    
+    resizeObserver.observe(container);
+    
+    // Cleanup observer
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, [checking, hasUpdate, error, success]); // Resize when state changes
 
   const checkForUpdates = async () => {

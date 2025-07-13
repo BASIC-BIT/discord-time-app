@@ -114,6 +114,63 @@ The app maintains window position/size in Tauri store. The overlay is:
 - Usage statistics in SQLite database
 - Window state persisted between sessions
 
+## Window Auto-Resize Best Practices
+
+### Problem Solved
+Dynamic popup windows (Settings, UpdateChecker) had timing issues with auto-resize on first render, leading to:
+- Windows starting too small and taking time to scale up
+- Fragile timing hacks using `requestAnimationFrame` + `setTimeout`
+- Inconsistent behavior between first render and subsequent updates
+
+### Solution: ResizeObserver + useLayoutEffect Pattern
+
+```typescript
+import { useLayoutEffect } from 'react';
+
+useLayoutEffect(() => {
+  const window = getCurrentWindow();
+  if (window.label !== 'target-window') return;
+  
+  const container = document.querySelector('.content-container');
+  if (!container) return;
+  
+  const resizeWindow = () => {
+    const contentHeight = container.scrollHeight;
+    const finalHeight = Math.max(minHeight, Math.min(contentHeight + padding, maxHeight));
+    window.setSize(new LogicalSize(width, finalHeight)).catch(console.error);
+  };
+  
+  // Immediate resize for first render
+  resizeWindow();
+  
+  // Set up ResizeObserver for future content changes
+  const resizeObserver = new ResizeObserver(() => {
+    resizeWindow();
+  });
+  
+  resizeObserver.observe(container);
+  
+  // Cleanup observer
+  return () => {
+    resizeObserver.disconnect();
+  };
+}, [stateVariablesThatAffectContent]);
+```
+
+### Key Principles
+1. **Use `useLayoutEffect`** - Runs synchronously after DOM mutations but before paint, preventing flicker
+2. **Use `ResizeObserver`** - Browser-native API for detecting content size changes
+3. **Immediate + Continuous** - Resize immediately on first render, then observe for changes
+4. **Proper Cleanup** - Always disconnect ResizeObserver to prevent memory leaks
+5. **Apply Selectively** - Only use for dynamic popup windows, not fixed-size overlays
+
+### When to Apply
+- ✅ Settings windows with dynamic content
+- ✅ Update checkers with changing states  
+- ✅ Any popup with varying content height
+- ❌ Fixed-size overlay windows (main app)
+- ❌ Windows with `resizable: false` by design
+
 ## Important Files
 
 - `docs/PROGRESS.md`: Development history and current status

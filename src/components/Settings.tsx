@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
@@ -37,30 +37,34 @@ export function Settings({ onClose }: SettingsProps) {
   }, []);
 
   // Auto-resize window height based on content (only for settings window)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const window = getCurrentWindow();
     // Only resize if this is the settings window
     if (window.label !== 'settings') return;
     
-    const resizeWindow = async () => {
-      try {
-        // Wait for next frame to ensure DOM is updated
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            const container = document.querySelector('.settings-container');
-            const contentHeight = container ? container.scrollHeight : document.body.scrollHeight;
-            // Ensure minimum height and add padding for buttons
-            const finalHeight = Math.max(500, Math.min(contentHeight + 40, 800)); // More padding
-            window.setSize(new LogicalSize(500, finalHeight)).catch(console.error);
-          }, 100);
-        });
-      } catch (error) {
-        console.error('Error resizing settings window:', error);
-      }
+    const container = document.querySelector('.settings-container');
+    if (!container) return;
+    
+    const resizeWindow = () => {
+      const contentHeight = container.scrollHeight;
+      const finalHeight = Math.max(500, Math.min(contentHeight + 40, 800));
+      window.setSize(new LogicalSize(500, finalHeight)).catch(console.error);
     };
     
-    // Always resize, whether loading or not
+    // Immediate resize for first render
     resizeWindow();
+    
+    // Set up ResizeObserver for future content changes
+    const resizeObserver = new ResizeObserver(() => {
+      resizeWindow();
+    });
+    
+    resizeObserver.observe(container);
+    
+    // Cleanup observer
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, [loading, error, success]); // Resize when any state changes
 
   const loadSettings = async () => {
