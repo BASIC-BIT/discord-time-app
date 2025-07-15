@@ -24,7 +24,7 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
     
     const resizeWindow = () => {
       const contentHeight = container.scrollHeight;
-      const finalHeight = Math.max(250, Math.min(contentHeight + 60, 500));
+      const finalHeight = contentHeight;
       window.setSize(new LogicalSize(400, finalHeight)).catch(console.error);
     };
     
@@ -34,7 +34,7 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
     // Set up ResizeObserver for future content changes
     const resizeObserver = new ResizeObserver(() => {
       resizeWindow();
-    });
+    }); 
     
     resizeObserver.observe(container);
     
@@ -94,8 +94,7 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
   };
 
   return (
-    <div className="settings-overlay" onKeyDown={handleKeyDown} tabIndex={-1}>
-      <div className="settings-container" style={{ width: '400px', maxHeight: '300px' }}>
+    <div className="settings-container" style={{ width: '400px', maxHeight: '300px' }} onKeyDown={handleKeyDown} tabIndex={-1}>
         <div className="settings-header">
           <h2>Check for Updates</h2>
           <button className="close-button" onClick={onClose} aria-label="Close update checker">
@@ -104,9 +103,6 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
         </div>
 
         <div className="settings-content">
-          {error && <div className="error-message">{error}</div>}
-          {success && <div className="success-message">{success}</div>}
-
           <div className="update-info">
             <p>Current version: <strong>0.1.0</strong></p>
             
@@ -154,7 +150,18 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
             </button>
           )}
         </div>
-      </div>
+
+        {/* Toast Messages */}
+        {success && (
+          <div className="toast toast-success">
+            {success}
+          </div>
+        )}
+        {error && (
+          <div className="toast toast-error">
+            {error}
+          </div>
+        )}
     </div>
   );
 } 

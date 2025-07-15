@@ -176,6 +176,7 @@ useLayoutEffect(() => {
 - `docs/PROGRESS.md`: Development history and current status
 - `docs/PRODUCTION_DEPLOYMENT.md`: Production checklist
 - `scripts/create-test-certificate.ps1`: Test certificate generation
+- `scripts/check-store-simple.ps1`: Debug script to locate Tauri store files
 
 ## Development Resources
 

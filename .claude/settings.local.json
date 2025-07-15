@@ -11,7 +11,8 @@
       "Bash(npm install:*)",
       "Bash(cargo run:*)",
       "Bash(curl:*)",
-      "Bash(npm run tauri:*)"
+      "Bash(npm run tauri:*)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": []
   }

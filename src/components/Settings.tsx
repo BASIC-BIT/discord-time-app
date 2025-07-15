@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
@@ -30,10 +30,20 @@ export function Settings({ onClose }: SettingsProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const successTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load settings on component mount
   useEffect(() => {
     loadSettings();
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Auto-resize window height based on content (only for settings window)
@@ -47,7 +57,7 @@ export function Settings({ onClose }: SettingsProps) {
     
     const resizeWindow = () => {
       const contentHeight = container.scrollHeight;
-      const finalHeight = Math.max(500, Math.min(contentHeight + 40, 800));
+      const finalHeight = contentHeight;
       window.setSize(new LogicalSize(500, finalHeight)).catch(console.error);
     };
     
@@ -98,8 +108,13 @@ export function Settings({ onClose }: SettingsProps) {
       // Reload global shortcuts with new settings
       await invoke('reload_global_shortcuts');
       
+      // Clear any existing timeout
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+      
       setSuccess('Settings saved successfully!');
-      setTimeout(() => setSuccess(null), 3000);
+      successTimeoutRef.current = setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       console.error('Failed to save settings:', err);
       setError('Failed to save settings. Please try again.');
@@ -123,17 +138,14 @@ export function Settings({ onClose }: SettingsProps) {
 
   if (loading) {
     return (
-      <div className="settings-overlay" onKeyDown={handleKeyDown} tabIndex={-1}>
-        <div className="settings-container">
-          <div className="loading">Loading settings...</div>
-        </div>
+      <div className="settings-container" onKeyDown={handleKeyDown} tabIndex={-1}>
+        <div className="loading">Loading settings...</div>
       </div>
     );
   }
 
   return (
-    <div className="settings-overlay" onKeyDown={handleKeyDown} tabIndex={-1}>
-      <div className="settings-container">
+    <div className="settings-container" onKeyDown={handleKeyDown} tabIndex={-1}>
         <div className="settings-header">
           <h2>Settings</h2>
           <button className="close-button" onClick={onClose} aria-label="Close settings">
@@ -142,9 +154,6 @@ export function Settings({ onClose }: SettingsProps) {
         </div>
 
         <div className="settings-content">
-          {error && <div className="error-message">{error}</div>}
-          {success && <div className="success-message">{success}</div>}
-
           <div className="setting-group">
             <h3>Startup</h3>
             <label className="setting-item">
@@ -233,7 +242,18 @@ export function Settings({ onClose }: SettingsProps) {
             {saving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
-      </div>
+
+        {/* Toast Messages */}
+        {success && (
+          <div className="toast toast-success">
+            {success}
+          </div>
+        )}
+        {error && (
+          <div className="toast toast-error">
+            {error}
+          </div>
+        )}
     </div>
   );
 } 
