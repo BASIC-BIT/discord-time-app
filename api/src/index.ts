@@ -5,8 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import { ParseRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
 import { db, getDatabase } from './database';
-import { createOpenAIParser } from './openai';
-import { parseFallback } from './parse';
+import { parseTemporalExpression } from './temporal';
 
 /**
  * Create Fastify server instance
@@ -165,54 +164,14 @@ server.post<{ Body: ParseRequest }>('/parse', {
   const { text, tz = 'UTC' } = request.body;
 
   try {
-    let epoch: number | null = null;
-    let suggestedFormatIndex = 4; // Default to :f format
-    let confidence = 0.5;
-    let method = 'fallback';
-
-    // Try OpenAI parsing first (if API key available)
-    if (config.openaiApiKey) {
-      try {
-        const openaiParser = createOpenAIParser(config.openaiApiKey);
-        const llmResult = await openaiParser.parseTime(text, tz);
-        
-        console.log('LLM Result:', llmResult);
-        
-        // Use chrono-node to parse the normalized text
-        const normalizedEpoch = parseFallback(llmResult.normalizedText);
-        
-        if (normalizedEpoch) {
-          epoch = normalizedEpoch;
-          suggestedFormatIndex = llmResult.suggestedFormatIndex;
-          confidence = llmResult.confidence;
-          method = 'openai';
-        } else {
-          // If normalized text fails, try original text as fallback
-          const fallbackEpoch = parseFallback(text);
-          if (fallbackEpoch) {
-            epoch = fallbackEpoch;
-            suggestedFormatIndex = llmResult.suggestedFormatIndex;
-            confidence = llmResult.confidence * 0.7; // Reduce confidence
-            method = 'openai-fallback';
-          }
-        }
-      } catch (openaiError) {
-        console.error('OpenAI parsing failed:', openaiError);
-        // Fall through to chrono-node fallback
-      }
-    }
-
-    // Fallback to chrono-node only if OpenAI failed
-    if (epoch === null) {
-      epoch = parseFallback(text);
-      if (epoch) {
-        confidence = 0.7; // Medium confidence for fallback
-        method = 'fallback';
-      }
-    }
+    const parsed = await parseTemporalExpression({
+      text,
+      timeZone: tz,
+      openaiApiKey: config.openaiApiKey,
+    });
 
     // If all parsing failed
-    if (epoch === null) {
+    if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
         error: 'Could not parse time expression',
         message: 'Unable to understand the time expression. Please try being more specific.'
@@ -223,17 +182,17 @@ server.post<{ Body: ParseRequest }>('/parse', {
     db.logUsage({
       text,
       tz,
-      epoch,
-      format: suggestedFormatIndex,
-      conf: confidence,
+      epoch: parsed.epoch,
+      format: parsed.suggestedFormatIndex ?? 4,
+      conf: parsed.confidence,
       ip: request.ip
     });
 
     return {
-      epoch,
-      suggestedFormatIndex,
-      confidence,
-      method
+      epoch: parsed.epoch,
+      suggestedFormatIndex: parsed.suggestedFormatIndex ?? 4,
+      confidence: parsed.confidence,
+      method: parsed.method
     };
 
   } catch (error) {
