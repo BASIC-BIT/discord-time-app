@@ -348,7 +348,7 @@ Rules:
 - Prefer parse_expression or resolve_calendar_query first.
 - You must call propose_candidate before finalize_candidate.
 - Only finalize candidate IDs returned by propose_candidate.
-- If the user says "next Saturday", do not choose tomorrow; use the following week's Saturday unless tools show a better product-policy result.
+- If the user mentions a weekday, use tool output and formatted candidate facts to verify the proposed timestamp actually lands on that weekday.
 - If validation rejects a candidate, try another candidate or stop.
 - Keep assumptions explicit.
 

@@ -25,7 +25,7 @@ export interface ResolveCalendarQueryInput {
 
 export interface ResolveCalendarQueryOutput {
   candidates: Candidate[];
-  source: "weekday_policy" | "holiday_library" | "chrono" | "shift_math" | "sandbox" | "web" | "explicit";
+  source: "holiday_library" | "chrono" | "shift_math" | "sandbox" | "web" | "explicit";
   notes: string[];
 }
 

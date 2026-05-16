@@ -227,10 +227,14 @@ server.get('/stats', async (_request, reply) => {
  * Error handler
  */
 server.setErrorHandler(async (error, _request, reply) => {
-  server.log.error('Unhandled error:', error);
+  server.log.error({ err: error }, 'Unhandled error');
+  const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
+    ? Number((error as { statusCode?: unknown }).statusCode)
+    : undefined;
+  const message = error instanceof Error ? error.message : 'Invalid request';
   
   // Rate limit errors
-  if (error.statusCode === 429) {
+  if (statusCode === 429) {
     const errorResponse: ErrorResponse = {
       error: 'rate_limited',
       message: 'Too many requests'
@@ -240,10 +244,10 @@ server.setErrorHandler(async (error, _request, reply) => {
   }
   
   // Validation errors
-  if (error.statusCode === 400) {
+  if (statusCode === 400) {
     const errorResponse: ErrorResponse = {
       error: 'bad_request',
-      message: error.message || 'Invalid request'
+      message
     };
     reply.status(400).send(errorResponse);
     return;

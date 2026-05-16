@@ -34,16 +34,6 @@ export interface UsageRecord {
   ts: string;
 }
 
-/**
- * OpenAI parsing result structure
- */
-export interface OpenAIParseResult {
-  normalizedText: string;
-  suggestedFormatIndex: number;
-  confidence: number;
-  reasoning: string;
-}
-
 // Environment variables interface
 export interface EnvConfig {
   OPENAI_API_KEY: string;

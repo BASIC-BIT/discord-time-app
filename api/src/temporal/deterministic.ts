@@ -6,7 +6,6 @@ import type {
   CandidateFacts,
   TemporalPrecision,
   Weekday,
-  WeekdayQualifier,
 } from './types';
 import type {
   CandidateFactsInput,
@@ -19,7 +18,6 @@ import type {
   ValidateCandidateInput,
   ValidateCandidateOutput,
 } from './tools';
-import { describeWeekdayPolicy } from './policy';
 
 const WEEKDAY_LOOKUP: Record<Weekday, number> = {
   monday: 1,
@@ -52,11 +50,6 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
   const explicit = parseExplicitTimestamp(input.text, input.calendarContext);
   if (explicit) {
     return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
-  }
-
-  const weekdayCandidate = parseWeekdayPhrase(input.text, input.calendarContext);
-  if (weekdayCandidate) {
-    return { candidates: [weekdayCandidate], parserNotes: ['Matched weekday phrase policy.'] };
   }
 
   const chronoCandidate = parseWithChrono(input.text, input.calendarContext);
@@ -128,17 +121,8 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
   const facts = await candidateFacts({ candidate: input.candidate, calendarContext: input.calendarContext });
   const requestedWeekday = extractWeekday(input.originalText);
 
-  if (requestedWeekday && requestedWeekday.weekday !== facts.weekday) {
-    errors.push(`Input mentioned ${requestedWeekday.weekday}, but candidate is ${facts.weekday}.`);
-  }
-
-  if (requestedWeekday?.qualifier === 'next' && input.candidate.provenance === 'weekday_policy') {
-    const reference = referenceZdt(input.calendarContext).startOfDay();
-    const candidateDate = Temporal.PlainDate.from(facts.isoDate);
-    const days = reference.toPlainDate().until(candidateDate, { largestUnit: 'day' }).days;
-    if (days < 7) {
-      errors.push('Input used "next" weekday, but candidate is less than 7 days away.');
-    }
+  if (requestedWeekday && requestedWeekday !== facts.weekday) {
+    errors.push(`Input mentioned ${requestedWeekday}, but candidate is ${facts.weekday}.`);
   }
 
   if (input.candidate.precision === 'date') {
@@ -197,41 +181,6 @@ function parseExplicitTimestamp(text: string, calendarContext: CalendarContext):
   } catch {
     return null;
   }
-}
-
-function parseWeekdayPhrase(text: string, calendarContext: CalendarContext): Candidate | null {
-  const match = WEEKDAY_PATTERN.exec(text);
-  const weekday = match?.[2]?.toLowerCase() as Weekday | undefined;
-  if (!weekday || !isWeekday(weekday)) {
-    return null;
-  }
-
-  const qualifier = parseQualifier(match?.[1]);
-  const reference = referenceZdt(calendarContext).startOfDay();
-  const targetDay = WEEKDAY_LOOKUP[weekday];
-  const currentDay = reference.dayOfWeek;
-  const time = extractTime(text);
-  let date: Temporal.ZonedDateTime;
-
-  if (qualifier === 'next') {
-    const nearestDiff = (targetDay - currentDay + 7) % 7;
-    date = reference.add({ days: nearestDiff + 7 });
-  } else if (qualifier === 'last') {
-    const nearestBack = (currentDay - targetDay + 7) % 7;
-    date = reference.subtract({ days: nearestBack + 7 });
-  } else if (qualifier === 'this') {
-    date = reference.subtract({ days: currentDay - 1 }).add({ days: targetDay - 1 });
-  } else {
-    date = reference.add({ days: (targetDay - currentDay + 7) % 7 });
-  }
-
-  const resolved = date.withPlainTime(time ?? Temporal.PlainTime.from('12:00'));
-  const assumptions = [describeWeekdayPolicy(qualifier)];
-  if (!time) {
-    assumptions.push('Defaulted date-only weekday expression to 12:00 PM local time.');
-  }
-
-  return createCandidate(resolved, time ? 'datetime' : 'date', assumptions, 'weekday_policy');
 }
 
 function parseWithChrono(text: string, calendarContext: CalendarContext): Candidate | null {
@@ -318,21 +267,14 @@ function createCandidate(
   };
 }
 
-function extractWeekday(text: string): { qualifier: WeekdayQualifier; weekday: Weekday } | null {
+function extractWeekday(text: string): Weekday | null {
   const match = WEEKDAY_PATTERN.exec(text);
   const weekday = match?.[2]?.toLowerCase() as Weekday | undefined;
   if (!weekday || !isWeekday(weekday)) {
     return null;
   }
 
-  return { qualifier: parseQualifier(match?.[1]), weekday };
-}
-
-function parseQualifier(value: string | undefined): WeekdayQualifier {
-  if (value === 'this' || value === 'next' || value === 'last') {
-    return value;
-  }
-  return 'bare';
+  return weekday;
 }
 
 function isWeekday(value: string): value is Weekday {
@@ -345,30 +287,6 @@ function weekdayFromTemporal(dayOfWeek: number): Weekday {
     throw new Error(`Invalid Temporal dayOfWeek: ${dayOfWeek}`);
   }
   return weekday;
-}
-
-function extractTime(text: string): Temporal.PlainTime | null {
-  const explicit = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(text);
-  if (explicit?.[1]) {
-    let hour = Number(explicit[1]);
-    const minute = explicit[2] ? Number(explicit[2]) : 0;
-    const meridiem = explicit[3]?.toLowerCase();
-    if (meridiem === 'pm' && hour < 12) {
-      hour += 12;
-    }
-    if (meridiem === 'am' && hour === 12) {
-      hour = 0;
-    }
-    return Temporal.PlainTime.from({ hour, minute });
-  }
-
-  if (/\bnoon\b/i.test(text)) {
-    return Temporal.PlainTime.from('12:00');
-  }
-  if (/\bmidnight\b/i.test(text)) {
-    return Temporal.PlainTime.from('00:00');
-  }
-  return null;
 }
 
 function suggestedFormatIndex(text: string, precision: TemporalPrecision): number {

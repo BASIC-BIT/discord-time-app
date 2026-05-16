@@ -7,8 +7,7 @@ The files are intentionally not wired into `src/index.ts` yet. The current endpo
 Implementation order:
 
 1. `types.ts`
-2. `policy.ts`
-3. `tools.ts`
-4. deterministic tool implementations
-5. `graph.ts` LangGraph Functional API implementation
-6. endpoint integration
+2. `tools.ts`
+3. deterministic tool implementations
+4. `graph.ts` LangGraph implementation
+5. endpoint integration

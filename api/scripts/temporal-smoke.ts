@@ -22,7 +22,7 @@ async function main() {
   const nextWednesday = await parse('next Wednesday');
   assert.equal(nextWednesday.status, 'resolved');
   assert.equal(nextWednesday.canonical?.weekday, 'wednesday');
-  assert.equal(nextWednesday.canonical?.zonedDateTime.startsWith('2026-05-27'), true);
+  assert.equal(nextWednesday.canonical?.zonedDateTime.startsWith('2026-05-20'), true);
 
   const explicitDiscord = await parse('<t:1776221807:f>');
   assert.equal(explicitDiscord.status, 'resolved');

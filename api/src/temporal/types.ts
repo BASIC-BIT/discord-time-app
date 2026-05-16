@@ -35,7 +35,7 @@ export interface Candidate {
   timeZone: string;
   precision: TemporalPrecision;
   assumptions: string[];
-  provenance: "weekday_policy" | "chrono" | "holiday_library" | "shift_math" | "sandbox" | "explicit";
+  provenance: "chrono" | "holiday_library" | "shift_math" | "sandbox" | "explicit";
 }
 
 export interface CandidateFacts {

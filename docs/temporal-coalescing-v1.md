@@ -13,9 +13,9 @@ The current API flow asks the model to rewrite user text into parseable prose, t
 Known failure classes:
 
 - `next Wednesday` resolves to a Tuesday.
-- `next Saturday` resolves to tomorrow when the user expects the following week.
+- weekday phrases resolve to a date whose actual weekday does not match the user's text.
 - relative expressions resolve against server timezone instead of user timezone.
-- missing times are guessed without clear policy.
+- missing times are guessed without surfacing assumptions.
 - final output has no rich validation metadata.
 
 ## Design Goals
@@ -143,18 +143,16 @@ Expected implementation:
 - resolve holiday phrases when supported
 - resolve weekday phrases when supported
 - return candidate dates plus source notes
-- use product policy internally where applicable
 
-### Internal weekday policy
+### Weekday validation
 
-The system still needs explicit semantics for `this`, `next`, `last`, and bare weekday expressions, but that does not need to be a first-class agent tool.
+The system should not hard-code colloquial language policy for `this`, `next`, `last`, and bare weekday expressions. The agent should interpret those terms using language understanding plus tool output.
 
-Product policy should be explicit and tested:
+Deterministic validation should stay factual:
 
-- bare weekday means the nearest upcoming occurrence
-- `this <weekday>` means the current week frame
-- `next <weekday>` means the following week frame, not tomorrow when tomorrow is that weekday
-- `last <weekday>` means the previous week frame
+- if the input mentions Wednesday, the candidate must be Wednesday
+- if the input mentions a concrete date, the candidate must match that date
+- if the input includes a timezone, the candidate must preserve that timezone intent
 
 ### Internal holiday resolution
 
@@ -268,7 +266,7 @@ type TemporalParseResponse = {
 2. Implement candidate facts and formatting first.
 3. Add candidate proposal and finalization gates.
 4. Implement deterministic validation.
-5. Implement weekday policy and tests behind the calendar resolver.
+5. Implement factual weekday/date validation behind the calendar resolver.
 6. Replace prose normalization with LangGraph tool calls.
 7. Add a LangGraph `StateGraph` with `ToolNode`, dynamic tool binding, and up to 10 tool batches.
 8. Add holiday resolution behind the generic calendar resolver.
