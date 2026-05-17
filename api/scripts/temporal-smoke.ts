@@ -28,6 +28,10 @@ async function main() {
   assert.equal(explicitDiscord.status, 'resolved');
   assert.equal(explicitDiscord.epoch, 1776221807);
 
+  const explicitIsoInstant = await parse('2026-05-17T10:00:00Z');
+  assert.equal(explicitIsoInstant.status, 'resolved');
+  assert.equal(explicitIsoInstant.canonical?.isoInstant, '2026-05-17T10:00:00Z');
+
   const tomorrowAtFive = await parse('tomorrow at 5pm');
   assert.equal(tomorrowAtFive.status, 'resolved');
   assert.equal(tomorrowAtFive.canonical?.zonedDateTime.startsWith('2026-05-16T17:00'), true);

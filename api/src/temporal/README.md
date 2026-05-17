@@ -1,10 +1,10 @@
-# Temporal Coalescing API Skeleton
+# Temporal Coalescing API
 
-This folder contains the contracts for the planned LangGraph-backed temporal parsing flow.
+This folder contains the LangGraph-backed temporal parsing flow and deterministic fallback used by the API endpoint.
 
-The files are intentionally not wired into `src/index.ts` yet. The current endpoint should continue to behave as-is until the deterministic tools and validator are implemented.
+`src/index.ts` calls `parseTemporalExpression`, which uses deterministic temporal tools by default and the agent/tool graph when an OpenAI API key is configured.
 
-Implementation order:
+Key files:
 
 1. `types.ts`
 2. `tools.ts`

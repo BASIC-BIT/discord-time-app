@@ -41,6 +41,7 @@ const WEEKDAY_NAMES: Record<number, Weekday> = {
 
 const WEEKDAY_PATTERN = /\b(?:(this|next|last)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DISCORD_TIMESTAMP_PATTERN = /<t:(\d+)(?::[tTdDfFR])?>/;
+const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export function parseCalendarContext(timeZone: string, referenceInstant = new Date().toISOString()): CalendarContext {
   return { referenceInstant, timeZone };
@@ -76,7 +77,7 @@ export async function shiftDateTime(input: ShiftDateTimeInput): Promise<Candidat
 }
 
 export async function formatCandidate(input: FormatCandidateInput): Promise<string> {
-  const zdt = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime);
+  const zdt = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.calendarContext.timeZone);
   const locale = input.calendarContext.locale ?? 'en-US';
 
   if (input.style === 'discord-preview') {
@@ -171,7 +172,12 @@ function parseExplicitTimestamp(text: string, calendarContext: CalendarContext):
   }
 
   try {
-    const instant = Temporal.Instant.from(text.trim());
+    const trimmed = text.trim();
+    if (!ISO_INSTANT_PATTERN.test(trimmed)) {
+      return null;
+    }
+
+    const instant = Temporal.Instant.from(trimmed);
     return createCandidate(
       instant.toZonedDateTimeISO(calendarContext.timeZone),
       'datetime',

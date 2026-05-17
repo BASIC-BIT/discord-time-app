@@ -1,7 +1,7 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { tool } from '@langchain/core/tools';
 import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
-import { END, MessagesValue, StateGraph, StateSchema, START } from '@langchain/langgraph';
+import { END, MessagesAnnotation, StateGraph, START } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import * as z from 'zod';
 import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalParseRequest, TemporalParseResponse } from './types';
@@ -59,8 +59,6 @@ export async function runTemporalCoalescingGraph(
     return fallback;
   }
 
-  const runState = createInitialTemporalGraphState(request);
-  const maxAgentAttempts = options.maxAgentAttempts ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxAgentAttempts;
   const maxToolPasses = options.maxToolPasses ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxToolPasses;
 
   try {
@@ -79,15 +77,7 @@ export async function runTemporalCoalescingGraph(
     };
   }
 
-  return {
-    ...fallback,
-    debug: {
-      ...fallback.debug,
-      candidateCount: runState.candidates.length,
-      agentAttempts: maxAgentAttempts,
-      toolPasses: maxToolPasses,
-    },
-  };
+  return fallback;
 }
 
 async function runAgentGraph(
@@ -210,14 +200,13 @@ async function runAgentGraph(
   ];
   const model = new ChatOpenAI({ apiKey: options.openaiApiKey, model: 'gpt-4o-mini', temperature: 0 });
   const modelWithTools = model.bindTools(tools);
-  const GraphState = new StateSchema({ messages: MessagesValue });
 
-  const llmCall = async (state: typeof GraphState.State) => {
+  const llmCall = async (state: typeof MessagesAnnotation.State) => {
     const result = await modelWithTools.invoke([new SystemMessage(systemPrompt(request)), ...state.messages]);
     return { messages: [result] };
   };
   const toolNode = new ToolNode(tools);
-  const shouldContinue = (state: typeof GraphState.State) => {
+  const shouldContinue = (state: typeof MessagesAnnotation.State) => {
     const lastMessage = state.messages.at(-1);
     if (finalizedCandidateId) {
       return END;
@@ -225,12 +214,12 @@ async function runAgentGraph(
     if (countToolMessages(state.messages) >= maxToolPasses) {
       return END;
     }
-    if (lastMessage && AIMessage.isInstance(lastMessage) && lastMessage.tool_calls?.length) {
+    if (lastMessage instanceof AIMessage && lastMessage.tool_calls?.length) {
       return 'toolNode';
     }
     return END;
   };
-  const graph = new StateGraph(GraphState)
+  const graph = new StateGraph(MessagesAnnotation)
     .addNode('llmCall', llmCall)
     .addNode('toolNode', toolNode)
     .addEdge(START, 'llmCall')
@@ -238,7 +227,9 @@ async function runAgentGraph(
     .addEdge('toolNode', 'llmCall')
     .compile();
 
-  await graph.invoke({ messages: [new HumanMessage(userPrompt(request))] });
+  const finalState = await graph.invoke({ messages: [new HumanMessage(userPrompt(request))] });
+  const toolPasses = countToolMessages(finalState.messages);
+  const agentAttempts = countAgentMessages(finalState.messages);
 
   if (!finalizedCandidateId) {
     return null;
@@ -249,7 +240,7 @@ async function runAgentGraph(
     return null;
   }
 
-  return responseFromEnrichedCandidate(finalized, 'agent+tools', 0.9, finalizedRationale, enrichedCandidates.size, maxToolPasses);
+  return responseFromEnrichedCandidate(finalized, 'agent+tools', 0.9, finalizedRationale, enrichedCandidates.size, toolPasses, agentAttempts);
 }
 
 async function deterministicParse(
@@ -271,7 +262,7 @@ async function deterministicParse(
   }
 
   const enriched = await enrichCandidate(candidate, request, implementations);
-  return responseFromEnrichedCandidate(enriched, 'deterministic', 0.75, 'Deterministic temporal parse.', 1, 0);
+  return responseFromEnrichedCandidate(enriched, 'deterministic', 0.75, 'Deterministic temporal parse.', 1, 0, 0);
 }
 
 async function enrichCandidate(
@@ -313,6 +304,7 @@ function responseFromEnrichedCandidate(
   rationale: string,
   candidateCount: number,
   toolPasses: number,
+  agentAttempts: number,
 ): TemporalParseResponse {
   const validation = enriched.validation ?? { passed: false, warnings: ['Candidate was not validated.'], checks: [] };
   const canonical: NonNullable<TemporalParseResponse['canonical']> = {
@@ -334,7 +326,7 @@ function responseFromEnrichedCandidate(
     assumptions: rationale ? [...enriched.candidate.assumptions, rationale] : enriched.candidate.assumptions,
     ambiguity: validation.passed ? [] : validation.warnings,
     validation,
-    debug: { chosenCandidateId: enriched.candidate.id, candidateCount, toolPasses },
+    debug: { chosenCandidateId: enriched.candidate.id, candidateCount, agentAttempts, toolPasses },
   };
 
   return response;
@@ -362,6 +354,10 @@ function userPrompt(request: TemporalParseRequest): string {
 
 function countToolMessages(messages: BaseMessage[]): number {
   return messages.filter((message) => message.getType() === 'tool').length;
+}
+
+function countAgentMessages(messages: BaseMessage[]): number {
+  return messages.filter((message) => message.getType() === 'ai').length;
 }
 
 function suggestedFormatIndex(precision: Candidate['precision']): number {
