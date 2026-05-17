@@ -42,6 +42,9 @@ const WEEKDAY_NAMES: Record<number, Weekday> = {
 const WEEKDAY_PATTERN = /\b(?:(this|next|last)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DISCORD_TIMESTAMP_PATTERN = /<t:(\d+)(?::[tTdDfFR])?>/;
 const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
+const EASTER_PATTERN = /\beaster(?:\s+sunday)?\b/i;
+const TWELVE_HOUR_TIME_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/i;
+const TWENTY_FOUR_HOUR_TIME_PATTERN = /\b([01]?\d|2[0-3]):([0-5]\d)\b/;
 
 export function parseCalendarContext(timeZone: string, referenceInstant = new Date().toISOString()): CalendarContext {
   return { referenceInstant, timeZone };
@@ -51,6 +54,11 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
   const explicit = parseExplicitTimestamp(input.text, input.calendarContext);
   if (explicit) {
     return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
+  }
+
+  const holidayCandidate = parseHoliday(input.text, input.calendarContext);
+  if (holidayCandidate) {
+    return { candidates: [holidayCandidate], parserNotes: ['Matched holiday expression.'] };
   }
 
   const chronoCandidate = parseWithChrono(input.text, input.calendarContext);
@@ -189,6 +197,33 @@ function parseExplicitTimestamp(text: string, calendarContext: CalendarContext):
   }
 }
 
+function parseHoliday(text: string, calendarContext: CalendarContext): Candidate | null {
+  if (!EASTER_PATTERN.test(text)) {
+    return null;
+  }
+
+  const reference = referenceZdt(calendarContext);
+  const time = extractTimeOfDay(text);
+  let zonedDateTime = easterDate(reference.year).toZonedDateTime({
+    timeZone: calendarContext.timeZone,
+    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+  });
+
+  if (Temporal.Instant.compare(zonedDateTime.toInstant(), reference.toInstant()) <= 0) {
+    zonedDateTime = easterDate(reference.year + 1).toZonedDateTime({
+      timeZone: calendarContext.timeZone,
+      plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+    });
+  }
+
+  const assumptions = ['Resolved Easter using Gregorian calendar rules.'];
+  if (!time.explicit) {
+    assumptions.push('Defaulted date-only expression to 12:00 PM local time.');
+  }
+
+  return createCandidate(zonedDateTime, time.explicit ? 'datetime' : 'date', assumptions, 'holiday_library');
+}
+
 function parseWithChrono(text: string, calendarContext: CalendarContext): Candidate | null {
   const reference = referenceZdt(calendarContext);
   const referenceDate = new Date(
@@ -254,6 +289,50 @@ function getBaseZonedDateTime(input: ShiftDateTimeInput): Temporal.ZonedDateTime
 
 function referenceZdt(calendarContext: CalendarContext): Temporal.ZonedDateTime {
   return Temporal.Instant.from(calendarContext.referenceInstant).toZonedDateTimeISO(calendarContext.timeZone);
+}
+
+function easterDate(year: number): Temporal.PlainDate {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return Temporal.PlainDate.from({ year, month, day });
+}
+
+function extractTimeOfDay(text: string): { hour: number; minute: number; explicit: boolean } {
+  if (/\bmidnight\b/i.test(text)) {
+    return { hour: 0, minute: 0, explicit: true };
+  }
+  if (/\bnoon\b/i.test(text)) {
+    return { hour: 12, minute: 0, explicit: true };
+  }
+
+  const twelveHour = TWELVE_HOUR_TIME_PATTERN.exec(text);
+  if (twelveHour?.[1] && twelveHour[3]) {
+    const suffix = twelveHour[3].toLowerCase();
+    let hour = Number(twelveHour[1]) % 12;
+    if (suffix === 'pm') {
+      hour += 12;
+    }
+    return { hour, minute: Number(twelveHour[2] ?? 0), explicit: true };
+  }
+
+  const twentyFourHour = TWENTY_FOUR_HOUR_TIME_PATTERN.exec(text);
+  if (twentyFourHour?.[1] && twentyFourHour[2]) {
+    return { hour: Number(twentyFourHour[1]), minute: Number(twentyFourHour[2]), explicit: true };
+  }
+
+  return { hour: 12, minute: 0, explicit: false };
 }
 
 function createCandidate(

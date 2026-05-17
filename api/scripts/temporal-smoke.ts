@@ -35,6 +35,10 @@ async function main() {
   const tomorrowAtFive = await parse('tomorrow at 5pm');
   assert.equal(tomorrowAtFive.status, 'resolved');
   assert.equal(tomorrowAtFive.canonical?.zonedDateTime.startsWith('2026-05-16T17:00'), true);
+
+  const easterMidnight = await parse('easter midnight');
+  assert.equal(easterMidnight.status, 'resolved');
+  assert.equal(easterMidnight.canonical?.zonedDateTime.startsWith('2027-03-28T00:00'), true);
 }
 
 main().catch((error: unknown) => {
