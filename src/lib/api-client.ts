@@ -14,6 +14,9 @@ export interface ParseError {
   message?: string;
 }
 
+const DEFAULT_API_BASE_URL = 'http://localhost:8857';
+const DEFAULT_API_KEY = 'STATIC_KEY_123';
+
 export class TimeParserAPIClient {
   private baseUrl: string;
   private apiKey: string;
@@ -93,19 +96,15 @@ export class TimeParserAPIClient {
 
 // Create singleton instance with environment variables
 export function createAPIClient(): TimeParserAPIClient | null {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL;
-  const apiKey = import.meta.env.VITE_API_KEY;
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
+  const apiKey = import.meta.env.VITE_API_KEY || DEFAULT_API_KEY;
 
   console.log('API Client Configuration:', {
     baseUrl,
-    apiKey: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
-    env: import.meta.env
+    apiKey: `${apiKey.substring(0, 8)}...`,
+    usesDefaultBaseUrl: !import.meta.env.VITE_API_BASE_URL,
+    usesDefaultApiKey: !import.meta.env.VITE_API_KEY,
   });
-
-  if (!baseUrl || !apiKey) {
-    console.warn('API configuration missing, backend parsing will be disabled');
-    return null;
-  }
 
   console.log('Creating API client with base URL:', baseUrl);
   return new TimeParserAPIClient(baseUrl, apiKey);

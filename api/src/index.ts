@@ -42,7 +42,7 @@ const server = Fastify({
  * Register CORS plugin
  */
 server.register(cors, {
-  origin: ['http://localhost:1420', 'tauri://localhost'],
+  origin: ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost'],
   credentials: true,
   allowedHeaders: ['Content-Type', 'x-api-key', 'x-api-version']
 });
@@ -164,11 +164,15 @@ server.post<{ Body: ParseRequest }>('/parse', {
   const { text, tz = 'UTC' } = request.body;
 
   try {
-    const parsed = await parseTemporalExpression({
+    const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
       text,
       timeZone: tz,
-      openaiApiKey: config.openaiApiKey,
-    });
+    };
+    if (config.openaiApiKey !== undefined) {
+      parseInput.openaiApiKey = config.openaiApiKey;
+    }
+
+    const parsed = await parseTemporalExpression(parseInput);
 
     // If all parsing failed
     if (parsed.status === 'failed' || parsed.epoch === undefined) {

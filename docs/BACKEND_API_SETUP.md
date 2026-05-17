@@ -14,8 +14,8 @@ cp .env.example .env
 ```
 
 Edit `.env` and configure:
-- `OPENAI_API_KEY`: Your OpenAI API key
-- `STATIC_API_KEY`: A secure API key for frontend authentication
+- `OPENAI_API_KEY`: optional OpenAI API key for agent-assisted parsing
+- `STATIC_API_KEY`: API key for frontend authentication, defaulting to `STATIC_KEY_123` for local QA
 
 ### 2. Install Dependencies & Run
 
@@ -29,11 +29,11 @@ The API will start on http://localhost:8857
 
 ### 3. Frontend Configuration
 
-In the root directory, update `.env`:
+In the root directory, update `.env` if you are not using the local defaults:
 
 ```env
 VITE_API_BASE_URL=http://localhost:8857
-VITE_API_KEY=<same as STATIC_API_KEY from backend>
+VITE_API_KEY=STATIC_KEY_123
 ```
 
 ### 4. Run the Frontend

@@ -36,7 +36,7 @@ export interface UsageRecord {
 
 // Environment variables interface
 export interface EnvConfig {
-  OPENAI_API_KEY: string;
+  OPENAI_API_KEY: string | undefined;
   STATIC_API_KEY: string;
   PORT: number;
   DB_PATH: string;

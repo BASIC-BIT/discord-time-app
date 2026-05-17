@@ -16,7 +16,7 @@ export class Config {
    */
   private loadConfig(): EnvConfig {
     return {
-      OPENAI_API_KEY: this.getEnvVar('OPENAI_API_KEY'),
+      OPENAI_API_KEY: this.getOptionalEnvVar('OPENAI_API_KEY'),
       STATIC_API_KEY: this.getEnvVar('STATIC_API_KEY', 'STATIC_KEY_123'),
       PORT: parseInt(this.getEnvVar('PORT', '8857'), 10),
       DB_PATH: this.getEnvVar('DB_PATH', 'usage.db')
@@ -37,12 +37,17 @@ export class Config {
     return value;
   }
 
+  private getOptionalEnvVar(name: string): string | undefined {
+    const value = process.env[name]?.trim();
+    return value ? value : undefined;
+  }
+
   /**
    * Validate configuration
    */
   private validateConfig(): void {
-    // Validate OpenAI API key format
-    if (!this.config.OPENAI_API_KEY.startsWith('sk-')) {
+    // Validate OpenAI API key format when the agent path is configured.
+    if (this.config.OPENAI_API_KEY !== undefined && !this.config.OPENAI_API_KEY.startsWith('sk-')) {
       throw new Error('OPENAI_API_KEY must start with "sk-"');
     }
 
@@ -69,7 +74,7 @@ export class Config {
   /**
    * Get specific config values
    */
-  public get openaiApiKey(): string {
+  public get openaiApiKey(): string | undefined {
     return this.config.OPENAI_API_KEY;
   }
 
@@ -90,7 +95,7 @@ export class Config {
    */
   public getSanitizedConfig(): Partial<EnvConfig> {
     return {
-      OPENAI_API_KEY: this.config.OPENAI_API_KEY.slice(0, 7) + '...',
+      OPENAI_API_KEY: this.config.OPENAI_API_KEY === undefined ? 'not configured' : this.config.OPENAI_API_KEY.slice(0, 7) + '...',
       STATIC_API_KEY: this.config.STATIC_API_KEY.slice(0, 6) + '...',
       PORT: this.config.PORT,
       DB_PATH: this.config.DB_PATH
@@ -99,4 +104,4 @@ export class Config {
 }
 
 // Export singleton instance
-export const config = new Config(); 
+export const config = new Config();
