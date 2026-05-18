@@ -338,6 +338,7 @@ function systemPrompt(request: TemporalParseRequest): string {
 Rules:
 - Use tools for calendar facts and parsing; do not rely on memory for weekday math.
 - Prefer parse_expression or resolve_calendar_query first.
+- For holidays, always use parse_expression or resolve_calendar_query and trust holiday_library candidates; do not propose holiday dates from memory.
 - You must call propose_candidate before finalize_candidate.
 - Only finalize candidate IDs returned by propose_candidate.
 - If the user mentions a weekday, use tool output and formatted candidate facts to verify the proposed timestamp actually lands on that weekday.

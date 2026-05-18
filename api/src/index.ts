@@ -173,6 +173,16 @@ server.post<{ Body: ParseRequest }>('/parse', {
     }
 
     const parsed = await parseTemporalExpression(parseInput);
+    request.log.info({
+      text,
+      tz,
+      status: parsed.status,
+      method: parsed.method,
+      epoch: parsed.epoch,
+      confidence: parsed.confidence,
+      debug: parsed.debug,
+      validation: parsed.validation,
+    }, 'parse result');
 
     // If all parsing failed
     if (parsed.status === 'failed' || parsed.epoch === undefined) {

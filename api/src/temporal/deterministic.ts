@@ -1,5 +1,7 @@
 import { Temporal, Intl as TemporalIntl } from '@js-temporal/polyfill';
 import * as chrono from 'chrono-node';
+import Holidays from 'date-holidays';
+import type { HolidaysTypes } from 'date-holidays';
 import type {
   CalendarContext,
   Candidate,
@@ -42,6 +44,9 @@ const WEEKDAY_NAMES: Record<number, Weekday> = {
 const WEEKDAY_PATTERN = /\b(?:(this|next|last)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DISCORD_TIMESTAMP_PATTERN = /<t:(\d+)(?::[tTdDfFR])?>/;
 const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
+const TWELVE_HOUR_TIME_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/i;
+const TWENTY_FOUR_HOUR_TIME_PATTERN = /\b([01]?\d|2[0-3]):([0-5]\d)\b/;
+const HOLIDAY_TYPES: HolidaysTypes.HolidayType[] = ['observance', 'optional', 'bank', 'public'];
 
 export function parseCalendarContext(timeZone: string, referenceInstant = new Date().toISOString()): CalendarContext {
   return { referenceInstant, timeZone };
@@ -51,6 +56,11 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
   const explicit = parseExplicitTimestamp(input.text, input.calendarContext);
   if (explicit) {
     return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
+  }
+
+  const holidayCandidate = parseHoliday(input.text, input.calendarContext);
+  if (holidayCandidate) {
+    return { candidates: [holidayCandidate], parserNotes: ['Matched holiday calendar.'] };
   }
 
   const chronoCandidate = parseWithChrono(input.text, input.calendarContext);
@@ -121,9 +131,22 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
   const ambiguity: string[] = [];
   const facts = await candidateFacts({ candidate: input.candidate, calendarContext: input.calendarContext });
   const requestedWeekday = extractWeekday(input.originalText);
+  const requestedHoliday = resolveHolidayFromText(input.originalText, input.calendarContext);
+  const requestedTime = extractTimeOfDay(input.originalText);
 
   if (requestedWeekday && requestedWeekday !== facts.weekday) {
     errors.push(`Input mentioned ${requestedWeekday}, but candidate is ${facts.weekday}.`);
+  }
+
+  if (requestedHoliday && requestedHoliday.isoDate !== facts.isoDate) {
+    errors.push(`Input mentioned ${requestedHoliday.name}, but candidate date is ${facts.isoDate} instead of ${requestedHoliday.isoDate}.`);
+  }
+
+  if (requestedTime.explicit) {
+    const candidateTime = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.calendarContext.timeZone).toPlainTime();
+    if (candidateTime.hour !== requestedTime.hour || candidateTime.minute !== requestedTime.minute) {
+      errors.push(`Input mentioned ${formatRequestedTime(requestedTime)}, but candidate time is ${candidateTime.toString({ smallestUnit: 'minute' })}.`);
+    }
   }
 
   if (input.candidate.precision === 'date') {
@@ -187,6 +210,25 @@ function parseExplicitTimestamp(text: string, calendarContext: CalendarContext):
   } catch {
     return null;
   }
+}
+
+function parseHoliday(text: string, calendarContext: CalendarContext): Candidate | null {
+  const holiday = resolveHolidayFromText(text, calendarContext);
+  if (!holiday) {
+    return null;
+  }
+
+  const time = extractTimeOfDay(text);
+  const zonedDateTime = Temporal.PlainDate.from(holiday.isoDate).toZonedDateTime({
+    timeZone: calendarContext.timeZone,
+    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+  });
+  const assumptions = [`Resolved ${holiday.name} using the ${holiday.country} holiday calendar.`];
+  if (!time.explicit) {
+    assumptions.push('Defaulted date-only expression to 12:00 PM local time.');
+  }
+
+  return createCandidate(zonedDateTime, time.explicit ? 'datetime' : 'date', assumptions, 'holiday_library');
 }
 
 function parseWithChrono(text: string, calendarContext: CalendarContext): Candidate | null {
@@ -258,6 +300,109 @@ function getBaseZonedDateTime(input: ShiftDateTimeInput): Temporal.ZonedDateTime
 
 function referenceZdt(calendarContext: CalendarContext): Temporal.ZonedDateTime {
   return Temporal.Instant.from(calendarContext.referenceInstant).toZonedDateTimeISO(calendarContext.timeZone);
+}
+
+function resolveHolidayFromText(text: string, calendarContext: CalendarContext): { name: string; isoDate: string; country: string } | null {
+  const query = holidayQuery(text);
+  if (!query) {
+    return null;
+  }
+
+  const reference = referenceZdt(calendarContext);
+  const time = extractTimeOfDay(text);
+  const country = calendarContext.country ?? countryFromTimeZone(calendarContext.timeZone);
+  const holidays = new Holidays(country, {
+    timezone: calendarContext.timeZone,
+    types: HOLIDAY_TYPES,
+    languages: calendarContext.locale?.slice(0, 2) ?? 'en',
+  });
+  const matches = [reference.year, reference.year + 1]
+    .flatMap((year) => holidays.getHolidays(year, 'en'))
+    .filter((holiday) => holidayNameMatches(query, holiday.name))
+    .map((holiday) => {
+      const isoDate = holiday.date.slice(0, 10);
+      const zonedDateTime = Temporal.PlainDate.from(isoDate).toZonedDateTime({
+        timeZone: calendarContext.timeZone,
+        plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+      });
+      return { name: holiday.name, isoDate, instant: zonedDateTime.toInstant(), country };
+    })
+    .filter((holiday) => Temporal.Instant.compare(holiday.instant, reference.toInstant()) > 0)
+    .sort((a, b) => Temporal.Instant.compare(a.instant, b.instant));
+
+  return matches[0] ?? null;
+}
+
+function holidayQuery(text: string): string | null {
+  const withoutTimes = text
+    .replace(TWELVE_HOUR_TIME_PATTERN, ' ')
+    .replace(TWENTY_FOUR_HOUR_TIME_PATTERN, ' ')
+    .replace(/\b(?:midnight|noon|morning|afternoon|evening|tonight)\b/gi, ' ')
+    .replace(/\b(?:at|on|the|a|an|this|next|last|coming|upcoming)\b/gi, ' ');
+  const normalized = normalizeHolidayText(withoutTimes);
+  return normalized.length >= 3 ? normalized : null;
+}
+
+function holidayNameMatches(query: string, holidayName: string): boolean {
+  const normalizedName = normalizeHolidayText(holidayName);
+  if (normalizedName.includes(query)) {
+    return true;
+  }
+
+  const queryWords = query.split(' ').filter(Boolean);
+  return queryWords.length > 0 && queryWords.every((word) => normalizedName.includes(word));
+}
+
+function normalizeHolidayText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function countryFromTimeZone(timeZone: string): string {
+  if (timeZone.startsWith('America/Toronto') || timeZone.startsWith('America/Vancouver') || timeZone.startsWith('America/Edmonton')) {
+    return 'CA';
+  }
+  if (timeZone.startsWith('Europe/London')) {
+    return 'GB';
+  }
+  if (timeZone.startsWith('Australia/')) {
+    return 'AU';
+  }
+  return 'US';
+}
+
+function extractTimeOfDay(text: string): { hour: number; minute: number; explicit: boolean } {
+  if (/\bmidnight\b/i.test(text)) {
+    return { hour: 0, minute: 0, explicit: true };
+  }
+  if (/\bnoon\b/i.test(text)) {
+    return { hour: 12, minute: 0, explicit: true };
+  }
+
+  const twelveHour = TWELVE_HOUR_TIME_PATTERN.exec(text);
+  if (twelveHour?.[1] && twelveHour[3]) {
+    const suffix = twelveHour[3].toLowerCase();
+    let hour = Number(twelveHour[1]) % 12;
+    if (suffix === 'pm') {
+      hour += 12;
+    }
+    return { hour, minute: Number(twelveHour[2] ?? 0), explicit: true };
+  }
+
+  const twentyFourHour = TWENTY_FOUR_HOUR_TIME_PATTERN.exec(text);
+  if (twentyFourHour?.[1] && twentyFourHour[2]) {
+    return { hour: Number(twentyFourHour[1]), minute: Number(twentyFourHour[2]), explicit: true };
+  }
+
+  return { hour: 12, minute: 0, explicit: false };
+}
+
+function formatRequestedTime(time: { hour: number; minute: number }): string {
+  return `${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
 }
 
 function isOnlyTimeWithExtraWords(text: string, parsedText: string, start: chrono.ParsedComponents): boolean {

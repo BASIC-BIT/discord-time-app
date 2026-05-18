@@ -200,7 +200,17 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      // Try backend API parsing first
+      const fallbackEpoch = parseFallback(text);
+      let displayedFallback = false;
+      if (fallbackEpoch) {
+        setEpoch(fallbackEpoch);
+        setSelectedIndex(getMostUsedFormatIndex(stats));
+        setConfidence(0.35);
+        setInfo('Quick local estimate shown; verifying...');
+        displayedFallback = true;
+      }
+
+      // Verify with backend API after showing a local estimate when possible.
       const apiClient = createAPIClient();
       let result: { epoch: number; suggestedFormatIndex: number; confidence: number; method: string } | null = null;
       
@@ -223,20 +233,14 @@ export function Overlay({ onClose }: OverlayProps) {
       }
       
       if (result && result.epoch) {
-        // API parsing successful - we already have the epoch
         console.log('API parsed successfully:', result);
         setEpoch(result.epoch);
         setSelectedIndex(result.suggestedFormatIndex);
         setConfidence(result.confidence);
+        setInfo(result.method === 'agent+tools' ? 'Verified with AI parsing.' : 'Verified with deterministic parser.');
       } else {
-        // Fallback to chrono-node directly
-        const fallbackEpoch = parseFallback(text);
-        if (fallbackEpoch) {
-          setEpoch(fallbackEpoch);
-          // Use most used format or default to 0
-          const mostUsedIndex = getMostUsedFormatIndex(stats);
-          setSelectedIndex(mostUsedIndex);
-          setConfidence(0.7); // Medium confidence for fallback
+        if (displayedFallback) {
+          setInfo('Using quick local estimate; verification unavailable.');
         } else {
           setEpoch(null);
           if (isFromClipboard) {
@@ -361,4 +365,4 @@ export function Overlay({ onClose }: OverlayProps) {
       </div>
     </div>
   );
-} 
+}
