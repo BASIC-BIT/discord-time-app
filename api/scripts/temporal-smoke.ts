@@ -47,6 +47,10 @@ async function main() {
   const easterMidnight = await parse('easter midnight');
   assert.equal(easterMidnight.status, 'resolved');
   assert.equal(easterMidnight.canonical?.zonedDateTime.startsWith('2027-03-28T00:00'), true);
+
+  const easter2026 = await parse('easter 2026');
+  assert.equal(easter2026.status, 'resolved');
+  assert.equal(easter2026.canonical?.zonedDateTime.startsWith('2026-04-05T12:00'), true);
 }
 
 main().catch((error: unknown) => {

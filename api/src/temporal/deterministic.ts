@@ -310,13 +310,15 @@ function resolveHolidayFromText(text: string, calendarContext: CalendarContext):
 
   const reference = referenceZdt(calendarContext);
   const time = extractTimeOfDay(text);
+  const explicitYear = extractExplicitYear(text);
   const country = calendarContext.country ?? countryFromTimeZone(calendarContext.timeZone);
   const holidays = new Holidays(country, {
     timezone: calendarContext.timeZone,
     types: HOLIDAY_TYPES,
     languages: calendarContext.locale?.slice(0, 2) ?? 'en',
   });
-  const matches = [reference.year, reference.year + 1]
+  const years = explicitYear === null ? [reference.year, reference.year + 1] : [explicitYear];
+  const matches = years
     .flatMap((year) => holidays.getHolidays(year, 'en'))
     .filter((holiday) => holidayNameMatches(query, holiday.name))
     .map((holiday) => {
@@ -327,7 +329,7 @@ function resolveHolidayFromText(text: string, calendarContext: CalendarContext):
       });
       return { name: holiday.name, isoDate, instant: zonedDateTime.toInstant(), country };
     })
-    .filter((holiday) => Temporal.Instant.compare(holiday.instant, reference.toInstant()) > 0)
+    .filter((holiday) => explicitYear !== null || Temporal.Instant.compare(holiday.instant, reference.toInstant()) > 0)
     .sort((a, b) => Temporal.Instant.compare(a.instant, b.instant));
 
   return matches[0] ?? null;
@@ -337,10 +339,21 @@ function holidayQuery(text: string): string | null {
   const withoutTimes = text
     .replace(TWELVE_HOUR_TIME_PATTERN, ' ')
     .replace(TWENTY_FOUR_HOUR_TIME_PATTERN, ' ')
+    .replace(/\b\d{4}\b/g, ' ')
     .replace(/\b(?:midnight|noon|morning|afternoon|evening|tonight)\b/gi, ' ')
     .replace(/\b(?:at|on|the|a|an|this|next|last|coming|upcoming)\b/gi, ' ');
   const normalized = normalizeHolidayText(withoutTimes);
   return normalized.length >= 3 ? normalized : null;
+}
+
+function extractExplicitYear(text: string): number | null {
+  const match = /\b(\d{4})\b/.exec(text);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  return year >= 1900 && year <= 2200 ? year : null;
 }
 
 function holidayNameMatches(query: string, holidayName: string): boolean {
