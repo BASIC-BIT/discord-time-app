@@ -21,6 +21,11 @@ const CalendarContextSchema = z.object({
   subdivision: z.string().optional(),
 });
 
+const TimeOfDaySchema = z.object({
+  hour: z.number().int().min(0).max(23),
+  minute: z.number().int().min(0).max(59),
+});
+
 export interface TemporalGraphState {
   request: TemporalParseRequest;
   agentAttempts: number;
@@ -117,6 +122,38 @@ async function runAgentGraph(
     },
   );
 
+  const resolveHolidayTool = tool(
+    async (input) => {
+      const holidayInput: Parameters<TemporalToolImplementations['resolveHoliday']>[0] = {
+        holidayName: input.holidayName,
+        calendarContext: toCalendarContext(input.calendarContext),
+      };
+      if (input.year !== undefined) {
+        holidayInput.year = input.year;
+      }
+      if (input.time !== undefined) {
+        holidayInput.time = input.time;
+      }
+
+      const resolved = await options.implementations.resolveHoliday(holidayInput);
+      const enriched = await Promise.all(resolved.candidates.map((candidate) => enrichCandidate(candidate, request, options.implementations)));
+      for (const candidate of enriched) {
+        enrichedCandidates.set(candidate.candidate.id, candidate);
+      }
+      return JSON.stringify({ ...resolved, candidates: enriched });
+    },
+    {
+      name: 'resolve_holiday',
+      description: 'Resolve a named holiday from calendar data. Use this for holiday expressions; do not propose holiday dates from memory.',
+      schema: z.object({
+        holidayName: z.string(),
+        year: z.number().int().min(1900).max(2200).optional(),
+        time: TimeOfDaySchema.optional(),
+        calendarContext: CalendarContextSchema,
+      }),
+    },
+  );
+
   const shiftDateTimeTool = tool(
     async (input) => JSON.stringify(await options.implementations.shiftDateTime({
       base: input.base,
@@ -178,7 +215,7 @@ async function runAgentGraph(
     async (input) => {
       const candidate = enrichedCandidates.get(input.candidateId);
       if (!candidate || !candidate.finalizable) {
-        return JSON.stringify({ accepted: false, error: 'Candidate must be proposed, enriched, and validation-passing before finalization.' });
+        return JSON.stringify({ accepted: false, error: 'Candidate must be proposed or resolved by a tool, enriched, and validation-passing before finalization.' });
       }
       finalizedCandidateId = input.candidateId;
       finalizedRationale = input.rationale;
@@ -186,7 +223,7 @@ async function runAgentGraph(
     },
     {
       name: 'finalize_candidate',
-      description: 'Finalize one candidate that was previously proposed and validated. Only use candidate IDs returned by propose_candidate.',
+      description: 'Finalize one candidate that was previously proposed or resolved by a tool and validated. Only use candidate IDs returned by propose_candidate or resolve_holiday.',
       schema: z.object({ candidateId: z.string(), rationale: z.string() }),
     },
   );
@@ -194,6 +231,7 @@ async function runAgentGraph(
   const tools = [
     parseExpressionTool,
     resolveCalendarQueryTool,
+    resolveHolidayTool,
     shiftDateTimeTool,
     proposeCandidateTool,
     finalizeCandidateTool,
@@ -339,8 +377,9 @@ Rules:
 - Use tools for calendar facts and parsing; do not rely on memory for weekday math.
 - Prefer parse_expression or resolve_calendar_query first.
 - For holidays, always use parse_expression or resolve_calendar_query and trust holiday_library candidates; do not propose holiday dates from memory.
-- You must call propose_candidate before finalize_candidate.
-- Only finalize candidate IDs returned by propose_candidate.
+- You must call propose_candidate or a candidate-resolving tool before finalize_candidate.
+- For holiday expressions, call resolve_holiday and finalize the returned validated candidate.
+- Only finalize candidate IDs returned by propose_candidate or resolve_holiday.
 - If the user mentions a weekday, use tool output and formatted candidate facts to verify the proposed timestamp actually lands on that weekday.
 - If validation rejects a candidate, try another candidate or stop.
 - Keep assumptions explicit.

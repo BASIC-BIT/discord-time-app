@@ -4,6 +4,7 @@ import {
   formatCandidate,
   parseExpression,
   resolveCalendarQuery,
+  resolveHoliday,
   shiftDateTime,
   validateCandidate,
 } from "./deterministic";
@@ -26,6 +27,19 @@ export interface ResolveCalendarQueryInput {
 export interface ResolveCalendarQueryOutput {
   candidates: Candidate[];
   source: "holiday_library" | "chrono" | "shift_math" | "sandbox" | "web" | "explicit";
+  notes: string[];
+}
+
+export interface ResolveHolidayInput {
+  holidayName: string;
+  year?: number;
+  time?: { hour: number; minute: number };
+  calendarContext: CalendarContext;
+}
+
+export interface ResolveHolidayOutput {
+  candidates: Candidate[];
+  source: "holiday_library";
   notes: string[];
 }
 
@@ -77,6 +91,7 @@ export interface FinalizeCandidateInput {
 export interface TemporalToolImplementations {
   parseExpression(input: ParseExpressionInput): Promise<ParseExpressionOutput>;
   resolveCalendarQuery(input: ResolveCalendarQueryInput): Promise<ResolveCalendarQueryOutput>;
+  resolveHoliday(input: ResolveHolidayInput): Promise<ResolveHolidayOutput>;
   shiftDateTime(input: ShiftDateTimeInput): Promise<Candidate>;
   formatCandidate(input: FormatCandidateInput): Promise<string>;
   candidateFacts(input: CandidateFactsInput): Promise<CandidateFacts>;
@@ -86,6 +101,7 @@ export interface TemporalToolImplementations {
 export const AGENT_FACING_TEMPORAL_TOOL_NAMES = [
   "parse_expression",
   "resolve_calendar_query",
+  "resolve_holiday",
   "shift_datetime",
   "propose_candidate",
   "finalize_candidate",
@@ -109,6 +125,10 @@ export function createUnimplementedTemporalToolImplementations(): TemporalToolIm
       void input;
       throw new Error("shiftDateTime is not implemented yet.");
     },
+    async resolveHoliday(input) {
+      void input;
+      throw new Error("resolveHoliday is not implemented yet.");
+    },
     async formatCandidate(input) {
       void input;
       throw new Error("formatCandidate is not implemented yet.");
@@ -128,6 +148,7 @@ export function createDeterministicTemporalToolImplementations(): TemporalToolIm
   return {
     parseExpression,
     resolveCalendarQuery,
+    resolveHoliday,
     shiftDateTime,
     formatCandidate,
     candidateFacts,

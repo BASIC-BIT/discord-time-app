@@ -16,6 +16,8 @@ import type {
   ParseExpressionOutput,
   ResolveCalendarQueryInput,
   ResolveCalendarQueryOutput,
+  ResolveHolidayInput,
+  ResolveHolidayOutput,
   ShiftDateTimeInput,
   ValidateCandidateInput,
   ValidateCandidateOutput,
@@ -58,11 +60,6 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
     return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
   }
 
-  const holidayCandidate = parseHoliday(input.text, input.calendarContext);
-  if (holidayCandidate) {
-    return { candidates: [holidayCandidate], parserNotes: ['Matched holiday calendar.'] };
-  }
-
   const chronoCandidate = parseWithChrono(input.text, input.calendarContext);
   if (chronoCandidate) {
     return { candidates: [chronoCandidate], parserNotes: ['Matched chrono-node parse.'] };
@@ -77,6 +74,27 @@ export async function resolveCalendarQuery(input: ResolveCalendarQueryInput): Pr
     candidates: parsed.candidates,
     source: parsed.candidates[0]?.provenance ?? 'chrono',
     notes: parsed.parserNotes,
+  };
+}
+
+export async function resolveHoliday(input: ResolveHolidayInput): Promise<ResolveHolidayOutput> {
+  const time = input.time === undefined
+    ? { hour: 12, minute: 0, explicit: false }
+    : { hour: input.time.hour, minute: input.time.minute, explicit: true };
+  const holiday = resolveHolidayByName({
+    holidayName: input.holidayName,
+    year: input.year ?? null,
+    time,
+    calendarContext: input.calendarContext,
+  });
+  if (!holiday) {
+    return { candidates: [], source: 'holiday_library', notes: [`No holiday calendar match for ${input.holidayName}.`] };
+  }
+
+  return {
+    candidates: [candidateFromHoliday(holiday, input.calendarContext, time)],
+    source: 'holiday_library',
+    notes: [`Matched ${holiday.name} in ${holiday.country} holiday calendar.`],
   };
 }
 
@@ -212,13 +230,11 @@ function parseExplicitTimestamp(text: string, calendarContext: CalendarContext):
   }
 }
 
-function parseHoliday(text: string, calendarContext: CalendarContext): Candidate | null {
-  const holiday = resolveHolidayFromText(text, calendarContext);
-  if (!holiday) {
-    return null;
-  }
-
-  const time = extractTimeOfDay(text);
+function candidateFromHoliday(
+  holiday: { name: string; isoDate: string; country: string },
+  calendarContext: CalendarContext,
+  time: { hour: number; minute: number; explicit: boolean },
+): Candidate {
   const zonedDateTime = Temporal.PlainDate.from(holiday.isoDate).toZonedDateTime({
     timeZone: calendarContext.timeZone,
     plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
@@ -311,25 +327,41 @@ function resolveHolidayFromText(text: string, calendarContext: CalendarContext):
   const reference = referenceZdt(calendarContext);
   const time = extractTimeOfDay(text);
   const explicitYear = extractExplicitYear(text);
-  const country = calendarContext.country ?? countryFromTimeZone(calendarContext.timeZone);
+  return resolveHolidayByName({ holidayName: query, year: explicitYear, time, calendarContext, reference });
+}
+
+function resolveHolidayByName(input: {
+  holidayName: string;
+  year: number | null;
+  time: { hour: number; minute: number; explicit: boolean };
+  calendarContext: CalendarContext;
+  reference?: Temporal.ZonedDateTime;
+}): { name: string; isoDate: string; country: string } | null {
+  const query = normalizeHolidayText(input.holidayName);
+  if (query.length < 3) {
+    return null;
+  }
+
+  const reference = input.reference ?? referenceZdt(input.calendarContext);
+  const country = input.calendarContext.country ?? countryFromTimeZone(input.calendarContext.timeZone);
   const holidays = new Holidays(country, {
-    timezone: calendarContext.timeZone,
+    timezone: input.calendarContext.timeZone,
     types: HOLIDAY_TYPES,
-    languages: calendarContext.locale?.slice(0, 2) ?? 'en',
+    languages: input.calendarContext.locale?.slice(0, 2) ?? 'en',
   });
-  const years = explicitYear === null ? [reference.year, reference.year + 1] : [explicitYear];
+  const years = input.year === null ? [reference.year, reference.year + 1] : [input.year];
   const matches = years
     .flatMap((year) => holidays.getHolidays(year, 'en'))
     .filter((holiday) => holidayNameMatches(query, holiday.name))
     .map((holiday) => {
       const isoDate = holiday.date.slice(0, 10);
       const zonedDateTime = Temporal.PlainDate.from(isoDate).toZonedDateTime({
-        timeZone: calendarContext.timeZone,
-        plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+        timeZone: input.calendarContext.timeZone,
+        plainTime: Temporal.PlainTime.from({ hour: input.time.hour, minute: input.time.minute }),
       });
       return { name: holiday.name, isoDate, instant: zonedDateTime.toInstant(), country };
     })
-    .filter((holiday) => explicitYear !== null || Temporal.Instant.compare(holiday.instant, reference.toInstant()) > 0)
+    .filter((holiday) => input.year !== null || Temporal.Instant.compare(holiday.instant, reference.toInstant()) > 0)
     .sort((a, b) => Temporal.Instant.compare(a.instant, b.instant));
 
   return matches[0] ?? null;
