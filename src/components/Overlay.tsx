@@ -2,11 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { Row } from './Row';
-import { formats } from '../lib/formats';
+import { formats, getFormatLabel } from '../lib/formats';
 import { getUserTimezone } from '../lib/prompt';
-import { createAPIClient } from '../lib/api-client';
+import { createAPIClient, TimeParserAPIError, type ParseAlternative } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
+
+const LOCAL_FALLBACK_CONFIDENCE = 0.65;
 
 // Function to detect and parse existing Discord timestamps
 function parseExistingTimestamp(text: string): { epoch: number; formatCode: string } | null {
@@ -37,13 +39,16 @@ export function Overlay({ onClose }: OverlayProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
+  const [clarificationAlternatives, setClarificationAlternatives] = useState<ParseAlternative[]>([]);
+  const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
   const [confidence, setConfidence] = useState(1);
   const [isClipboardText, setIsClipboardText] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const selectionTouchedRef = useRef(false);
 
   // Initialize and load clipboard content
   useEffect(() => {
@@ -127,11 +132,23 @@ export function Overlay({ onClose }: OverlayProps) {
       if (existingTimestamp) {
         // Already a timestamp - just update the epoch and format immediately
         setEpoch(existingTimestamp.epoch);
+        setConfidence(1);
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
         const formatIndex = formats.findIndex(f => f.code === existingTimestamp.formatCode);
         setSelectedIndex(formatIndex >= 0 ? formatIndex : 0);
+        selectionTouchedRef.current = false;
         setError(null);
         setLoading(false);
       } else {
+        setEpoch(null);
+        setConfidence(1);
+        setError(null);
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
+        selectionTouchedRef.current = false;
         // Parse as natural language with debounce
         setLoading(true);
         debounceTimeoutRef.current = setTimeout(() => {
@@ -141,7 +158,11 @@ export function Overlay({ onClose }: OverlayProps) {
     } else {
       setEpoch(null);
       setError(null);
-      setInfo(null);
+      setClarificationQuestion(null);
+      setClarificationAlternatives([]);
+      setSelectedAlternativeIndex(0);
+      setConfidence(1);
+      selectionTouchedRef.current = false;
       setLoading(false);
     }
   }, [inputText]);
@@ -163,7 +184,7 @@ export function Overlay({ onClose }: OverlayProps) {
     };
     
     resizeWindow();
-  }, [epoch, loading, error, info]); // Resize when content changes
+  }, [epoch, loading, error, clarificationQuestion, clarificationAlternatives]); // Resize when content changes
 
   // Cleanup on unmount
   useEffect(() => {
@@ -183,7 +204,9 @@ export function Overlay({ onClose }: OverlayProps) {
     abortControllerRef.current = abortController;
     
     setError(null);
-    setInfo(null);
+    setClarificationQuestion(null);
+    setClarificationAlternatives([]);
+    setSelectedAlternativeIndex(0);
     
     try {
       // Check if request was already cancelled
@@ -200,19 +223,19 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      const fallbackEpoch = parseFallback(text);
+      const fallbackEpoch = isFromClipboard ? null : parseFallback(text);
       let displayedFallback = false;
       if (fallbackEpoch) {
         setEpoch(fallbackEpoch);
         setSelectedIndex(getMostUsedFormatIndex(stats));
-        setConfidence(0.35);
-        setInfo('Quick local estimate shown; verifying...');
+        setConfidence(LOCAL_FALLBACK_CONFIDENCE);
         displayedFallback = true;
       }
 
       // Verify with backend API after showing a local estimate when possible.
       const apiClient = createAPIClient();
       let result: { epoch: number; suggestedFormatIndex: number; confidence: number; method: string } | null = null;
+      let apiError: Error | null = null;
       
       if (apiClient) {
         try {
@@ -222,6 +245,7 @@ export function Overlay({ onClose }: OverlayProps) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
+          apiError = error instanceof Error ? error : new Error('Unknown API parsing error');
           console.error('API parsing failed:', error);
           // Fall through to chrono-node fallback
         }
@@ -235,18 +259,29 @@ export function Overlay({ onClose }: OverlayProps) {
       if (result && result.epoch) {
         console.log('API parsed successfully:', result);
         setEpoch(result.epoch);
-        setSelectedIndex(result.suggestedFormatIndex);
+        if (!selectionTouchedRef.current) {
+          setSelectedIndex(result.suggestedFormatIndex);
+        }
         setConfidence(result.confidence);
-        setInfo(result.method === 'agent+tools' ? 'Verified with AI parsing.' : 'Verified with deterministic parser.');
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
       } else {
-        if (displayedFallback) {
-          setInfo('Using quick local estimate; verification unavailable.');
+        const hardParseRejection = apiError instanceof TimeParserAPIError && apiError.status === 400;
+        if (displayedFallback && !hardParseRejection) {
+          setConfidence(LOCAL_FALLBACK_CONFIDENCE);
         } else {
           setEpoch(null);
+          setConfidence(1);
           if (isFromClipboard) {
-            setInfo('Enter a date/time expression like "Jan 15 at 3pm" or "in 2 hours"');
+            setError(null);
+          } else if (apiError instanceof TimeParserAPIError && apiError.alternatives && apiError.alternatives.length > 0) {
+            setClarificationQuestion(apiError.message);
+            setClarificationAlternatives(apiError.alternatives);
+            setSelectedAlternativeIndex(0);
+            setError(null);
           } else {
-            setError('Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');
+            setError(apiError?.message ?? 'Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');
           }
         }
       }
@@ -267,9 +302,76 @@ export function Overlay({ onClose }: OverlayProps) {
     }
   };
 
+  const hasClarification = clarificationQuestion !== null && clarificationAlternatives.length > 0;
+  const showLowConfidence = !loading && epoch !== null && confidence < 0.5;
+  const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
+  const hasInlineStatus = error || hasClarification || showLowConfidence;
+  const showVerifyingTab = loading && !hasClarification && !error;
+  const overlayTone = error
+    ? 'error'
+    : hasClarification
+      ? 'clarifying'
+      : loading
+        ? 'verifying'
+        : showLowConfidence
+          ? 'low-confidence'
+          : epoch !== null && confidence >= 0.85
+            ? 'confident'
+            : epoch !== null
+              ? 'ready'
+              : 'idle';
+  const footerHint = hasClarification
+    ? '←→/Tab to choose • Enter to use • Esc to close'
+    : epoch !== null
+      ? '↑↓/Tab to choose format • Enter to copy • Esc to close'
+      : 'Type a time expression • Esc to close';
+
+  const moveAlternativeSelection = (delta: number) => {
+    setSelectedAlternativeIndex((current) => {
+      const count = clarificationAlternatives.length;
+      if (count === 0) {
+        return 0;
+      }
+      return (current + delta + count) % count;
+    });
+  };
+
+  const handleClarificationAlternative = (alternative: ParseAlternative) => {
+    setEpoch(alternative.epoch);
+    setSelectedIndex(alternative.suggestedFormatIndex);
+    setConfidence(alternative.confidence);
+    setError(null);
+    setClarificationQuestion(null);
+    setClarificationAlternatives([]);
+    setSelectedAlternativeIndex(0);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       onClose();
+    } else if (hasClarification) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const alternative = clarificationAlternatives[selectedAlternativeIndex];
+        if (alternative) {
+          handleClarificationAlternative(alternative);
+        }
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+        e.preventDefault();
+        selectionTouchedRef.current = true;
+        moveAlternativeSelection(-1);
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+        e.preventDefault();
+        selectionTouchedRef.current = true;
+        moveAlternativeSelection(1);
+      } else if (/^[1-9]$/.test(e.key)) {
+        const alternativeIndex = Number(e.key) - 1;
+        const alternative = clarificationAlternatives[alternativeIndex];
+        if (alternative) {
+          e.preventDefault();
+          handleClarificationAlternative(alternative);
+        }
+      }
     } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (epoch !== null) {
@@ -277,9 +379,11 @@ export function Overlay({ onClose }: OverlayProps) {
       }
     } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
       e.preventDefault();
+      selectionTouchedRef.current = true;
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formats.length - 1));
     } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
       e.preventDefault();
+      selectionTouchedRef.current = true;
       setSelectedIndex((prev) => (prev < formats.length - 1 ? prev + 1 : 0));
     }
   };
@@ -298,6 +402,7 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   const handleRowMouseEnter = (index: number) => {
+    selectionTouchedRef.current = true;
     setSelectedIndex(index);
   };
 
@@ -307,7 +412,9 @@ export function Overlay({ onClose }: OverlayProps) {
     // If this is clipboard text and user is typing (not just selecting)
     if (isClipboardText && newValue !== inputText) {
       setIsClipboardText(false);
-      setInfo(null); // Clear info message when user starts typing
+      setClarificationQuestion(null);
+      setClarificationAlternatives([]);
+      setSelectedAlternativeIndex(0);
       // Replace the entire text with just what they typed
       const selectionStart = e.target.selectionStart;
       const selectionEnd = e.target.selectionEnd;
@@ -325,7 +432,7 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   return (
-    <div className="overlay" onKeyDown={handleKeyDown} tabIndex={-1}>
+    <div className={`overlay ${overlayTone}`} onKeyDown={handleKeyDown} tabIndex={-1}>
       <div className="input-section">
         <textarea
           ref={textareaRef}
@@ -335,11 +442,41 @@ export function Overlay({ onClose }: OverlayProps) {
           className="input-textarea"
           rows={2}
         />
-        {loading && <div className="loading">Parsing...</div>}
-        {error && <div className="error">{error}</div>}
-        {info && <div className="info">{info}</div>}
-        {confidence < 0.5 && (
-          <div className="warning">Low confidence - please check the result</div>
+        {epoch !== null && !hasClarification && (
+          <div className="found-time-card" aria-live="polite">
+            <div className="found-time-value">{getFormatLabel(epoch, 5)}</div>
+          </div>
+        )}
+        {hasInlineStatus && (
+          <div className={`status-card ${statusTone}`}>
+            {error && <div className="status-line">{error}</div>}
+            {hasClarification && (
+              <div className="clarification">
+                <div className="clarification-title">{clarificationQuestion}</div>
+                <div className="clarification-help">Use ←/→ or Tab to choose, then Enter.</div>
+                <div className="clarification-options">
+                  {clarificationAlternatives.map((alternative, index) => (
+                    <button
+                      key={`${alternative.label}-${alternative.epoch}`}
+                      type="button"
+                      className={`clarification-option ${index === selectedAlternativeIndex ? 'selected' : ''}`}
+                      aria-pressed={index === selectedAlternativeIndex}
+                      onClick={() => handleClarificationAlternative(alternative)}
+                      onFocus={() => setSelectedAlternativeIndex(index)}
+                      onMouseEnter={() => setSelectedAlternativeIndex(index)}
+                    >
+                      <span className="clarification-key">{index + 1}</span>
+                      <span className="clarification-label">{alternative.label}</span>
+                      <span className="clarification-preview">{getFormatLabel(alternative.epoch, alternative.suggestedFormatIndex)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {showLowConfidence && (
+              <div className="status-line">Low confidence. Check the timestamp before copying.</div>
+            )}
+          </div>
         )}
       </div>
 
@@ -352,6 +489,7 @@ export function Overlay({ onClose }: OverlayProps) {
                 epoch={epoch}
                 formatIndex={index}
                 isSelected={index === selectedIndex}
+                isTentative={loading && index === selectedIndex}
                 onCopyAndClose={handleCopy}
                 onMouseEnter={() => handleRowMouseEnter(index)}
               />
@@ -361,7 +499,13 @@ export function Overlay({ onClose }: OverlayProps) {
       )}
 
       <div className="footer">
-        <span className="hint">↑↓ arrows/Tab to navigate • Enter to copy • Esc to close</span>
+        <div className="footer-status-slot" aria-live="polite">
+          <div className={`verifying-tab ${showVerifyingTab ? 'visible' : ''}`}>
+            <span className="progress-dot" />
+            {epoch !== null ? 'Verifying...' : 'Parsing...'}
+          </div>
+        </div>
+        <span className="hint">{footerHint}</span>
       </div>
     </div>
   );

@@ -70,7 +70,8 @@ const parseRequestSchema = {
   required: ['text'],
   properties: {
     text: { type: 'string', minLength: 1 },
-    tz: { type: 'string', default: 'UTC' }
+    tz: { type: 'string', default: 'UTC' },
+    now: { type: 'string' }
   }
 } as const;
 
@@ -89,7 +90,21 @@ const errorResponseSchema = {
   type: 'object',
   properties: {
     error: { type: 'string' },
-    message: { type: 'string' }
+    message: { type: 'string' },
+    alternatives: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['label', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
+        properties: {
+          label: { type: 'string' },
+          epoch: { type: 'number' },
+          suggestedFormatIndex: { type: 'number' },
+          confidence: { type: 'number' },
+          method: { type: 'string' }
+        }
+      }
+    }
   },
   required: ['error']
 };
@@ -161,15 +176,26 @@ server.post<{ Body: ParseRequest }>('/parse', {
     }
   }
 }, async (request, reply) => {
-  const { text, tz = 'UTC' } = request.body;
+  const { text, tz = 'UTC', now } = request.body;
 
   try {
     const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
       text,
       timeZone: tz,
     };
+    if (now !== undefined) {
+      parseInput.referenceInstant = now;
+    }
     if (config.openaiApiKey !== undefined) {
       parseInput.openaiApiKey = config.openaiApiKey;
+      parseInput.openaiModel = config.openaiModel;
+      parseInput.openaiReasoningEffort = config.openaiReasoningEffort;
+      parseInput.langfuse = {
+        enabled: config.langfuseEnabled,
+      };
+      if (config.langfuseBaseUrl !== undefined) {
+        parseInput.langfuse.baseUrl = config.langfuseBaseUrl;
+      }
     }
 
     const parsed = await parseTemporalExpression(parseInput);
@@ -182,13 +208,22 @@ server.post<{ Body: ParseRequest }>('/parse', {
       confidence: parsed.confidence,
       debug: parsed.debug,
       validation: parsed.validation,
+      ambiguity: parsed.ambiguity,
+      clarificationQuestion: parsed.clarificationQuestion,
     }, 'parse result');
 
     // If all parsing failed
     if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
-        error: 'Could not parse time expression',
-        message: 'Unable to understand the time expression. Please try being more specific.'
+        error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
+        message: userFacingParseErrorMessage(parsed),
+        alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
+          label: alternative.label,
+          epoch: alternative.epoch,
+          suggestedFormatIndex: alternative.suggestedFormatIndex,
+          confidence: alternative.confidence,
+          method: alternative.method,
+        }))
       });
     }
 
@@ -217,6 +252,30 @@ server.post<{ Body: ParseRequest }>('/parse', {
     });
   }
 });
+
+function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemporalExpression>>): string {
+  if (parsed.clarificationQuestion) {
+    return parsed.clarificationQuestion;
+  }
+
+  const internalMessage = parsed.ambiguity[0] ?? parsed.validation.warnings[0] ?? '';
+  if (parsed.status === 'needs_clarification') {
+    if (/am\/pm|meridiem|bare time-like|compact time|bare number/i.test(internalMessage)) {
+      return 'Please include AM or PM, or use 24-hour time like 16:30.';
+    }
+    return 'I need one more detail before making that timestamp.';
+  }
+
+  if (/^Final LLM validation rejected candidate:/i.test(internalMessage)) {
+    return 'I could not confidently turn that into a timestamp. Try adding AM/PM, a date, or more context.';
+  }
+
+  if (/^Agent did not produce a validated final candidate\.?$/i.test(internalMessage)) {
+    return 'I could not confidently turn that into a timestamp. Try adding AM/PM, a date, or more context.';
+  }
+
+  return internalMessage || 'Unable to understand the time expression. Please try being more specific.';
+}
 
 /**
  * Stats endpoint for monitoring

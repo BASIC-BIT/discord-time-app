@@ -3,9 +3,11 @@ import {
   candidateFacts,
   formatCandidate,
   parseExpression,
+  resolveClockTime,
   resolveCalendarQuery,
   resolveHoliday,
   shiftDateTime,
+  setClockTime,
   validateCandidate,
 } from "./deterministic";
 
@@ -43,6 +45,24 @@ export interface ResolveHolidayOutput {
   notes: string[];
 }
 
+export interface ClockTimeCandidate {
+  hour: number;
+  minute: number;
+  normalized: string;
+  assumptions: string[];
+  confidence: number;
+}
+
+export interface ResolveClockTimeInput {
+  text: string;
+  calendarContext: CalendarContext;
+}
+
+export interface ResolveClockTimeOutput {
+  candidates: ClockTimeCandidate[];
+  notes: string[];
+}
+
 export interface ShiftDateTimeInput {
   base: { isoInstant: string } | { plainDate: string; timeZone: string } | { zonedDateTime: string };
   delta: {
@@ -53,6 +73,13 @@ export interface ShiftDateTimeInput {
     hours?: number;
     minutes?: number;
   };
+  time?: { hour: number; minute: number };
+  calendarContext: CalendarContext;
+}
+
+export interface SetClockTimeInput {
+  base: { isoInstant: string } | { plainDate: string; timeZone: string } | { zonedDateTime: string };
+  time: { hour: number; minute: number };
   calendarContext: CalendarContext;
 }
 
@@ -92,7 +119,9 @@ export interface TemporalToolImplementations {
   parseExpression(input: ParseExpressionInput): Promise<ParseExpressionOutput>;
   resolveCalendarQuery(input: ResolveCalendarQueryInput): Promise<ResolveCalendarQueryOutput>;
   resolveHoliday(input: ResolveHolidayInput): Promise<ResolveHolidayOutput>;
+  resolveClockTime(input: ResolveClockTimeInput): Promise<ResolveClockTimeOutput>;
   shiftDateTime(input: ShiftDateTimeInput): Promise<Candidate>;
+  setClockTime(input: SetClockTimeInput): Promise<Candidate>;
   formatCandidate(input: FormatCandidateInput): Promise<string>;
   candidateFacts(input: CandidateFactsInput): Promise<CandidateFacts>;
   validateCandidate(input: ValidateCandidateInput): Promise<ValidateCandidateOutput>;
@@ -102,9 +131,12 @@ export const AGENT_FACING_TEMPORAL_TOOL_NAMES = [
   "parse_expression",
   "resolve_calendar_query",
   "resolve_holiday",
+  "resolve_clock_time",
   "shift_datetime",
+  "set_clock_time",
   "propose_candidate",
   "finalize_candidate",
+  "ask_clarification",
   "sandbox_eval",
   "web_lookup",
 ] as const;
@@ -129,6 +161,14 @@ export function createUnimplementedTemporalToolImplementations(): TemporalToolIm
       void input;
       throw new Error("resolveHoliday is not implemented yet.");
     },
+    async resolveClockTime(input) {
+      void input;
+      throw new Error("resolveClockTime is not implemented yet.");
+    },
+    async setClockTime(input) {
+      void input;
+      throw new Error("setClockTime is not implemented yet.");
+    },
     async formatCandidate(input) {
       void input;
       throw new Error("formatCandidate is not implemented yet.");
@@ -149,7 +189,9 @@ export function createDeterministicTemporalToolImplementations(): TemporalToolIm
     parseExpression,
     resolveCalendarQuery,
     resolveHoliday,
+    resolveClockTime,
     shiftDateTime,
+    setClockTime,
     formatCandidate,
     candidateFacts,
     validateCandidate,

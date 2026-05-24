@@ -27,6 +27,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            api/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -40,6 +43,29 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Install API dependencies
+        working-directory: api
+        run: npm ci
+
+      - name: Check API build
+        working-directory: api
+        run: npm run build
+
+      - name: Run API temporal tests
+        working-directory: api
+        env:
+          DB_PATH: ${{ runner.temp }}/hammer-overlay-api-ci.db
+        run: npm test
+
+      - name: Run live temporal smoke tests if configured
+        working-directory: api
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.5
+          OPENAI_REASONING_EFFORT: low
+          LANGFUSE_ENABLED: 'false'
+        run: npm run test:temporal:live
 
       - name: Run frontend tests
         run: npm test -- --run --reporter=verbose
@@ -111,4 +137,4 @@ jobs:
           echo "🔧 Platform: ${{ matrix.platform }}"
           echo "📝 This was a development build for testing purposes"
           echo ""
-          echo "✅ Build artifacts are available in the Actions artifacts" 
+          echo "✅ Build artifacts are available in the Actions artifacts"

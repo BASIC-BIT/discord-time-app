@@ -39,3 +39,13 @@ This captures follow-up ideas without bloating the v1 implementation.
 
 - Investigate start-on-login for HammerOverlay.
 - Preserve the existing fast hotkey UX; the app is already useful and should not be destabilized by the temporal engine work.
+
+## Overlay UX Follow-Ups
+
+- Add provenance-aware display metadata so the UI can distinguish date/time parts that were directly present in the user's text from parts inferred by the agent or defaulted by deterministic validation.
+- Keep that provenance model LLM/tool-backed; do not add ad hoc regex highlighting for arbitrary natural-language examples.
+- Explore stable-order format ranking: keep the seven Discord formats in the learned order, but visually emphasize formats that preserve the user's likely intent, especially short date, short date/time, long date/time, and relative time.
+- Treat short time and long time as lower priority when the parsed candidate includes a meaningful date unless the user explicitly asked for time-only output.
+- Add a clipboard-intake setting: allow disabling clipboard prefill, and eventually use a small model/classifier to decide whether clipboard text plausibly contains a date/time before auto-filling it.
+- For low-plausibility clipboard text, show an optional "Use clipboard text" action instead of silently parsing copybuffer garbage.
+- For numeric slash inputs like `4/5` and `5/5`, fail closed or ask for clarification when surrounding prose suggests ratings/reviews rather than date intent.

@@ -49,6 +49,44 @@ export interface CandidateFacts {
   timeZone: string;
 }
 
+export interface TemporalAgentContext {
+  reference: {
+    instant: string;
+    timeZone: string;
+    localDate: string;
+    localTime: string;
+    localWeekday: Weekday;
+  };
+  chrono: TemporalChronoContext;
+  holidays: TemporalHolidayHint[];
+}
+
+export interface TemporalChronoContext {
+  status: "matched" | "no_match";
+  matchedText?: string;
+  index?: number;
+  coverage?: {
+    matchedChars: number;
+    inputChars: number;
+  };
+  unparsedText?: string;
+  candidate?: TemporalChronoCandidateContext;
+}
+
+export interface TemporalChronoCandidateContext {
+  isoInstant: string;
+  zonedDateTime: string;
+  timeZone: string;
+  precision: TemporalPrecision;
+}
+
+export interface TemporalHolidayHint {
+  name: string;
+  isoDate: string;
+  country: string;
+  source: "date-holidays";
+}
+
 export interface CandidateFormat {
   style: "short" | "full" | "weekday-check" | "discord-preview";
   formatted: string;
@@ -76,6 +114,22 @@ export interface TemporalValidation {
   checks: string[];
 }
 
+export interface TemporalAgentTraceStep {
+  index: number;
+  type: "llm" | "tool" | "final_validation";
+  name: string;
+  durationMs?: number;
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface TemporalFinalValidation {
+  accepted: boolean;
+  confidence: number;
+  reason: string;
+  missingOrContradictedSignals: string[];
+}
+
 export interface TemporalParseRequest {
   text: string;
   calendarContext: CalendarContext;
@@ -98,20 +152,47 @@ export interface TemporalParseResponse {
   ambiguity: string[];
   validation: TemporalValidation;
   clarificationQuestion?: string;
+  clarificationAlternatives?: TemporalClarificationAlternative[];
   debug?: {
     chosenCandidateId?: string;
     candidateCount?: number;
     agentAttempts?: number;
     toolPasses?: number;
+    deterministicDurationMs?: number;
+    agentDurationMs?: number;
+    totalDurationMs?: number;
+    trace?: TemporalAgentTraceStep[];
+    finalValidation?: TemporalFinalValidation;
+    langfuseTraceId?: string;
   };
+}
+
+export interface TemporalClarificationAlternative {
+  label: string;
+  epoch: number;
+  suggestedFormatIndex: number;
+  confidence: number;
+  method: TemporalMethod;
+  canonical: {
+    isoInstant: string;
+    zonedDateTime: string;
+    timeZone: string;
+    precision: TemporalPrecision;
+    weekday?: Weekday;
+  };
+  assumptions: string[];
 }
 
 export type AgentToolName =
   | "parse_expression"
   | "resolve_calendar_query"
+  | "resolve_holiday"
+  | "resolve_clock_time"
   | "shift_datetime"
+  | "set_clock_time"
   | "propose_candidate"
   | "finalize_candidate"
+  | "ask_clarification"
   | "sandbox_eval"
   | "web_lookup";
 

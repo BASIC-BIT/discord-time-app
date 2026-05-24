@@ -9,9 +9,30 @@ export interface ParseResponse {
   method: string;
 }
 
+export interface ParseAlternative {
+  label: string;
+  epoch: number;
+  suggestedFormatIndex: number;
+  confidence: number;
+  method: string;
+}
+
 export interface ParseError {
   error: string;
   message?: string;
+  alternatives?: ParseAlternative[];
+}
+
+export class TimeParserAPIError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+    public readonly code?: string,
+    public readonly alternatives?: ParseAlternative[],
+  ) {
+    super(message);
+    this.name = 'TimeParserAPIError';
+  }
 }
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8857';
@@ -54,7 +75,7 @@ export class TimeParserAPIClient {
 
       if (!response.ok) {
         const errorData = await response.json() as ParseError;
-        throw new Error(errorData.message || `API error: ${response.status}`);
+        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives);
       }
 
       const data = await response.json() as ParseResponse;
@@ -75,9 +96,12 @@ export class TimeParserAPIClient {
       if (error instanceof Error && error.name === 'AbortError') {
         throw error;
       }
+      if (error instanceof TimeParserAPIError) {
+        throw error;
+      }
       
       // Re-throw with more context
-      throw new Error(`Failed to parse time: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new TimeParserAPIError(`Failed to parse time: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

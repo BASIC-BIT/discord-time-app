@@ -7,9 +7,18 @@
 export interface ParseRequest {
   text: string;
   tz: string;
+  now?: string;
 }
 
 export interface ParseResponse {
+  epoch: number;
+  suggestedFormatIndex: number;
+  confidence: number;
+  method: string;
+}
+
+export interface ParseAlternative {
+  label: string;
   epoch: number;
   suggestedFormatIndex: number;
   confidence: number;
@@ -20,6 +29,7 @@ export interface ParseResponse {
 export interface ErrorResponse {
   error: string;
   message?: string;
+  alternatives?: ParseAlternative[];
 }
 
 // Database interface
@@ -37,6 +47,12 @@ export interface UsageRecord {
 // Environment variables interface
 export interface EnvConfig {
   OPENAI_API_KEY: string | undefined;
+  OPENAI_MODEL: string;
+  OPENAI_REASONING_EFFORT: string;
+  LANGFUSE_ENABLED: boolean;
+  LANGFUSE_PUBLIC_KEY: string | undefined;
+  LANGFUSE_SECRET_KEY: string | undefined;
+  LANGFUSE_BASE_URL: string | undefined;
   STATIC_API_KEY: string;
   PORT: number;
   DB_PATH: string;

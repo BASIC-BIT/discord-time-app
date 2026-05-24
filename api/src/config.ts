@@ -15,8 +15,16 @@ export class Config {
    * Load configuration from environment variables
    */
   private loadConfig(): EnvConfig {
+    const langfusePublicKey = this.getOptionalEnvVar('LANGFUSE_PUBLIC_KEY');
+    const langfuseSecretKey = this.getOptionalEnvVar('LANGFUSE_SECRET_KEY');
     return {
       OPENAI_API_KEY: this.getOptionalEnvVar('OPENAI_API_KEY'),
+      OPENAI_MODEL: this.getEnvVar('OPENAI_MODEL', 'gpt-5.5'),
+      OPENAI_REASONING_EFFORT: this.getEnvVar('OPENAI_REASONING_EFFORT', 'low'),
+      LANGFUSE_ENABLED: this.getBooleanEnvVar('LANGFUSE_ENABLED', langfusePublicKey !== undefined && langfuseSecretKey !== undefined),
+      LANGFUSE_PUBLIC_KEY: langfusePublicKey,
+      LANGFUSE_SECRET_KEY: langfuseSecretKey,
+      LANGFUSE_BASE_URL: this.getOptionalEnvVar('LANGFUSE_BASE_URL') ?? this.getOptionalEnvVar('LANGFUSE_HOST'),
       STATIC_API_KEY: this.getEnvVar('STATIC_API_KEY', 'STATIC_KEY_123'),
       PORT: parseInt(this.getEnvVar('PORT', '8857'), 10),
       DB_PATH: this.getEnvVar('DB_PATH', 'usage.db')
@@ -42,6 +50,14 @@ export class Config {
     return value ? value : undefined;
   }
 
+  private getBooleanEnvVar(name: string, defaultValue: boolean): boolean {
+    const value = process.env[name]?.trim().toLowerCase();
+    if (value === undefined || value === '') {
+      return defaultValue;
+    }
+    return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+  }
+
   /**
    * Validate configuration
    */
@@ -61,6 +77,10 @@ export class Config {
       throw new Error('STATIC_API_KEY cannot be empty');
     }
 
+    if (this.config.LANGFUSE_ENABLED && (this.config.LANGFUSE_PUBLIC_KEY === undefined || this.config.LANGFUSE_SECRET_KEY === undefined)) {
+      throw new Error('LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when LANGFUSE_ENABLED is true');
+    }
+
     console.log('Configuration validated successfully');
   }
 
@@ -76,6 +96,22 @@ export class Config {
    */
   public get openaiApiKey(): string | undefined {
     return this.config.OPENAI_API_KEY;
+  }
+
+  public get openaiModel(): string {
+    return this.config.OPENAI_MODEL;
+  }
+
+  public get openaiReasoningEffort(): string {
+    return this.config.OPENAI_REASONING_EFFORT;
+  }
+
+  public get langfuseEnabled(): boolean {
+    return this.config.LANGFUSE_ENABLED;
+  }
+
+  public get langfuseBaseUrl(): string | undefined {
+    return this.config.LANGFUSE_BASE_URL;
   }
 
   public get staticApiKey(): string {
@@ -96,6 +132,12 @@ export class Config {
   public getSanitizedConfig(): Partial<EnvConfig> {
     return {
       OPENAI_API_KEY: this.config.OPENAI_API_KEY === undefined ? 'not configured' : this.config.OPENAI_API_KEY.slice(0, 7) + '...',
+      OPENAI_MODEL: this.config.OPENAI_MODEL,
+      OPENAI_REASONING_EFFORT: this.config.OPENAI_REASONING_EFFORT,
+      LANGFUSE_ENABLED: this.config.LANGFUSE_ENABLED,
+      LANGFUSE_PUBLIC_KEY: this.config.LANGFUSE_PUBLIC_KEY === undefined ? 'not configured' : this.config.LANGFUSE_PUBLIC_KEY.slice(0, 7) + '...',
+      LANGFUSE_SECRET_KEY: this.config.LANGFUSE_SECRET_KEY === undefined ? 'not configured' : 'configured',
+      LANGFUSE_BASE_URL: this.config.LANGFUSE_BASE_URL,
       STATIC_API_KEY: this.config.STATIC_API_KEY.slice(0, 6) + '...',
       PORT: this.config.PORT,
       DB_PATH: this.config.DB_PATH
