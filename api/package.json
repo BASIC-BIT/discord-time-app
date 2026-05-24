@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "test": "npm run test:temporal",
     "test:temporal": "tsx scripts/temporal-smoke.ts",
-    "test:temporal:live": "tsx scripts/temporal-live-smoke.ts"
+    "test:temporal:live": "tsx scripts/temporal-live-smoke.ts",
+    "eval:temporal": "tsx scripts/temporal-model-eval.ts"
   },
   "keywords": [
     "api",

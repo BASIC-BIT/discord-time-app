@@ -74,6 +74,15 @@ jobs:
           LANGFUSE_ENABLED: 'false'
         run: npm run test:temporal:live
 
+      - name: Run temporal model evals if configured
+        working-directory: api
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGFUSE_ENABLED: 'false'
+          TEMPORAL_EVAL_MODELS: ${{ vars.TEMPORAL_EVAL_MODELS }}
+          TEMPORAL_EVAL_REQUIRE_OPENAI: ${{ vars.TEMPORAL_EVAL_REQUIRE_OPENAI }}
+        run: npm run eval:temporal
+
       - name: Extract version from tag
         shell: bash
         run: |

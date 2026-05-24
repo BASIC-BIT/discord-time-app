@@ -422,8 +422,21 @@ async function runAgentGraph(
 
   const llmCall = async (state: typeof MessagesAnnotation.State) => {
     const startedAt = nowMs();
-    const result = await modelWithTools.invoke([new SystemMessage(systemPrompt(request, agentContext)), ...state.messages], callbacks === undefined ? undefined : { callbacks });
-    trace.push({ index: trace.length + 1, type: 'llm', name: 'agent', durationMs: elapsedMs(startedAt), output: summarizeAiMessage(result) });
+    const system = systemPrompt(request, agentContext);
+    const messages = [new SystemMessage(system), ...state.messages];
+    const result = await modelWithTools.invoke(messages, callbacks === undefined ? undefined : { callbacks });
+    trace.push({
+      index: trace.length + 1,
+      type: 'llm',
+      name: 'agent',
+      durationMs: elapsedMs(startedAt),
+      input: {
+        messageCount: messages.length,
+        systemPromptChars: system.length,
+        totalMessageChars: messageContentChars(messages),
+      },
+      output: summarizeAiMessage(result),
+    });
     return { messages: [result] };
   };
   const toolNode = new ToolNode(tools);
@@ -932,6 +945,23 @@ function countToolMessages(messages: BaseMessage[]): number {
 
 function countAgentMessages(messages: BaseMessage[]): number {
   return messages.filter((message) => message.getType() === 'ai').length;
+}
+
+function messageContentChars(messages: BaseMessage[]): number {
+  return messages.reduce((total, message) => total + contentChars(message.content), 0);
+}
+
+function contentChars(content: unknown): number {
+  if (typeof content === 'string') {
+    return content.length;
+  }
+  if (Array.isArray(content)) {
+    return content.reduce((total, part) => total + contentChars(part), 0);
+  }
+  if (content === undefined || content === null) {
+    return 0;
+  }
+  return JSON.stringify(content).length;
 }
 
 function suggestedFormatIndex(text: string, precision: Candidate['precision']): number {
