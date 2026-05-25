@@ -10,7 +10,8 @@
     "test": "npm run test:temporal",
     "test:temporal": "tsx scripts/temporal-smoke.ts",
     "test:temporal:live": "tsx scripts/temporal-live-smoke.ts",
-    "eval:temporal": "tsx scripts/temporal-model-eval.ts"
+    "eval:temporal": "tsx scripts/temporal-model-eval.ts",
+    "eval:temporal:report": "tsx scripts/temporal-eval-report.ts"
   },
   "keywords": [
     "api",

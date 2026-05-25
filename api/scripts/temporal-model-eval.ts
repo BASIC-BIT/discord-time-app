@@ -59,6 +59,11 @@ type EvalResult = {
     llmDurationMs: number;
     toolDurationMs: number;
     finalValidationDurationMs: number;
+    llmTurns: number;
+    toolCallCount: number;
+    finalValidationCount: number;
+    toolSequence: string[];
+    toolCounts: Record<string, number>;
     maxSystemPromptChars: number;
     maxTotalMessageChars: number;
   };
@@ -127,6 +132,20 @@ const evalCases: TemporalEvalCase[] = [
     text: 'next saturday 10pm',
     category: 'weekday-boundary-ambiguity',
     expected: { status: 'needs_clarification', alternativeEpochs: [1780192800, 1780797600] },
+    required: false,
+  },
+  {
+    id: 'simple-weekday-shortcut-pressure',
+    text: 'next tuesday',
+    category: 'latency-shortcut-pressure',
+    expected: { status: 'resolved', epoch: 1779811200, suggestedFormatIndex: 1 },
+    required: false,
+  },
+  {
+    id: 'event-post-text-start-end',
+    text: 'Club night: Friday May 29, doors 8pm, main set 10:30pm',
+    category: 'future-event-extraction-pressure',
+    expected: { status: 'resolved', epoch: 1780108200, suggestedFormatIndex: 5 },
     required: false,
   },
 ];
@@ -259,6 +278,8 @@ function metricsFromResponse(parsed: TemporalParseResponse): EvalResult['metrics
     .filter((step) => step.type === 'llm')
     .map((step) => step.input)
     .filter(isPromptMetrics);
+  const toolSequence = trace.filter((step) => step.type === 'tool').map((step) => step.name);
+  const toolCounts = countBy(toolSequence);
 
   return {
     agentAttempts: parsed.debug?.agentAttempts,
@@ -272,6 +293,11 @@ function metricsFromResponse(parsed: TemporalParseResponse): EvalResult['metrics
     llmDurationMs,
     toolDurationMs,
     finalValidationDurationMs,
+    llmTurns: trace.filter((step) => step.type === 'llm').length,
+    toolCallCount: toolSequence.length,
+    finalValidationCount: trace.filter((step) => step.type === 'final_validation').length,
+    toolSequence,
+    toolCounts,
     maxSystemPromptChars: Math.max(0, ...promptInputs.map((input) => input.systemPromptChars)),
     maxTotalMessageChars: Math.max(0, ...promptInputs.map((input) => input.totalMessageChars)),
   };
@@ -296,8 +322,11 @@ function printSummary(results: EvalResult[]) {
     const median = percentile(durations, 0.5);
     const p95 = percentile(durations, 0.95);
     const maxPromptChars = Math.max(0, ...modelResults.map((result) => result.metrics?.maxTotalMessageChars ?? 0));
+    const meanTools = mean(modelResults.map((result) => result.metrics?.toolCallCount ?? 0));
+    const meanLlmTurns = mean(modelResults.map((result) => result.metrics?.llmTurns ?? 0));
+    const meanFirstLlm = mean(modelResults.map((result) => result.metrics?.firstLlmResponseMs ?? 0));
     const diagnosticSummary = diagnosticResults.length > 0 ? `, diagnostics=${diagnosticPassed}/${diagnosticResults.length}` : '';
-    console.log(`${model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, maxPromptChars=${maxPromptChars}`);
+    console.log(`${model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}`);
     for (const result of modelResults) {
       const status = result.required ? (result.passed ? 'PASS' : 'FAIL') : (result.passed ? 'DIAG-PASS' : 'DIAG');
       const detail = result.error ?? result.mismatch ?? `${result.status} epoch=${result.epoch ?? 'none'}`;
@@ -327,6 +356,22 @@ function splitList(value: string | undefined): string[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function countBy(values: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) {
+    counts[value] = (counts[value] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function mean(values: number[]): number {
+  const finite = values.filter(Number.isFinite);
+  if (finite.length === 0) {
+    return 0;
+  }
+  return finite.reduce((total, value) => total + value, 0) / finite.length;
 }
 
 function percentile(values: number[], quantile: number): number {

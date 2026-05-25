@@ -19,7 +19,10 @@ Run from `api/`:
 ```powershell
 $env:TEMPORAL_EVAL_MODELS = "gpt-5.4-mini,gpt-5.5,gpt-5.4-nano"
 $env:OPENAI_API_KEY = "..."
+$env:TEMPORAL_EVAL_OUTPUT = "reports/temporal-eval.json"
 npm run eval:temporal
+$env:TEMPORAL_EVAL_INPUT = $env:TEMPORAL_EVAL_OUTPUT
+npm run eval:temporal:report
 ```
 
 Useful options:
@@ -28,10 +31,13 @@ Useful options:
 - `TEMPORAL_EVAL_OUTPUT`: write full JSON results to a path.
 - `TEMPORAL_EVAL_LIMIT`: run the first N eval cases for quick iteration.
 - `TEMPORAL_EVAL_REPEATS`: repeat each model/case N times to measure stochastic reliability.
+- `TEMPORAL_EVAL_INPUT`: JSON file consumed by the HTML report generator.
+- `TEMPORAL_EVAL_REPORT`: HTML report path, defaulting to `reports/temporal-eval.html`.
+- `TEMPORAL_EVAL_SUMMARY`: optional machine-readable summary JSON path.
 - `TEMPORAL_EVAL_REQUIRE_OPENAI=1`: fail instead of skipping when credentials or model list are missing.
 - `TEMPORAL_EVAL_NOW` and `TEMPORAL_EVAL_TZ`: override the fixed eval clock and timezone.
 
-The eval output tracks pass/fail, end-to-end latency, graph timing, first model response latency, first candidate latency, final response latency, LLM/tool/final-validation duration, tool pass count, agent attempt count, and prompt character counts from graph trace metadata.
+The eval output tracks pass/fail, end-to-end latency, graph timing, first model response latency, first candidate latency, final response latency, LLM/tool/final-validation duration, tool call counts, tool sequences, tool pass count, agent attempt count, and prompt character counts from graph trace metadata.
 
 These fields are API analytics-ready, but they are not true token-level TTFT. Exact TTFT requires streaming model callbacks, which should be added behind an instrumentation flag once the non-streaming router baseline is stable.
 
