@@ -181,7 +181,7 @@ async function runAgentGraph(
       for (const candidate of enriched) {
         enrichedCandidates.set(candidate.candidate.id, candidate);
       }
-      const output = { ...parsed, candidates: enriched };
+      const output = { parserNotes: parsed.parserNotes, candidates: enriched.map(compactEnrichedCandidate) };
       recordTool('parse_expression', input, output, startedAt);
       return JSON.stringify(output);
     },
@@ -206,7 +206,7 @@ async function runAgentGraph(
       for (const candidate of enriched) {
         enrichedCandidates.set(candidate.candidate.id, candidate);
       }
-      const output = { ...resolved, candidates: enriched };
+      const output = { source: resolved.source, notes: resolved.notes, candidates: enriched.map(compactEnrichedCandidate) };
       recordTool('resolve_calendar_query', input, output, startedAt);
       return JSON.stringify(output);
     },
@@ -239,7 +239,7 @@ async function runAgentGraph(
       for (const candidate of enriched) {
         enrichedCandidates.set(candidate.candidate.id, candidate);
       }
-      const output = { ...resolved, candidates: enriched };
+      const output = { source: resolved.source, notes: resolved.notes, candidates: enriched.map(compactEnrichedCandidate) };
       recordTool('resolve_holiday', input, output, startedAt);
       return JSON.stringify(output);
     },
@@ -284,8 +284,9 @@ async function runAgentGraph(
       const enriched = await enrichCandidate(candidate, request, options.implementations);
       markCandidate();
       enrichedCandidates.set(enriched.candidate.id, enriched);
-      recordTool('shift_datetime', input, enriched, startedAt);
-      return JSON.stringify(enriched);
+      const output = compactEnrichedCandidate(enriched);
+      recordTool('shift_datetime', input, output, startedAt);
+      return JSON.stringify(output);
     },
     {
       name: 'shift_datetime',
@@ -317,8 +318,9 @@ async function runAgentGraph(
       const enriched = await enrichCandidate(candidate, request, options.implementations);
       markCandidate();
       enrichedCandidates.set(enriched.candidate.id, enriched);
-      recordTool('set_clock_time', input, enriched, startedAt);
-      return JSON.stringify(enriched);
+      const output = compactEnrichedCandidate(enriched);
+      recordTool('set_clock_time', input, output, startedAt);
+      return JSON.stringify(output);
     },
     {
       name: 'set_clock_time',
@@ -345,8 +347,9 @@ async function runAgentGraph(
       markCandidate();
       enrichedCandidates.set(enriched.candidate.id, enriched);
       agentProposedCandidateIds.add(enriched.candidate.id);
-      recordTool('propose_candidate', input, enriched, startedAt);
-      return JSON.stringify(enriched);
+      const output = compactEnrichedCandidate(enriched);
+      recordTool('propose_candidate', input, output, startedAt);
+      return JSON.stringify(output);
     },
     {
       name: 'propose_candidate',
@@ -375,7 +378,7 @@ async function runAgentGraph(
       }
       finalizedCandidateId = input.candidateId;
       finalizedRationale = input.rationale;
-      const output = { accepted: true, candidate };
+      const output = { accepted: true, candidate: compactEnrichedCandidate(candidate) };
       recordTool('finalize_candidate', input, output, startedAt);
       return JSON.stringify(output);
     },
@@ -405,7 +408,7 @@ async function runAgentGraph(
         })
         .filter((alternative): alternative is TemporalClarificationAlternative => alternative !== null);
       const output = alternatives.length === input.alternatives.length
-        ? { accepted: true, question: input.question, alternatives }
+        ? { accepted: true, question: input.question, alternatives: alternatives.map(compactClarificationAlternative) }
         : { accepted: false, error: 'All clarification alternatives must reference existing usable candidate IDs.' };
       recordTool('ask_clarification', input, output, startedAt);
       if (output.accepted) {
@@ -814,6 +817,49 @@ function responseFromEnrichedCandidate(
   };
 
   return response;
+}
+
+function compactEnrichedCandidate(enriched: EnrichedCandidate): Record<string, unknown> {
+  return cleanUndefined({
+    candidate: {
+      id: enriched.candidate.id,
+      isoInstant: enriched.candidate.isoInstant,
+      zonedDateTime: enriched.candidate.zonedDateTime,
+      timeZone: enriched.candidate.timeZone,
+      precision: enriched.candidate.precision,
+      provenance: enriched.candidate.provenance,
+      assumptions: enriched.candidate.assumptions,
+    },
+    facts: compactCandidateFacts(enriched.facts),
+    validation: enriched.validation,
+    finalizable: enriched.finalizable,
+  });
+}
+
+function compactCandidateFacts(facts: EnrichedCandidate['facts']): Record<string, unknown> | undefined {
+  if (facts === undefined) {
+    return undefined;
+  }
+  return cleanUndefined({
+    weekday: facts.weekday,
+    isoDate: facts.isoDate,
+    isoInstant: facts.isoInstant,
+    dayOfWeek: facts.dayOfWeek,
+    weekOfYear: facts.weekOfYear,
+    month: facts.month,
+    year: facts.year,
+    timeZone: facts.timeZone,
+  });
+}
+
+function compactClarificationAlternative(alternative: TemporalClarificationAlternative): Record<string, unknown> {
+  return {
+    label: alternative.label,
+    epoch: alternative.epoch,
+    suggestedFormatIndex: alternative.suggestedFormatIndex,
+    confidence: alternative.confidence,
+    method: alternative.method,
+  };
 }
 
 function responseFromRejectedFinalValidation(
