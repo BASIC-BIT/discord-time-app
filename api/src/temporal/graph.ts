@@ -173,6 +173,21 @@ async function runAgentGraph(
     }
     response.debug.finalResponseMs = elapsedMs(agentGraphStartedAt);
   };
+  const autoFinalizeSoleCandidate = (rationale: string) => {
+    const autoFinalized = onlyFinalizableCandidate(enrichedCandidates);
+    if (autoFinalized === null || blocksAutoFinalize(autoFinalized, request.text)) {
+      return false;
+    }
+    finalizedCandidateId = autoFinalized.candidate.id;
+    finalizedRationale = rationale;
+    trace.push({
+      index: trace.length + 1,
+      type: 'router',
+      name: 'auto_finalize_candidate',
+      output: compactEnrichedCandidate(autoFinalized),
+    });
+    return true;
+  };
 
   const parseExpressionTool = tool(
     async (input) => {
@@ -504,7 +519,15 @@ async function runAgentGraph(
     .addNode('toolNode', toolNode)
     .addEdge(START, 'llmCall')
     .addConditionalEdges('llmCall', shouldContinue, ['toolNode', END])
-    .addEdge('toolNode', 'llmCall')
+    .addConditionalEdges('toolNode', () => {
+      if (finalizedCandidateId || clarificationResponseRef.current) {
+        return END;
+      }
+      if (autoFinalizeSoleCandidate('Auto-finalized the only validated candidate after a tool pass.')) {
+        return END;
+      }
+      return 'llmCall';
+    }, ['llmCall', END])
     .compile();
 
   const finalState = await graph.invoke(
@@ -536,24 +559,19 @@ async function runAgentGraph(
   }
 
   if (!finalizedCandidateId) {
-    const autoFinalized = onlyFinalizableCandidate(enrichedCandidates);
-    if (autoFinalized !== null) {
-      finalizedCandidateId = autoFinalized.candidate.id;
-      finalizedRationale = 'Auto-finalized the only validated candidate after the agent stopped without calling finalize_candidate.';
-      trace.push({
-        index: trace.length + 1,
-        type: 'router',
-        name: 'auto_finalize_candidate',
-        output: compactEnrichedCandidate(autoFinalized),
-      });
-    } else {
+    if (!autoFinalizeSoleCandidate('Auto-finalized the only validated candidate after the agent stopped without calling finalize_candidate.')) {
       const response = responseFromUnfinalizedAgent(enrichedCandidates.size, toolPasses, agentAttempts, trace, getLangfuseTraceId(langfuseHandler));
       attachAgentDebug(response);
       return response;
     }
   }
 
-  const finalized = enrichedCandidates.get(finalizedCandidateId);
+  const finalizedId = finalizedCandidateId;
+  if (finalizedId === null) {
+    return null;
+  }
+
+  const finalized = enrichedCandidates.get(finalizedId);
   if (!finalized) {
     return null;
   }
@@ -886,6 +904,19 @@ function onlyFinalizableCandidate(enrichedCandidates: Map<string, EnrichedCandid
   return finalizable.length === 1 ? finalizable[0]! : null;
 }
 
+function blocksAutoFinalize(enriched: EnrichedCandidate, originalText: string): boolean {
+  return enriched.candidate.precision === 'date' && hasTrailingNonYearNumber(originalText);
+}
+
+function hasTrailingNonYearNumber(text: string): boolean {
+  const match = /\b(\d{1,4})\s*$/.exec(text.trim());
+  if (!match?.[1]) {
+    return false;
+  }
+  const value = Number(match[1]);
+  return !(match[1].length === 4 && value >= 1900 && value <= 2200);
+}
+
 function responseFromRejectedFinalValidation(
   enriched: EnrichedCandidate,
   finalValidation: TemporalFinalValidation,
@@ -1017,6 +1048,7 @@ Rules:
 - Do not call a dependent tool in parallel with the tool that produces its base candidate ID. For example, shift_datetime must wait for the candidate it shifts unless you provide an explicit base instant/date.
 - Use factual context as a hint, not as a final answer. Candidate IDs still must come from tools before finalization.
 - If chrono context has unparsedText, treat the chrono candidate as incomplete until the remaining text has been accounted for.
+- If factual context has chrono.candidate plus unparsedText that is a relative modifier, use shift_datetime directly with base.zonedDateTime from chrono.candidate and the modifier's delta. Do not rediscover the same chrono candidate through parse_expression first.
 - For holidays, call resolve_holiday and trust holiday_library candidates; do not propose holiday dates from memory.
 - If factual context contains holiday hints, use them to choose resolve_holiday arguments instead of guessing holiday names or dates.
 - If full-expression parsing fails or returns a rejected partial candidate, decompose the expression with tools.

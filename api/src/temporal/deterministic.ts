@@ -158,7 +158,7 @@ export async function shiftDateTime(input: ShiftDateTimeInput): Promise<Candidat
     });
     assumptions.push(`Applied explicit clock time ${formatRequestedTime(input.time)} to shifted date.`);
   }
-  return createCandidate(shifted, input.time === undefined ? 'relative' : 'datetime', assumptions, 'shift_math');
+  return createCandidate(shifted, input.time === undefined && isDefaultDateOnlyNoon(base) ? 'relative' : 'datetime', assumptions, 'shift_math');
 }
 
 export async function setClockTime(input: SetClockTimeInput): Promise<Candidate> {
@@ -623,6 +623,15 @@ function extractTimeOfDay(text: string): { hour: number; minute: number; explici
 
 function formatRequestedTime(time: { hour: number; minute: number }): string {
   return `${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
+}
+
+function isDefaultDateOnlyNoon(zonedDateTime: Temporal.ZonedDateTime): boolean {
+  return zonedDateTime.hour === 12
+    && zonedDateTime.minute === 0
+    && zonedDateTime.second === 0
+    && zonedDateTime.millisecond === 0
+    && zonedDateTime.microsecond === 0
+    && zonedDateTime.nanosecond === 0;
 }
 
 function resolveClockTimeCandidates(text: string): ResolveClockTimeOutput['candidates'] {
