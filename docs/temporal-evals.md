@@ -2,7 +2,7 @@
 
 ## Current Default
 
-- Production default model: `gpt-5.4-mini`.
+- Production default model: `gpt-5.5`.
 - Production default reasoning effort: `low`.
 - Do not switch defaults based on one prompt or one manual run. Use the eval harness first.
 
@@ -50,7 +50,7 @@ Some cases are diagnostic rather than required. For example, `next saturday 10pm
 
 ## Routing Strategy
 
-- Treat `gpt-5.4-mini` as the current default candidate while evals run. Keep `gpt-5.5` as the quality fallback and `gpt-5.4-nano` as experimental until it passes baseline cases.
+- Keep `gpt-5.5` as the production default until cheaper candidates show repeated reliability on required evals. Treat `gpt-5.4-mini` as the leading cost/latency candidate and `gpt-5.4-nano` as experimental until it passes baseline cases.
 - Prefer routing by workflow step only after eval data shows a stable split, such as a faster planner model plus a stronger final validator.
 - Keep deterministic code focused on calendar arithmetic, validation, and formatting; use model routing for fuzzy interpretation rather than adding phrase tables.
 - Optimize time-to-first-use before optimizing total graph sophistication: fewer LLM passes, smaller prompts, smaller tool outputs, and fewer final validation calls matter more than provider abstraction right now.

@@ -164,6 +164,7 @@ export interface TemporalParseResponse {
     firstLlmResponseMs?: number;
     firstCandidateMs?: number;
     finalResponseMs?: number;
+    shortCircuitReason?: string;
     model?: string;
     reasoningEffort?: string;
     trace?: TemporalAgentTraceStep[];

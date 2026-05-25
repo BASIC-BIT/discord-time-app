@@ -10,7 +10,7 @@ import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, Temp
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
 
-const DEFAULT_OPENAI_MODEL = 'gpt-5.4-mini';
+const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
 
 export const DEFAULT_TEMPORAL_GRAPH_LIMITS = {
@@ -95,6 +95,13 @@ export async function runTemporalCoalescingGraph(
   const fallback = await deterministicParse(request, options.implementations);
   if (!options.openaiApiKey) {
     attachTopLevelTiming(fallback, totalStartedAt);
+    return fallback;
+  }
+
+  if (shouldShortCircuitDeterministic(fallback)) {
+    fallback.debug = fallback.debug ?? {};
+    fallback.debug.shortCircuitReason = 'deterministic_resolved_validation_passed';
+    attachTopLevelTiming(fallback, totalStartedAt, fallback.debug.deterministicDurationMs);
     return fallback;
   }
 
@@ -1091,6 +1098,14 @@ function suggestedFormatIndex(text: string, precision: Candidate['precision']): 
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function shouldShortCircuitDeterministic(response: TemporalParseResponse): boolean {
+  return response.status === 'resolved'
+    && response.epoch !== undefined
+    && response.method === 'deterministic'
+    && response.validation.passed
+    && response.ambiguity.length === 0;
 }
 
 function nowMs(): number {

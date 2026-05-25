@@ -19,7 +19,7 @@ export class Config {
     const langfuseSecretKey = this.getOptionalEnvVar('LANGFUSE_SECRET_KEY');
     return {
       OPENAI_API_KEY: this.getOptionalEnvVar('OPENAI_API_KEY'),
-      OPENAI_MODEL: this.getEnvVar('OPENAI_MODEL', 'gpt-5.4-mini'),
+      OPENAI_MODEL: this.getEnvVar('OPENAI_MODEL', 'gpt-5.5'),
       OPENAI_REASONING_EFFORT: this.getEnvVar('OPENAI_REASONING_EFFORT', 'low'),
       LANGFUSE_ENABLED: this.getBooleanEnvVar('LANGFUSE_ENABLED', langfusePublicKey !== undefined && langfuseSecretKey !== undefined),
       LANGFUSE_PUBLIC_KEY: langfusePublicKey,
