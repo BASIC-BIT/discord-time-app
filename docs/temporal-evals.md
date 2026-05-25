@@ -18,6 +18,7 @@ Run from `api/`:
 
 ```powershell
 $env:TEMPORAL_EVAL_MODELS = "gpt-5.4-mini,gpt-5.5,gpt-5.4-nano"
+$env:TEMPORAL_EVAL_BASELINES = "deterministic,single-call:gpt-5.4-mini"
 $env:OPENAI_API_KEY = "..."
 $env:TEMPORAL_EVAL_OUTPUT = "reports/temporal-eval.json"
 npm run eval:temporal
@@ -28,6 +29,8 @@ npm run eval:temporal:report
 Useful options:
 
 - `TEMPORAL_EVAL_MODELS`: comma-separated model list; entries can specify reasoning effort as `model:effort`.
+- `TEMPORAL_EVAL_BASELINES`: comma-separated baseline runners. Supported values are `deterministic` and `single-call:model[:effort]`.
+- `TEMPORAL_EVAL_BLOCKING_RUNNERS`: comma-separated runner names whose required failures should fail the process. Defaults to `agent`, so baseline failures stay comparative.
 - `TEMPORAL_EVAL_OUTPUT`: write full JSON results to a path.
 - `TEMPORAL_EVAL_LIMIT`: run the first N eval cases for quick iteration.
 - `TEMPORAL_EVAL_REPEATS`: repeat each model/case N times to measure stochastic reliability.
@@ -41,6 +44,8 @@ The eval output tracks pass/fail, end-to-end latency, graph timing, first model 
 
 These fields are API analytics-ready, but they are not true token-level TTFT. Exact TTFT requires streaming model callbacks, which should be added behind an instrumentation flag once the non-streaming router baseline is stable.
 
+Baseline runners are eval-only. `deterministic` measures the existing local parser without model calls. `single-call:model` measures a non-agentic structured model call with no tools so we can compare raw model latency/accuracy against the LangGraph tool chain.
+
 Some cases are diagnostic rather than required. For example, `next saturday 10pm` from a Sunday currently records whether the model asks for clarification between the coming Saturday and the Saturday after that, without failing the whole eval suite. Flip diagnostic cases to required only after the product semantics are chosen.
 
 ## Routing Strategy
@@ -49,3 +54,7 @@ Some cases are diagnostic rather than required. For example, `next saturday 10pm
 - Prefer routing by workflow step only after eval data shows a stable split, such as a faster planner model plus a stronger final validator.
 - Keep deterministic code focused on calendar arithmetic, validation, and formatting; use model routing for fuzzy interpretation rather than adding phrase tables.
 - Optimize time-to-first-use before optimizing total graph sophistication: fewer LLM passes, smaller prompts, smaller tool outputs, and fewer final validation calls matter more than provider abstraction right now.
+
+## Autoresearcher-Style Loop
+
+Karpathy's AutoResearch pattern is a useful north star for parser optimization: define an eval suite, let an agent propose one small change, run the leaderboard, keep the change only if required pass rate holds and latency improves. For this repo, keep that loop constrained to prompt/tool-output/router changes and require the static eval report as the artifact for every accepted experiment.

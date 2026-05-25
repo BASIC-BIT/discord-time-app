@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { ChatOpenAI } from '@langchain/openai';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import * as z from 'zod';
 import { parseTemporalExpression } from '../src/temporal';
 import type { TemporalParseResponse } from '../src/temporal/types';
 
@@ -24,12 +27,33 @@ type TemporalEvalCase = {
 };
 
 type ModelSpec = {
+  runner: 'agent' | 'single_call' | 'deterministic';
   provider: 'openai';
   model: string;
   reasoningEffort: string;
 };
 
+type DeterministicSpec = {
+  runner: 'deterministic';
+  provider: 'local';
+  model: 'deterministic';
+  reasoningEffort: 'none';
+};
+
+type EvalRunnerSpec = ModelSpec | DeterministicSpec;
+
+type EvalParsed = {
+  status: TemporalParseResponse['status'];
+  epoch?: number;
+  suggestedFormatIndex?: number;
+  confidence: number;
+  method: string;
+  clarificationAlternatives?: Array<{ epoch: number }>;
+  debug?: TemporalParseResponse['debug'];
+};
+
 type EvalResult = {
+  runner: EvalRunnerSpec['runner'];
   model: string;
   provider: string;
   reasoningEffort: string;
@@ -74,9 +98,23 @@ const timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? 'America/New_York';
 const openaiApiKey = process.env['OPENAI_API_KEY'];
 const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
 const modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
+const baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
 const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
 const limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
 const repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
+const blockingRunners = splitList(process.env['TEMPORAL_EVAL_BLOCKING_RUNNERS'] ?? 'agent');
+
+const SingleCallResponseSchema = z.object({
+  status: z.enum(['resolved', 'needs_clarification', 'failed']),
+  epoch: z.number().int().nullable(),
+  suggestedFormatIndex: z.number().int().min(0).max(6).nullable(),
+  confidence: z.number().min(0).max(1),
+  reason: z.string(),
+  alternatives: z.array(z.object({
+    label: z.string(),
+    epoch: z.number().int(),
+  })),
+});
 
 const evalCases: TemporalEvalCase[] = [
   {
@@ -151,25 +189,25 @@ const evalCases: TemporalEvalCase[] = [
 ];
 
 async function main() {
-  if (modelSpecs.length === 0) {
+  const runnerSpecs: EvalRunnerSpec[] = [...modelSpecs, ...baselineSpecs];
+  if (runnerSpecs.length === 0) {
     if (requireEval) {
-      throw new Error('TEMPORAL_EVAL_MODELS is required when TEMPORAL_EVAL_REQUIRE_OPENAI=1.');
+      throw new Error('TEMPORAL_EVAL_MODELS or TEMPORAL_EVAL_BASELINES is required when TEMPORAL_EVAL_REQUIRE_OPENAI=1.');
     }
-    console.log('Skipping temporal model eval because TEMPORAL_EVAL_MODELS is not configured.');
+    console.log('Skipping temporal model eval because TEMPORAL_EVAL_MODELS and TEMPORAL_EVAL_BASELINES are not configured.');
     return;
   }
 
-  if (openaiApiKey === undefined) {
+  if (runnerSpecs.some((spec) => spec.runner !== 'deterministic') && openaiApiKey === undefined) {
     if (requireEval) {
       throw new Error('OPENAI_API_KEY is required when TEMPORAL_EVAL_REQUIRE_OPENAI=1.');
     }
-    console.log('Skipping temporal model eval because OPENAI_API_KEY is not configured.');
-    return;
+    console.log('Skipping OpenAI temporal eval runners because OPENAI_API_KEY is not configured.');
   }
 
   const cases = limit === undefined ? evalCases : evalCases.slice(0, limit);
   const results: EvalResult[] = [];
-  for (const modelSpec of modelSpecs) {
+  for (const modelSpec of runnerSpecs.filter((spec) => spec.runner === 'deterministic' || openaiApiKey !== undefined)) {
     for (const evalCase of cases) {
       for (let repeat = 1; repeat <= repeats; repeat += 1) {
         results.push(await runCase(modelSpec, evalCase, repeat));
@@ -184,25 +222,18 @@ async function main() {
     console.log(`Wrote temporal eval results to ${outputPath}`);
   }
 
-  if (results.some((result) => result.required && !result.passed)) {
+  if (results.some((result) => result.required && !result.passed && blockingRunners.includes(result.runner))) {
     process.exitCode = 1;
   }
 }
 
-async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase, repeat: number): Promise<EvalResult> {
+async function runCase(modelSpec: EvalRunnerSpec, evalCase: TemporalEvalCase, repeat: number): Promise<EvalResult> {
   const startedAt = Date.now();
   try {
-    const parsed = await parseTemporalExpression({
-      text: evalCase.text,
-      timeZone,
-      referenceInstant,
-      openaiApiKey: openaiApiKey!,
-      openaiModel: modelSpec.model,
-      openaiReasoningEffort: modelSpec.reasoningEffort,
-      langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
-    });
+    const parsed = await runEvalRunner(modelSpec, evalCase.text);
     const mismatch = evaluateParsed(evalCase, parsed);
     return {
+      runner: modelSpec.runner,
       model: modelSpec.model,
       provider: modelSpec.provider,
       reasoningEffort: modelSpec.reasoningEffort,
@@ -223,6 +254,7 @@ async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase, repeat:
     };
   } catch (error) {
     return {
+      runner: modelSpec.runner,
       model: modelSpec.model,
       provider: modelSpec.provider,
       reasoningEffort: modelSpec.reasoningEffort,
@@ -238,7 +270,82 @@ async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase, repeat:
   }
 }
 
-function evaluateParsed(evalCase: TemporalEvalCase, parsed: TemporalParseResponse): string | undefined {
+async function runEvalRunner(modelSpec: EvalRunnerSpec, text: string): Promise<EvalParsed> {
+  if (modelSpec.runner === 'deterministic') {
+    return parseTemporalExpression({ text, timeZone, referenceInstant });
+  }
+
+  if (modelSpec.runner === 'single_call') {
+    return runSingleCallBaseline(modelSpec, text);
+  }
+
+  return parseTemporalExpression({
+    text,
+    timeZone,
+    referenceInstant,
+    openaiApiKey: openaiApiKey!,
+    openaiModel: modelSpec.model,
+    openaiReasoningEffort: modelSpec.reasoningEffort,
+    langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
+  });
+}
+
+async function runSingleCallBaseline(modelSpec: ModelSpec, text: string): Promise<EvalParsed> {
+  const startedAt = Date.now();
+  const system = `Convert natural language temporal text into one exact timestamp or an explicit clarification request.
+
+Return JSON matching the requested schema only.
+Use epoch seconds for all timestamps.
+Reference instant: ${referenceInstant}
+Time zone: ${timeZone}
+Discord format indexes: 0 short date, 1 long date, 2 short time, 3 long time, 4 short date/time, 5 long date/time, 6 relative.
+If AM/PM, "next weekday", or another phrase is materially ambiguous, return needs_clarification with alternatives.
+Do not call tools. Do not explain outside the schema.`;
+  const human = JSON.stringify({ text, referenceInstant, timeZone });
+  const model = createChatModel(modelSpec.model, modelSpec.reasoningEffort).withStructuredOutput(SingleCallResponseSchema);
+  const result = await model.invoke([new SystemMessage(system), new HumanMessage(human)]);
+  const durationMs = Date.now() - startedAt;
+  const parsed: EvalParsed = {
+    status: result.status,
+    confidence: result.confidence,
+    method: 'single-call',
+    debug: {
+      model: modelSpec.model,
+      reasoningEffort: modelSpec.reasoningEffort,
+      totalDurationMs: durationMs,
+      agentDurationMs: durationMs,
+      firstLlmResponseMs: durationMs,
+      finalResponseMs: durationMs,
+      trace: [{
+        index: 1,
+        type: 'llm',
+        name: 'single_call',
+        durationMs,
+        input: {
+          messageCount: 2,
+          systemPromptChars: system.length,
+          totalMessageChars: system.length + human.length,
+        },
+        output: result,
+      }],
+    },
+  };
+  if (result.epoch !== null) {
+    parsed.epoch = result.epoch;
+  }
+  if (result.suggestedFormatIndex !== null) {
+    parsed.suggestedFormatIndex = result.suggestedFormatIndex;
+  }
+  if (result.status !== 'failed') {
+    parsed.debug!.firstCandidateMs = durationMs;
+  }
+  if (result.alternatives.length > 0) {
+    parsed.clarificationAlternatives = result.alternatives.map((alternative) => ({ epoch: alternative.epoch }));
+  }
+  return parsed;
+}
+
+function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string | undefined {
   if (parsed.status !== evalCase.expected.status) {
     return `expected status ${evalCase.expected.status}, got ${parsed.status}`;
   }
@@ -263,7 +370,7 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: TemporalParseRespons
   return undefined;
 }
 
-function metricsFromResponse(parsed: TemporalParseResponse): EvalResult['metrics'] {
+function metricsFromResponse(parsed: EvalParsed): EvalResult['metrics'] {
   const trace = parsed.debug?.trace ?? [];
   const llmDurationMs = trace
     .filter((step) => step.type === 'llm')
@@ -312,8 +419,9 @@ function isPromptMetrics(value: unknown): value is { systemPromptChars: number; 
 }
 
 function printSummary(results: EvalResult[]) {
-  for (const model of unique(results.map((result) => result.model))) {
-    const modelResults = results.filter((result) => result.model === model);
+  for (const modelKey of unique(results.map((result) => `${result.runner}:${result.model}:${result.reasoningEffort}`))) {
+    const modelResults = results.filter((result) => `${result.runner}:${result.model}:${result.reasoningEffort}` === modelKey);
+    const firstResult = modelResults[0]!;
     const requiredResults = modelResults.filter((result) => result.required);
     const diagnosticResults = modelResults.filter((result) => !result.required);
     const passed = requiredResults.filter((result) => result.passed).length;
@@ -326,7 +434,7 @@ function printSummary(results: EvalResult[]) {
     const meanLlmTurns = mean(modelResults.map((result) => result.metrics?.llmTurns ?? 0));
     const meanFirstLlm = mean(modelResults.map((result) => result.metrics?.firstLlmResponseMs ?? 0));
     const diagnosticSummary = diagnosticResults.length > 0 ? `, diagnostics=${diagnosticPassed}/${diagnosticResults.length}` : '';
-    console.log(`${model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}`);
+    console.log(`${firstResult.runner}/${firstResult.model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}`);
     for (const result of modelResults) {
       const status = result.required ? (result.passed ? 'PASS' : 'FAIL') : (result.passed ? 'DIAG-PASS' : 'DIAG');
       const detail = result.error ?? result.mismatch ?? `${result.status} epoch=${result.epoch ?? 'none'}`;
@@ -340,11 +448,46 @@ function parseModelSpecs(value: string | undefined): ModelSpec[] {
   return splitList(value).map((entry) => {
     const [model, reasoningEffort] = entry.split(':');
     return {
+      runner: 'agent',
       provider: 'openai',
       model: model ?? entry,
       reasoningEffort: reasoningEffort ?? process.env['OPENAI_REASONING_EFFORT'] ?? 'low',
     };
   });
+}
+
+function parseBaselineSpecs(value: string | undefined): EvalRunnerSpec[] {
+  return splitList(value).map((entry) => {
+    if (entry === 'deterministic') {
+      return { runner: 'deterministic', provider: 'local', model: 'deterministic', reasoningEffort: 'none' };
+    }
+
+    const [kind, model, reasoningEffort] = entry.split(':');
+    if ((kind === 'single' || kind === 'single-call') && model !== undefined && model.length > 0) {
+      return {
+        runner: 'single_call',
+        provider: 'openai',
+        model,
+        reasoningEffort: reasoningEffort ?? process.env['OPENAI_REASONING_EFFORT'] ?? 'low',
+      };
+    }
+
+    throw new Error(`Unknown TEMPORAL_EVAL_BASELINES entry: ${entry}`);
+  });
+}
+
+function createChatModel(model: string, reasoningEffort: string): ChatOpenAI {
+  if (model.startsWith('gpt-5')) {
+    return new ChatOpenAI({ apiKey: openaiApiKey!, model, reasoning: { effort: normalizeReasoningEffort(reasoningEffort), summary: 'auto' }, useResponsesApi: true });
+  }
+  return new ChatOpenAI({ apiKey: openaiApiKey!, model, temperature: 0 });
+}
+
+function normalizeReasoningEffort(effort: string): 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' {
+  if (effort === 'none' || effort === 'minimal' || effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh') {
+    return effort;
+  }
+  return 'low';
 }
 
 function splitList(value: string | undefined): string[] {
