@@ -59,6 +59,10 @@ const TEMPORAL_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|noon|midn
 const MONTH_DAY_AT_END_PATTERN = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\s*$/i;
 const DATE_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next|last|this|coming|upcoming)\b/i;
 
+let candidateIdSequence = 0;
+let supportedHolidayCountryCache: Set<string> | undefined;
+const timeZoneCountryCache = new Map<string, string | null>();
+
 interface HolidayMatch {
   name: string;
   isoDate: string;
@@ -537,7 +541,10 @@ function findHolidayMatches(input: {
   }
 
   const reference = input.reference ?? referenceZdt(input.calendarContext);
-  const country = input.calendarContext.country ?? countryFromTimeZone(input.calendarContext.timeZone);
+  const country = holidayCountryFromContext(input.calendarContext);
+  if (country === null) {
+    return [];
+  }
   const holidays = new Holidays(country, {
     timezone: input.calendarContext.timeZone,
     types: HOLIDAY_TYPES,
@@ -599,17 +606,70 @@ function normalizeHolidayText(text: string): string {
     .replace(/\s+/g, ' ');
 }
 
-function countryFromTimeZone(timeZone: string): string {
-  if (timeZone.startsWith('America/Toronto') || timeZone.startsWith('America/Vancouver') || timeZone.startsWith('America/Edmonton')) {
-    return 'CA';
+function holidayCountryFromContext(calendarContext: CalendarContext): string | null {
+  const explicitCountry = normalizeCountryCode(calendarContext.country);
+  if (explicitCountry !== null && supportedHolidayCountries().has(explicitCountry)) {
+    return explicitCountry;
   }
-  if (timeZone.startsWith('Europe/London')) {
-    return 'GB';
+
+  const localeCountry = countryFromLocale(calendarContext.locale);
+  if (localeCountry !== null && countryHasTimeZone(localeCountry, calendarContext.timeZone)) {
+    return localeCountry;
   }
-  if (timeZone.startsWith('Australia/')) {
-    return 'AU';
+
+  return countryFromTimeZone(calendarContext.timeZone);
+}
+
+function countryFromTimeZone(timeZone: string): string | null {
+  const cached = timeZoneCountryCache.get(timeZone);
+  if (cached !== undefined) {
+    return cached;
   }
-  return 'US';
+
+  const matches = [...supportedHolidayCountries()].filter((country) => countryHasTimeZone(country, timeZone));
+  const country = matches.length === 1 ? matches[0]! : null;
+  timeZoneCountryCache.set(timeZone, country);
+  return country;
+}
+
+function countryHasTimeZone(country: string, timeZone: string): boolean {
+  try {
+    return new Holidays(country).getTimezones().includes(timeZone);
+  } catch {
+    return false;
+  }
+}
+
+function supportedHolidayCountries(): Set<string> {
+  if (supportedHolidayCountryCache === undefined) {
+    supportedHolidayCountryCache = new Set(Object.keys(new Holidays().getCountries('en')));
+  }
+  return supportedHolidayCountryCache;
+}
+
+function countryFromLocale(locale: string | undefined): string | null {
+  if (locale === undefined) {
+    return null;
+  }
+
+  const parts = locale.split(/[-_]/);
+  for (const part of parts.slice(1)) {
+    const country = normalizeCountryCode(part);
+    if (country !== null && supportedHolidayCountries().has(country)) {
+      return country;
+    }
+  }
+
+  return null;
+}
+
+function normalizeCountryCode(country: string | undefined): string | null {
+  if (country === undefined) {
+    return null;
+  }
+
+  const normalized = country.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
 }
 
 function extractTimeOfDay(text: string): { hour: number; minute: number; explicit: boolean } {
@@ -725,7 +785,7 @@ function createCandidate(
   provenance: Candidate['provenance'],
 ): Candidate {
   return {
-    id: `cand_${zonedDateTime.epochMilliseconds}_${provenance}`,
+    id: `cand_${zonedDateTime.epochMilliseconds}_${provenance}_${nextCandidateIdSequence()}`,
     isoInstant: zonedDateTime.toInstant().toString(),
     zonedDateTime: zonedDateTime.toString(),
     timeZone: zonedDateTime.timeZoneId,
@@ -733,6 +793,11 @@ function createCandidate(
     assumptions,
     provenance,
   };
+}
+
+function nextCandidateIdSequence(): number {
+  candidateIdSequence = (candidateIdSequence + 1) % Number.MAX_SAFE_INTEGER;
+  return candidateIdSequence;
 }
 
 function extractWeekday(text: string): Weekday | null {

@@ -80,6 +80,12 @@ async function main() {
   const easter2026 = await tools.resolveHoliday({ holidayName: 'easter', year: 2026, calendarContext });
   assert.equal(easter2026.candidates[0]?.zonedDateTime.startsWith('2026-04-05T12:00'), true);
 
+  const noUsFallbackHoliday = await tools.resolveHoliday({
+    holidayName: 'thanksgiving',
+    calendarContext: { ...calendarContext, timeZone: 'Europe/Paris' },
+  });
+  assert.equal(noUsFallbackHoliday.candidates.length, 0);
+
   const parsedCompound = await parse('day after a week from tomorrow at 133t time');
   assert.equal(parsedCompound.status, 'failed');
 

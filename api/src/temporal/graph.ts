@@ -48,6 +48,13 @@ const FinalValidationSchema = z.object({
 });
 
 type LangfuseHandler = BaseCallbackHandler & { last_trace_id: string | null };
+type LangfuseCallbackParams = {
+  sessionId?: string;
+  userId?: string;
+  tags?: string[];
+  traceMetadata?: Record<string, unknown>;
+  baseUrl?: string;
+};
 
 export interface TemporalGraphState {
   request: TemporalParseRequest;
@@ -1175,16 +1182,8 @@ async function createLangfuseHandler(options: TemporalGraphOptions, request: Tem
   if (options.langfuse?.enabled !== true) {
     return null;
   }
-  if (options.langfuse.baseUrl !== undefined && process.env['LANGFUSE_BASE_URL'] === undefined) {
-    process.env['LANGFUSE_BASE_URL'] = options.langfuse.baseUrl;
-  }
   const { CallbackHandler } = await import('@langfuse/langchain');
-  const params: {
-    sessionId?: string;
-    userId?: string;
-    tags?: string[];
-    traceMetadata?: Record<string, unknown>;
-  } = {
+  const params: LangfuseCallbackParams = {
     tags: ['temporal-parse', ...(options.langfuse.tags ?? [])],
     traceMetadata: {
       timeZone: request.calendarContext.timeZone,
@@ -1197,6 +1196,9 @@ async function createLangfuseHandler(options: TemporalGraphOptions, request: Tem
   }
   if (options.langfuse.userId !== undefined) {
     params.userId = options.langfuse.userId;
+  }
+  if (options.langfuse.baseUrl !== undefined) {
+    params.baseUrl = options.langfuse.baseUrl;
   }
   return new CallbackHandler(params) as LangfuseHandler;
 }
