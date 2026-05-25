@@ -10,6 +10,9 @@ import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, Temp
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
 
+const DEFAULT_OPENAI_MODEL = 'gpt-5.4-mini';
+const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
+
 export const DEFAULT_TEMPORAL_GRAPH_LIMITS = {
   maxAgentAttempts: 3,
   maxToolPasses: 10,
@@ -132,6 +135,11 @@ async function runAgentGraph(
 
   const enrichedCandidates = new Map<string, EnrichedCandidate>();
   const agentProposedCandidateIds = new Set<string>();
+  const agentGraphStartedAt = nowMs();
+  const modelName = options.openaiModel ?? DEFAULT_OPENAI_MODEL;
+  const reasoningEffort = options.openaiReasoningEffort ?? DEFAULT_OPENAI_REASONING_EFFORT;
+  let firstLlmResponseMs: number | undefined;
+  let firstCandidateMs: number | undefined;
   let finalizedCandidateId: string | null = null;
   let finalizedRationale = '';
   const clarificationResponseRef: { current: TemporalParseResponse | null } = { current: null };
@@ -143,6 +151,21 @@ async function runAgentGraph(
   const recordTool = (name: string, input: unknown, output: unknown, startedAt: number) => {
     trace.push({ index: trace.length + 1, type: 'tool', name, durationMs: elapsedMs(startedAt), input: summarizeValue(input), output: summarizeValue(output) });
   };
+  const markCandidate = () => {
+    firstCandidateMs ??= elapsedMs(agentGraphStartedAt);
+  };
+  const attachAgentDebug = (response: TemporalParseResponse) => {
+    response.debug = response.debug ?? {};
+    response.debug.model = modelName;
+    response.debug.reasoningEffort = reasoningEffort;
+    if (firstLlmResponseMs !== undefined) {
+      response.debug.firstLlmResponseMs = firstLlmResponseMs;
+    }
+    if (firstCandidateMs !== undefined) {
+      response.debug.firstCandidateMs = firstCandidateMs;
+    }
+    response.debug.finalResponseMs = elapsedMs(agentGraphStartedAt);
+  };
 
   const parseExpressionTool = tool(
     async (input) => {
@@ -152,6 +175,9 @@ async function runAgentGraph(
         calendarContext: toCalendarContext(input.calendarContext),
       });
       const enriched = await Promise.all(parsed.candidates.map((candidate) => enrichCandidate(candidate, request, options.implementations)));
+      if (enriched.length > 0) {
+        markCandidate();
+      }
       for (const candidate of enriched) {
         enrichedCandidates.set(candidate.candidate.id, candidate);
       }
@@ -174,6 +200,9 @@ async function runAgentGraph(
         calendarContext: toCalendarContext(input.calendarContext),
       });
       const enriched = await Promise.all(resolved.candidates.map((candidate) => enrichCandidate(candidate, request, options.implementations)));
+      if (enriched.length > 0) {
+        markCandidate();
+      }
       for (const candidate of enriched) {
         enrichedCandidates.set(candidate.candidate.id, candidate);
       }
@@ -204,6 +233,9 @@ async function runAgentGraph(
 
       const resolved = await options.implementations.resolveHoliday(holidayInput);
       const enriched = await Promise.all(resolved.candidates.map((candidate) => enrichCandidate(candidate, request, options.implementations)));
+      if (enriched.length > 0) {
+        markCandidate();
+      }
       for (const candidate of enriched) {
         enrichedCandidates.set(candidate.candidate.id, candidate);
       }
@@ -250,6 +282,7 @@ async function runAgentGraph(
         calendarContext: toCalendarContext(input.calendarContext),
       });
       const enriched = await enrichCandidate(candidate, request, options.implementations);
+      markCandidate();
       enrichedCandidates.set(enriched.candidate.id, enriched);
       recordTool('shift_datetime', input, enriched, startedAt);
       return JSON.stringify(enriched);
@@ -282,6 +315,7 @@ async function runAgentGraph(
         calendarContext: toCalendarContext(input.calendarContext),
       });
       const enriched = await enrichCandidate(candidate, request, options.implementations);
+      markCandidate();
       enrichedCandidates.set(enriched.candidate.id, enriched);
       recordTool('set_clock_time', input, enriched, startedAt);
       return JSON.stringify(enriched);
@@ -308,6 +342,7 @@ async function runAgentGraph(
         assumptions: input.assumptions,
       });
       const enriched = await enrichCandidate(candidate, request, options.implementations);
+      markCandidate();
       enrichedCandidates.set(enriched.candidate.id, enriched);
       agentProposedCandidateIds.add(enriched.candidate.id);
       recordTool('propose_candidate', input, enriched, startedAt);
@@ -417,7 +452,7 @@ async function runAgentGraph(
     finalizeCandidateTool,
     askClarificationTool,
   ];
-  const model = createChatModel(options.openaiApiKey, options.openaiModel ?? 'gpt-5.5', options.openaiReasoningEffort ?? 'low');
+  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
   const modelWithTools = model.bindTools(tools, { parallel_tool_calls: true });
 
   const llmCall = async (state: typeof MessagesAnnotation.State) => {
@@ -425,6 +460,7 @@ async function runAgentGraph(
     const system = systemPrompt(request, agentContext);
     const messages = [new SystemMessage(system), ...state.messages];
     const result = await modelWithTools.invoke(messages, callbacks === undefined ? undefined : { callbacks });
+    firstLlmResponseMs ??= elapsedMs(agentGraphStartedAt);
     trace.push({
       index: trace.length + 1,
       type: 'llm',
@@ -470,7 +506,7 @@ async function runAgentGraph(
           runName: 'temporal-coalescing-graph',
           tags: ['temporal-parse'],
           metadata: {
-            model: options.openaiModel ?? 'gpt-5.5',
+            model: modelName,
             timeZone: request.calendarContext.timeZone,
           },
         },
@@ -485,11 +521,14 @@ async function runAgentGraph(
     response.debug.agentAttempts = agentAttempts;
     response.debug.toolPasses = toolPasses;
     response.debug.trace = trace;
+    attachAgentDebug(response);
     return response;
   }
 
   if (!finalizedCandidateId) {
-    return responseFromUnfinalizedAgent(enrichedCandidates.size, toolPasses, agentAttempts, trace, getLangfuseTraceId(langfuseHandler));
+    const response = responseFromUnfinalizedAgent(enrichedCandidates.size, toolPasses, agentAttempts, trace, getLangfuseTraceId(langfuseHandler));
+    attachAgentDebug(response);
+    return response;
   }
 
   const finalized = enrichedCandidates.get(finalizedCandidateId);
@@ -510,7 +549,7 @@ async function runAgentGraph(
     output: finalValidation,
   });
   if (!finalValidation.accepted) {
-    return responseFromRejectedFinalValidation(
+    const response = responseFromRejectedFinalValidation(
       finalized,
       finalValidation,
       enrichedCandidates.size,
@@ -519,9 +558,11 @@ async function runAgentGraph(
       trace,
       getLangfuseTraceId(langfuseHandler),
     );
+    attachAgentDebug(response);
+    return response;
   }
 
-  return responseFromEnrichedCandidate(
+  const response = responseFromEnrichedCandidate(
     finalized,
     'agent+tools',
     Math.min(0.9, Math.max(0.5, finalValidation.confidence)),
@@ -534,6 +575,8 @@ async function runAgentGraph(
     getLangfuseTraceId(langfuseHandler),
     request.text,
   );
+  attachAgentDebug(response);
+  return response;
 }
 
 async function deterministicParse(
@@ -1036,7 +1079,7 @@ async function createLangfuseHandler(options: TemporalGraphOptions, request: Tem
     traceMetadata: {
       timeZone: request.calendarContext.timeZone,
       referenceInstant: request.calendarContext.referenceInstant,
-      model: options.openaiModel ?? 'gpt-5.5',
+      model: options.openaiModel ?? DEFAULT_OPENAI_MODEL,
     },
   };
   if (options.langfuse.sessionId !== undefined) {

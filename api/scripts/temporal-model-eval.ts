@@ -20,6 +20,7 @@ type TemporalEvalCase = {
   text: string;
   category: string;
   expected: ExpectedResolved | ExpectedClarification;
+  required?: boolean;
 };
 
 type ModelSpec = {
@@ -33,8 +34,10 @@ type EvalResult = {
   provider: string;
   reasoningEffort: string;
   caseId: string;
+  repeat: number;
   text: string;
   category: string;
+  required: boolean;
   passed: boolean;
   durationMs: number;
   status?: string;
@@ -50,6 +53,9 @@ type EvalResult = {
     totalDurationMs?: number;
     agentDurationMs?: number;
     deterministicDurationMs?: number;
+    firstLlmResponseMs?: number;
+    firstCandidateMs?: number;
+    finalResponseMs?: number;
     llmDurationMs: number;
     toolDurationMs: number;
     finalValidationDurationMs: number;
@@ -65,6 +71,7 @@ const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
 const modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
 const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
 const limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
+const repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
 
 const evalCases: TemporalEvalCase[] = [
   {
@@ -115,6 +122,13 @@ const evalCases: TemporalEvalCase[] = [
     category: 'holiday',
     expected: { status: 'resolved', epoch: 1775404800, suggestedFormatIndex: 4 },
   },
+  {
+    id: 'next-weekday-boundary-sunday',
+    text: 'next saturday 10pm',
+    category: 'weekday-boundary-ambiguity',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1780192800, 1780797600] },
+    required: false,
+  },
 ];
 
 async function main() {
@@ -138,7 +152,9 @@ async function main() {
   const results: EvalResult[] = [];
   for (const modelSpec of modelSpecs) {
     for (const evalCase of cases) {
-      results.push(await runCase(modelSpec, evalCase));
+      for (let repeat = 1; repeat <= repeats; repeat += 1) {
+        results.push(await runCase(modelSpec, evalCase, repeat));
+      }
     }
   }
 
@@ -149,12 +165,12 @@ async function main() {
     console.log(`Wrote temporal eval results to ${outputPath}`);
   }
 
-  if (results.some((result) => !result.passed)) {
+  if (results.some((result) => result.required && !result.passed)) {
     process.exitCode = 1;
   }
 }
 
-async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase): Promise<EvalResult> {
+async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase, repeat: number): Promise<EvalResult> {
   const startedAt = Date.now();
   try {
     const parsed = await parseTemporalExpression({
@@ -172,8 +188,10 @@ async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase): Promis
       provider: modelSpec.provider,
       reasoningEffort: modelSpec.reasoningEffort,
       caseId: evalCase.id,
+      repeat,
       text: evalCase.text,
       category: evalCase.category,
+      required: evalCase.required ?? true,
       passed: mismatch === undefined,
       durationMs: Date.now() - startedAt,
       status: parsed.status,
@@ -190,8 +208,10 @@ async function runCase(modelSpec: ModelSpec, evalCase: TemporalEvalCase): Promis
       provider: modelSpec.provider,
       reasoningEffort: modelSpec.reasoningEffort,
       caseId: evalCase.id,
+      repeat,
       text: evalCase.text,
       category: evalCase.category,
+      required: evalCase.required ?? true,
       passed: false,
       durationMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
@@ -246,6 +266,9 @@ function metricsFromResponse(parsed: TemporalParseResponse): EvalResult['metrics
     totalDurationMs: parsed.debug?.totalDurationMs,
     agentDurationMs: parsed.debug?.agentDurationMs,
     deterministicDurationMs: parsed.debug?.deterministicDurationMs,
+    firstLlmResponseMs: parsed.debug?.firstLlmResponseMs,
+    firstCandidateMs: parsed.debug?.firstCandidateMs,
+    finalResponseMs: parsed.debug?.finalResponseMs,
     llmDurationMs,
     toolDurationMs,
     finalValidationDurationMs,
@@ -265,16 +288,21 @@ function isPromptMetrics(value: unknown): value is { systemPromptChars: number; 
 function printSummary(results: EvalResult[]) {
   for (const model of unique(results.map((result) => result.model))) {
     const modelResults = results.filter((result) => result.model === model);
-    const passed = modelResults.filter((result) => result.passed).length;
+    const requiredResults = modelResults.filter((result) => result.required);
+    const diagnosticResults = modelResults.filter((result) => !result.required);
+    const passed = requiredResults.filter((result) => result.passed).length;
+    const diagnosticPassed = diagnosticResults.filter((result) => result.passed).length;
     const durations = modelResults.map((result) => result.durationMs).sort((a, b) => a - b);
     const median = percentile(durations, 0.5);
     const p95 = percentile(durations, 0.95);
     const maxPromptChars = Math.max(0, ...modelResults.map((result) => result.metrics?.maxTotalMessageChars ?? 0));
-    console.log(`${model}: ${passed}/${modelResults.length} passed, median=${median}ms, p95=${p95}ms, maxPromptChars=${maxPromptChars}`);
+    const diagnosticSummary = diagnosticResults.length > 0 ? `, diagnostics=${diagnosticPassed}/${diagnosticResults.length}` : '';
+    console.log(`${model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, maxPromptChars=${maxPromptChars}`);
     for (const result of modelResults) {
-      const status = result.passed ? 'PASS' : 'FAIL';
+      const status = result.required ? (result.passed ? 'PASS' : 'FAIL') : (result.passed ? 'DIAG-PASS' : 'DIAG');
       const detail = result.error ?? result.mismatch ?? `${result.status} epoch=${result.epoch ?? 'none'}`;
-      console.log(`  ${status} ${result.caseId}: ${detail} (${result.durationMs}ms)`);
+      const repeatSuffix = repeats > 1 ? `#${result.repeat}` : '';
+      console.log(`  ${status} ${result.caseId}${repeatSuffix}: ${detail} (${result.durationMs}ms)`);
     }
   }
 }

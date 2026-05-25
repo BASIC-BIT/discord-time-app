@@ -161,6 +161,11 @@ export interface TemporalParseResponse {
     deterministicDurationMs?: number;
     agentDurationMs?: number;
     totalDurationMs?: number;
+    firstLlmResponseMs?: number;
+    firstCandidateMs?: number;
+    finalResponseMs?: number;
+    model?: string;
+    reasoningEffort?: string;
     trace?: TemporalAgentTraceStep[];
     finalValidation?: TemporalFinalValidation;
     langfuseTraceId?: string;

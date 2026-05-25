@@ -78,7 +78,7 @@ async function parseLive(text: string): Promise<LiveResult> {
     timeZone,
     referenceInstant,
     openaiApiKey,
-    openaiModel: process.env['OPENAI_MODEL'] ?? 'gpt-5.5',
+    openaiModel: process.env['OPENAI_MODEL'] ?? 'gpt-5.4-mini',
     openaiReasoningEffort: process.env['OPENAI_REASONING_EFFORT'] ?? 'low',
     langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
   });

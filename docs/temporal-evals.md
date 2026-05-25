@@ -2,7 +2,7 @@
 
 ## Current Default
 
-- Production default model: `gpt-5.5`.
+- Production default model: `gpt-5.4-mini`.
 - Production default reasoning effort: `low`.
 - Do not switch defaults based on one prompt or one manual run. Use the eval harness first.
 
@@ -17,7 +17,7 @@
 Run from `api/`:
 
 ```powershell
-$env:TEMPORAL_EVAL_MODELS = "gpt-5.5,gpt-5.4-mini,gpt-5.4-nano"
+$env:TEMPORAL_EVAL_MODELS = "gpt-5.4-mini,gpt-5.5,gpt-5.4-nano"
 $env:OPENAI_API_KEY = "..."
 npm run eval:temporal
 ```
@@ -27,14 +27,19 @@ Useful options:
 - `TEMPORAL_EVAL_MODELS`: comma-separated model list; entries can specify reasoning effort as `model:effort`.
 - `TEMPORAL_EVAL_OUTPUT`: write full JSON results to a path.
 - `TEMPORAL_EVAL_LIMIT`: run the first N eval cases for quick iteration.
+- `TEMPORAL_EVAL_REPEATS`: repeat each model/case N times to measure stochastic reliability.
 - `TEMPORAL_EVAL_REQUIRE_OPENAI=1`: fail instead of skipping when credentials or model list are missing.
 - `TEMPORAL_EVAL_NOW` and `TEMPORAL_EVAL_TZ`: override the fixed eval clock and timezone.
 
-The eval output tracks pass/fail, end-to-end latency, graph timing, LLM/tool/final-validation duration, tool pass count, agent attempt count, and prompt character counts from graph trace metadata.
+The eval output tracks pass/fail, end-to-end latency, graph timing, first model response latency, first candidate latency, final response latency, LLM/tool/final-validation duration, tool pass count, agent attempt count, and prompt character counts from graph trace metadata.
+
+These fields are API analytics-ready, but they are not true token-level TTFT. Exact TTFT requires streaming model callbacks, which should be added behind an instrumentation flag once the non-streaming router baseline is stable.
+
+Some cases are diagnostic rather than required. For example, `next saturday 10pm` from a Sunday currently records whether the model asks for clarification between the coming Saturday and the Saturday after that, without failing the whole eval suite. Flip diagnostic cases to required only after the product semantics are chosen.
 
 ## Routing Strategy
 
-- Treat `gpt-5.4-mini` and `gpt-5.4-nano` as eval candidates, not production defaults, until they pass the same hard cases with materially lower latency.
+- Treat `gpt-5.4-mini` as the current default candidate while evals run. Keep `gpt-5.5` as the quality fallback and `gpt-5.4-nano` as experimental until it passes baseline cases.
 - Prefer routing by workflow step only after eval data shows a stable split, such as a faster planner model plus a stronger final validator.
 - Keep deterministic code focused on calendar arithmetic, validation, and formatting; use model routing for fuzzy interpretation rather than adding phrase tables.
 - Optimize time-to-first-use before optimizing total graph sophistication: fewer LLM passes, smaller prompts, smaller tool outputs, and fewer final validation calls matter more than provider abstraction right now.
