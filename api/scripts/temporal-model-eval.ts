@@ -95,7 +95,7 @@ type EvalResult = {
 
 const referenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? '2026-05-24T12:00:00Z';
 const timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? 'America/New_York';
-const openaiApiKey = process.env['OPENAI_API_KEY'];
+const openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
 const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
 const modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
 const baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
@@ -541,6 +541,13 @@ function parsePositiveInt(value: string | undefined): number | undefined {
 
 function isTruthy(value: string | undefined): boolean {
   return value === '1' || value?.toLowerCase() === 'true' || value?.toLowerCase() === 'yes';
+}
+
+function nonBlank(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === '') {
+    return undefined;
+  }
+  return value;
 }
 
 main().catch((error: unknown) => {

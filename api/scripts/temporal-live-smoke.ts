@@ -17,7 +17,7 @@ const referenceInstant = process.env['TEMPORAL_LIVE_SMOKE_NOW'] ?? '2026-05-24T1
 const timeZone = process.env['TEMPORAL_LIVE_SMOKE_TZ'] ?? 'America/New_York';
 const apiBaseUrl = stripTrailingSlash(process.env['TEMPORAL_LIVE_API_URL']);
 const apiKey = process.env['TEMPORAL_LIVE_API_KEY'] ?? process.env['STATIC_API_KEY'] ?? 'STATIC_KEY_123';
-const openaiApiKey = process.env['OPENAI_API_KEY'];
+const openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
 const requireLive = isTruthy(process.env['TEMPORAL_LIVE_SMOKE_REQUIRE_OPENAI']);
 
 async function main() {
@@ -132,6 +132,13 @@ function stripTrailingSlash(value: string | undefined): string | undefined {
     return undefined;
   }
   return value.replace(/\/+$/, '');
+}
+
+function nonBlank(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === '') {
+    return undefined;
+  }
+  return value;
 }
 
 main().catch((error: unknown) => {
