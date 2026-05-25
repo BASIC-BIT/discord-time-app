@@ -35,6 +35,13 @@ export class TimeParserAPIError extends Error {
   }
 }
 
+export class TimeParserUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TimeParserUnavailableError';
+  }
+}
+
 const DEFAULT_API_BASE_URL = 'http://localhost:8857';
 const DEFAULT_API_KEY = 'STATIC_KEY_123';
 
@@ -98,6 +105,9 @@ export class TimeParserAPIClient {
       }
       if (error instanceof TimeParserAPIError) {
         throw error;
+      }
+      if (error instanceof TypeError) {
+        throw new TimeParserUnavailableError('The local time parser service is not running yet. Start the HammerOverlay API service, then try again.');
       }
       
       // Re-throw with more context

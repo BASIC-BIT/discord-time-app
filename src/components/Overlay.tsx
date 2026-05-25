@@ -4,7 +4,7 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { Row } from './Row';
 import { formats, getFormatLabel } from '../lib/formats';
 import { getUserTimezone } from '../lib/prompt';
-import { createAPIClient, TimeParserAPIError, type ParseAlternative } from '../lib/api-client';
+import { createAPIClient, TimeParserAPIError, TimeParserUnavailableError, type ParseAlternative } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 
@@ -280,6 +280,8 @@ export function Overlay({ onClose }: OverlayProps) {
             setClarificationAlternatives(apiError.alternatives);
             setSelectedAlternativeIndex(0);
             setError(null);
+          } else if (apiError instanceof TimeParserUnavailableError) {
+            setError(apiError.message);
           } else {
             setError(apiError?.message ?? 'Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');
           }

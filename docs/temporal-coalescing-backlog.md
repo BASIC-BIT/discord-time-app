@@ -38,6 +38,8 @@ This captures follow-up ideas without bloating the v1 implementation.
 ## Desktop App Follow-Ups
 
 - Investigate start-on-login for HammerOverlay.
+- Bundle or supervise the temporal API with the desktop app so users do not have to start a separate local service after reboot.
+- If the API remains a sidecar, add startup health checks, restart/backoff, visible service status, and logs reachable from settings.
 - Preserve the existing fast hotkey UX; the app is already useful and should not be destabilized by the temporal engine work.
 
 ## Overlay UX Follow-Ups
