@@ -529,9 +529,21 @@ async function runAgentGraph(
   }
 
   if (!finalizedCandidateId) {
-    const response = responseFromUnfinalizedAgent(enrichedCandidates.size, toolPasses, agentAttempts, trace, getLangfuseTraceId(langfuseHandler));
-    attachAgentDebug(response);
-    return response;
+    const autoFinalized = onlyFinalizableCandidate(enrichedCandidates);
+    if (autoFinalized !== null) {
+      finalizedCandidateId = autoFinalized.candidate.id;
+      finalizedRationale = 'Auto-finalized the only validated candidate after the agent stopped without calling finalize_candidate.';
+      trace.push({
+        index: trace.length + 1,
+        type: 'router',
+        name: 'auto_finalize_candidate',
+        output: compactEnrichedCandidate(autoFinalized),
+      });
+    } else {
+      const response = responseFromUnfinalizedAgent(enrichedCandidates.size, toolPasses, agentAttempts, trace, getLangfuseTraceId(langfuseHandler));
+      attachAgentDebug(response);
+      return response;
+    }
   }
 
   const finalized = enrichedCandidates.get(finalizedCandidateId);
@@ -860,6 +872,11 @@ function compactClarificationAlternative(alternative: TemporalClarificationAlter
     confidence: alternative.confidence,
     method: alternative.method,
   };
+}
+
+function onlyFinalizableCandidate(enrichedCandidates: Map<string, EnrichedCandidate>): EnrichedCandidate | null {
+  const finalizable = [...enrichedCandidates.values()].filter((candidate) => candidate.finalizable);
+  return finalizable.length === 1 ? finalizable[0]! : null;
 }
 
 function responseFromRejectedFinalValidation(

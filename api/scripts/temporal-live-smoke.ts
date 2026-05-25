@@ -35,6 +35,7 @@ async function main() {
   await expectResolved('day after next saturday at 13:37', 1780249020, 5);
   await expectResolved('day after next saturday at l33t time', 1780249020, 5);
   await expectResolved('next saturday at l33t time', 1780162620, 5);
+  await expectResolved('easter 2028', 1839513600, 1);
   await expectClarification('saturday at 3', [1780124400, 1780167600]);
 
   console.log('Live temporal smoke tests passed.');

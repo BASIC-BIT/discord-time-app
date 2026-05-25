@@ -116,7 +116,7 @@ export interface TemporalValidation {
 
 export interface TemporalAgentTraceStep {
   index: number;
-  type: "llm" | "tool" | "final_validation";
+  type: "llm" | "tool" | "final_validation" | "router";
   name: string;
   durationMs?: number;
   input?: unknown;

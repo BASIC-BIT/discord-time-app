@@ -166,6 +166,12 @@ const evalCases: TemporalEvalCase[] = [
     expected: { status: 'resolved', epoch: 1775404800, suggestedFormatIndex: 4 },
   },
   {
+    id: 'future-year-holiday',
+    text: 'easter 2028',
+    category: 'holiday',
+    expected: { status: 'resolved', epoch: 1839513600, suggestedFormatIndex: 1 },
+  },
+  {
     id: 'next-weekday-boundary-sunday',
     text: 'next saturday 10pm',
     category: 'weekday-boundary-ambiguity',
