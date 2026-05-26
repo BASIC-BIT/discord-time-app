@@ -15,7 +15,9 @@ const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
 
 export const DEFAULT_TEMPORAL_GRAPH_LIMITS = {
   maxAgentAttempts: 3,
-  maxToolPasses: 10,
+  // Counts individual ToolMessages, not LLM round trips. Parallel tool calls
+  // consume one budget unit per tool result.
+  maxToolCalls: 20,
 } as const;
 
 const CalendarContextSchema = z.object({
@@ -68,7 +70,7 @@ export interface TemporalGraphState {
 
 export interface TemporalGraphOptions {
   maxAgentAttempts?: number;
-  maxToolPasses?: number;
+  maxToolCalls?: number;
   openaiApiKey?: string;
   openaiModel?: string;
   openaiReasoningEffort?: string;
@@ -112,11 +114,11 @@ export async function runTemporalCoalescingGraph(
     return fallback;
   }
 
-  const maxToolPasses = options.maxToolPasses ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxToolPasses;
+  const maxToolCalls = options.maxToolCalls ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxToolCalls;
   const agentStartedAt = nowMs();
 
   try {
-    const agentResult = await runAgentGraph(request, options, maxToolPasses);
+    const agentResult = await runAgentGraph(request, options, maxToolCalls);
     if (agentResult) {
       attachTopLevelTiming(agentResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt));
       return agentResult;
@@ -141,7 +143,7 @@ export async function runTemporalCoalescingGraph(
 async function runAgentGraph(
   request: TemporalParseRequest,
   options: TemporalGraphOptions,
-  maxToolPasses: number,
+  maxToolCalls: number,
 ): Promise<TemporalParseResponse | null> {
   if (!options.openaiApiKey) {
     return null;
@@ -407,6 +409,7 @@ async function runAgentGraph(
       }
       finalizedCandidateId = input.candidateId;
       finalizedRationale = input.rationale;
+      clarificationResponseRef.current = null;
       const output = { accepted: true, candidate: compactEnrichedCandidate(candidate) };
       recordTool('finalize_candidate', input, output, startedAt);
       return JSON.stringify(output);
@@ -421,6 +424,12 @@ async function runAgentGraph(
   const askClarificationTool = tool(
     async (input) => {
       const startedAt = nowMs();
+      if (finalizedCandidateId) {
+        const output = { accepted: false, error: 'A candidate has already been finalized; not asking for clarification.' };
+        recordTool('ask_clarification', input, output, startedAt);
+        return JSON.stringify(output);
+      }
+
       const alternatives = input.alternatives
         .map((alternative) => {
           const enriched = enrichedCandidates.get(alternative.candidateId);
@@ -513,7 +522,7 @@ async function runAgentGraph(
     if (finalizedCandidateId || clarificationResponseRef.current) {
       return END;
     }
-    if (countToolMessages(state.messages) >= maxToolPasses) {
+    if (countToolMessages(state.messages) >= maxToolCalls) {
       return END;
     }
     if (lastMessage instanceof AIMessage && lastMessage.tool_calls?.length) {
@@ -554,19 +563,19 @@ async function runAgentGraph(
   const toolPasses = countToolMessages(finalState.messages);
   const agentAttempts = countAgentMessages(finalState.messages);
 
-  if (clarificationResponseRef.current) {
-    const response = clarificationResponseRef.current;
-    response.debug = response.debug ?? {};
-    response.debug.candidateCount = enrichedCandidates.size;
-    response.debug.agentAttempts = agentAttempts;
-    response.debug.toolPasses = toolPasses;
-    response.debug.trace = trace;
-    attachAgentDebug(response);
-    return response;
-  }
-
   if (!finalizedCandidateId) {
     if (!autoFinalizeSoleCandidate('Auto-finalized the only validated candidate after the agent stopped without calling finalize_candidate.')) {
+      if (clarificationResponseRef.current) {
+        const response = clarificationResponseRef.current;
+        response.debug = response.debug ?? {};
+        response.debug.candidateCount = enrichedCandidates.size;
+        response.debug.agentAttempts = agentAttempts;
+        response.debug.toolPasses = toolPasses;
+        response.debug.trace = trace;
+        attachAgentDebug(response);
+        return response;
+      }
+
       const response = responseFromUnfinalizedAgent(enrichedCandidates.size, toolPasses, agentAttempts, trace, getLangfuseTraceId(langfuseHandler));
       attachAgentDebug(response);
       return response;

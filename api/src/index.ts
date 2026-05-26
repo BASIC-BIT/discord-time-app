@@ -2,6 +2,7 @@ import 'dotenv/config'; // Load .env file
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import { Temporal } from '@js-temporal/polyfill';
 import { ParseRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
 import { db, getDatabase } from './database';
@@ -38,6 +39,9 @@ const server = Fastify({
   trustProxy: true,
 });
 
+const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:[zZ]|[+-]\\d{2}:\\d{2})$';
+const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
+
 /**
  * Register CORS plugin
  */
@@ -71,7 +75,7 @@ const parseRequestSchema = {
   properties: {
     text: { type: 'string', minLength: 1 },
     tz: { type: 'string', default: 'UTC' },
-    now: { type: 'string' }
+    now: { type: 'string', pattern: ISO_INSTANT_PATTERN }
   }
 } as const;
 
@@ -179,6 +183,13 @@ server.post<{ Body: ParseRequest }>('/parse', {
   const { text, tz = 'UTC', now } = request.body;
 
   try {
+    if (now !== undefined && !isValidIsoInstant(now)) {
+      return reply.status(400).send({
+        error: 'bad_request',
+        message: 'now must be a valid ISO instant like 2026-05-24T12:00:00Z'
+      });
+    }
+
     const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
       text,
       timeZone: tz,
@@ -252,6 +263,19 @@ server.post<{ Body: ParseRequest }>('/parse', {
     });
   }
 });
+
+function isValidIsoInstant(value: string): boolean {
+  if (!isoInstantPattern.test(value)) {
+    return false;
+  }
+
+  try {
+    Temporal.Instant.from(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemporalExpression>>): string {
   if (parsed.clarificationQuestion) {
