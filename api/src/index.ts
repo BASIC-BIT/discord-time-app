@@ -2,11 +2,11 @@ import 'dotenv/config'; // Load .env file
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import { Temporal } from '@js-temporal/polyfill';
 import { ParseRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
 import { db, getDatabase } from './database';
-import { createOpenAIParser } from './openai';
-import { parseFallback } from './parse';
+import { parseTemporalExpression } from './temporal';
 
 /**
  * Create Fastify server instance
@@ -39,11 +39,14 @@ const server = Fastify({
   trustProxy: true,
 });
 
+const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:[zZ]|[+-]\\d{2}:\\d{2})$';
+const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
+
 /**
  * Register CORS plugin
  */
 server.register(cors, {
-  origin: ['http://localhost:1420', 'tauri://localhost'],
+  origin: ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost'],
   credentials: true,
   allowedHeaders: ['Content-Type', 'x-api-key', 'x-api-version']
 });
@@ -71,7 +74,8 @@ const parseRequestSchema = {
   required: ['text'],
   properties: {
     text: { type: 'string', minLength: 1 },
-    tz: { type: 'string', default: 'UTC' }
+    tz: { type: 'string', default: 'UTC' },
+    now: { type: 'string', pattern: ISO_INSTANT_PATTERN }
   }
 } as const;
 
@@ -90,7 +94,21 @@ const errorResponseSchema = {
   type: 'object',
   properties: {
     error: { type: 'string' },
-    message: { type: 'string' }
+    message: { type: 'string' },
+    alternatives: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['label', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
+        properties: {
+          label: { type: 'string' },
+          epoch: { type: 'number' },
+          suggestedFormatIndex: { type: 'number' },
+          confidence: { type: 'number' },
+          method: { type: 'string' }
+        }
+      }
+    }
   },
   required: ['error']
 };
@@ -162,60 +180,61 @@ server.post<{ Body: ParseRequest }>('/parse', {
     }
   }
 }, async (request, reply) => {
-  const { text, tz = 'UTC' } = request.body;
+  const { text, tz = 'UTC', now } = request.body;
 
   try {
-    let epoch: number | null = null;
-    let suggestedFormatIndex = 4; // Default to :f format
-    let confidence = 0.5;
-    let method = 'fallback';
+    if (now !== undefined && !isValidIsoInstant(now)) {
+      return reply.status(400).send({
+        error: 'bad_request',
+        message: 'now must be a valid ISO instant like 2026-05-24T12:00:00Z'
+      });
+    }
 
-    // Try OpenAI parsing first (if API key available)
-    if (config.openaiApiKey) {
-      try {
-        const openaiParser = createOpenAIParser(config.openaiApiKey);
-        const llmResult = await openaiParser.parseTime(text, tz);
-        
-        console.log('LLM Result:', llmResult);
-        
-        // Use chrono-node to parse the normalized text
-        const normalizedEpoch = parseFallback(llmResult.normalizedText);
-        
-        if (normalizedEpoch) {
-          epoch = normalizedEpoch;
-          suggestedFormatIndex = llmResult.suggestedFormatIndex;
-          confidence = llmResult.confidence;
-          method = 'openai';
-        } else {
-          // If normalized text fails, try original text as fallback
-          const fallbackEpoch = parseFallback(text);
-          if (fallbackEpoch) {
-            epoch = fallbackEpoch;
-            suggestedFormatIndex = llmResult.suggestedFormatIndex;
-            confidence = llmResult.confidence * 0.7; // Reduce confidence
-            method = 'openai-fallback';
-          }
-        }
-      } catch (openaiError) {
-        console.error('OpenAI parsing failed:', openaiError);
-        // Fall through to chrono-node fallback
+    const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
+      text,
+      timeZone: tz,
+    };
+    if (now !== undefined) {
+      parseInput.referenceInstant = now;
+    }
+    if (config.openaiApiKey !== undefined) {
+      parseInput.openaiApiKey = config.openaiApiKey;
+      parseInput.openaiModel = config.openaiModel;
+      parseInput.openaiReasoningEffort = config.openaiReasoningEffort;
+      parseInput.langfuse = {
+        enabled: config.langfuseEnabled,
+      };
+      if (config.langfuseBaseUrl !== undefined) {
+        parseInput.langfuse.baseUrl = config.langfuseBaseUrl;
       }
     }
 
-    // Fallback to chrono-node only if OpenAI failed
-    if (epoch === null) {
-      epoch = parseFallback(text);
-      if (epoch) {
-        confidence = 0.7; // Medium confidence for fallback
-        method = 'fallback';
-      }
-    }
+    const parsed = await parseTemporalExpression(parseInput);
+    request.log.info({
+      text,
+      tz,
+      status: parsed.status,
+      method: parsed.method,
+      epoch: parsed.epoch,
+      confidence: parsed.confidence,
+      debug: parsed.debug,
+      validation: parsed.validation,
+      ambiguity: parsed.ambiguity,
+      clarificationQuestion: parsed.clarificationQuestion,
+    }, 'parse result');
 
     // If all parsing failed
-    if (epoch === null) {
+    if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
-        error: 'Could not parse time expression',
-        message: 'Unable to understand the time expression. Please try being more specific.'
+        error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
+        message: userFacingParseErrorMessage(parsed),
+        alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
+          label: alternative.label,
+          epoch: alternative.epoch,
+          suggestedFormatIndex: alternative.suggestedFormatIndex,
+          confidence: alternative.confidence,
+          method: alternative.method,
+        }))
       });
     }
 
@@ -223,17 +242,17 @@ server.post<{ Body: ParseRequest }>('/parse', {
     db.logUsage({
       text,
       tz,
-      epoch,
-      format: suggestedFormatIndex,
-      conf: confidence,
+      epoch: parsed.epoch,
+      format: parsed.suggestedFormatIndex ?? 4,
+      conf: parsed.confidence,
       ip: request.ip
     });
 
     return {
-      epoch,
-      suggestedFormatIndex,
-      confidence,
-      method
+      epoch: parsed.epoch,
+      suggestedFormatIndex: parsed.suggestedFormatIndex ?? 4,
+      confidence: parsed.confidence,
+      method: parsed.method
     };
 
   } catch (error) {
@@ -244,6 +263,43 @@ server.post<{ Body: ParseRequest }>('/parse', {
     });
   }
 });
+
+function isValidIsoInstant(value: string): boolean {
+  if (!isoInstantPattern.test(value)) {
+    return false;
+  }
+
+  try {
+    Temporal.Instant.from(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemporalExpression>>): string {
+  if (parsed.clarificationQuestion) {
+    return parsed.clarificationQuestion;
+  }
+
+  const internalMessage = parsed.ambiguity[0] ?? parsed.validation.warnings[0] ?? '';
+  if (parsed.status === 'needs_clarification') {
+    if (/am\/pm|meridiem|bare time-like|compact time|bare number/i.test(internalMessage)) {
+      return 'Please include AM or PM, or use 24-hour time like 16:30.';
+    }
+    return 'I need one more detail before making that timestamp.';
+  }
+
+  if (/^Final LLM validation rejected candidate:/i.test(internalMessage)) {
+    return 'I could not confidently turn that into a timestamp. Try adding AM/PM, a date, or more context.';
+  }
+
+  if (/^Agent did not produce a validated final candidate\.?$/i.test(internalMessage)) {
+    return 'I could not confidently turn that into a timestamp. Try adding AM/PM, a date, or more context.';
+  }
+
+  return internalMessage || 'Unable to understand the time expression. Please try being more specific.';
+}
 
 /**
  * Stats endpoint for monitoring
@@ -268,10 +324,14 @@ server.get('/stats', async (_request, reply) => {
  * Error handler
  */
 server.setErrorHandler(async (error, _request, reply) => {
-  server.log.error('Unhandled error:', error);
+  server.log.error({ err: error }, 'Unhandled error');
+  const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
+    ? Number((error as { statusCode?: unknown }).statusCode)
+    : undefined;
+  const message = error instanceof Error ? error.message : 'Invalid request';
   
   // Rate limit errors
-  if (error.statusCode === 429) {
+  if (statusCode === 429) {
     const errorResponse: ErrorResponse = {
       error: 'rate_limited',
       message: 'Too many requests'
@@ -281,10 +341,10 @@ server.setErrorHandler(async (error, _request, reply) => {
   }
   
   // Validation errors
-  if (error.statusCode === 400) {
+  if (statusCode === 400) {
     const errorResponse: ErrorResponse = {
       error: 'bad_request',
-      message: error.message || 'Invalid request'
+      message
     };
     reply.status(400).send(errorResponse);
     return;

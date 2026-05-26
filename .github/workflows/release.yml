@@ -34,6 +34,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            api/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -47,6 +50,38 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Install API dependencies
+        working-directory: api
+        run: npm ci
+
+      - name: Check API build
+        working-directory: api
+        run: npm run build
+
+      - name: Run API temporal tests
+        working-directory: api
+        env:
+          DB_PATH: ${{ runner.temp }}/hammer-overlay-api-ci.db
+        run: npm test
+
+      - name: Run live temporal smoke tests if configured
+        working-directory: api
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.5
+          OPENAI_REASONING_EFFORT: low
+          LANGFUSE_ENABLED: 'false'
+        run: npm run test:temporal:live
+
+      - name: Run temporal model evals if configured
+        working-directory: api
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGFUSE_ENABLED: 'false'
+          TEMPORAL_EVAL_MODELS: ${{ vars.TEMPORAL_EVAL_MODELS }}
+          TEMPORAL_EVAL_REQUIRE_OPENAI: ${{ vars.TEMPORAL_EVAL_REQUIRE_OPENAI }}
+        run: npm run eval:temporal
 
       - name: Extract version from tag
         shell: bash
@@ -234,4 +269,4 @@ jobs:
           echo ""
           echo "📁 Uploaded files:"
           find src-tauri/target/release/bundle/ -name "*.msi" -exec basename {} \;
-          echo "latest.json (update manifest)" 
+          echo "latest.json (update manifest)"

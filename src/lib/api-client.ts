@@ -9,10 +9,40 @@ export interface ParseResponse {
   method: string;
 }
 
+export interface ParseAlternative {
+  label: string;
+  epoch: number;
+  suggestedFormatIndex: number;
+  confidence: number;
+  method: string;
+}
+
 export interface ParseError {
   error: string;
   message?: string;
+  alternatives?: ParseAlternative[];
 }
+
+export class TimeParserAPIError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+    public readonly code?: string,
+    public readonly alternatives?: ParseAlternative[],
+  ) {
+    super(message);
+    this.name = 'TimeParserAPIError';
+  }
+}
+
+export class TimeParserUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TimeParserUnavailableError';
+  }
+}
+
+const DEFAULT_API_BASE_URL = 'http://localhost:8857';
 
 export class TimeParserAPIClient {
   private baseUrl: string;
@@ -51,7 +81,7 @@ export class TimeParserAPIClient {
 
       if (!response.ok) {
         const errorData = await response.json() as ParseError;
-        throw new Error(errorData.message || `API error: ${response.status}`);
+        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives);
       }
 
       const data = await response.json() as ParseResponse;
@@ -72,9 +102,15 @@ export class TimeParserAPIClient {
       if (error instanceof Error && error.name === 'AbortError') {
         throw error;
       }
+      if (error instanceof TimeParserAPIError) {
+        throw error;
+      }
+      if (error instanceof TypeError) {
+        throw new TimeParserUnavailableError('The local time parser service is not running yet. Start the HammerOverlay API service, then try again.');
+      }
       
       // Re-throw with more context
-      throw new Error(`Failed to parse time: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new TimeParserAPIError(`Failed to parse time: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -93,19 +129,19 @@ export class TimeParserAPIClient {
 
 // Create singleton instance with environment variables
 export function createAPIClient(): TimeParserAPIClient | null {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL;
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
   const apiKey = import.meta.env.VITE_API_KEY;
+
+  if (!apiKey) {
+    console.log('API client disabled because VITE_API_KEY is not configured.');
+    return null;
+  }
 
   console.log('API Client Configuration:', {
     baseUrl,
-    apiKey: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
-    env: import.meta.env
+    apiKey: `${apiKey.substring(0, 8)}...`,
+    usesDefaultBaseUrl: !import.meta.env.VITE_API_BASE_URL,
   });
-
-  if (!baseUrl || !apiKey) {
-    console.warn('API configuration missing, backend parsing will be disabled');
-    return null;
-  }
 
   console.log('Creating API client with base URL:', baseUrl);
   return new TimeParserAPIClient(baseUrl, apiKey);

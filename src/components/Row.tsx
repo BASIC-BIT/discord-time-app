@@ -5,11 +5,12 @@ interface RowProps {
   epoch: number;
   formatIndex: number;
   isSelected: boolean;
+  isTentative?: boolean;
   onCopyAndClose: () => void;
   onMouseEnter: () => void;
 }
 
-export function Row({ epoch, formatIndex, isSelected, onCopyAndClose, onMouseEnter }: RowProps) {
+export function Row({ epoch, formatIndex, isSelected, isTentative = false, onCopyAndClose, onMouseEnter }: RowProps) {
   const [copying, setCopying] = useState(false);
   
   const format = formats[formatIndex];
@@ -31,18 +32,18 @@ export function Row({ epoch, formatIndex, isSelected, onCopyAndClose, onMouseEnt
   
   return (
     <div 
-      className={`row ${isSelected ? 'selected' : ''} ${copying ? 'copying' : ''}`}
+      className={`row ${isSelected ? 'selected' : ''} ${isTentative ? 'tentative' : ''} ${copying ? 'copying' : ''}`}
       onClick={handleClick}
       onMouseEnter={onMouseEnter}
       style={{ cursor: 'pointer' }}
     >
       <div className="row-content">
-        <div className="format-info">
-          <span className="format-code">{discordCode}</span>
-          <span className="format-description">{format.description}</span>
-        </div>
         <div className="preview">{preview}</div>
+        <div className="format-info">
+          <span className="format-description">{format.description}</span>
+          <span className="format-code">{discordCode}</span>
+        </div>
       </div>
     </div>
   );
-} 
+}
