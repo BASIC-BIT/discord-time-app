@@ -46,6 +46,11 @@ async function main() {
   assert.equal(tomorrowAtFive.status, 'resolved');
   assert.equal(tomorrowAtFive.canonical?.zonedDateTime.startsWith('2026-05-16T17:00'), true);
 
+  const tuesdayCompactPm = await parse('tuesday 5p');
+  assert.equal(tuesdayCompactPm.status, 'resolved');
+  assert.equal(tuesdayCompactPm.suggestedFormatIndex, 5);
+  assert.equal(tuesdayCompactPm.canonical?.zonedDateTime.startsWith('2026-05-19T17:00'), true);
+
   const weekdayDateTimeFormat = await parse('4:30 Tuesday');
   assert.equal(weekdayDateTimeFormat.status, 'resolved');
   assert.equal(weekdayDateTimeFormat.suggestedFormatIndex, 5);
@@ -112,6 +117,10 @@ async function main() {
   const clock = await tools.resolveClockTime({ text: '13:37', calendarContext });
   assert.equal(clock.candidates[0]?.hour, 13);
   assert.equal(clock.candidates[0]?.minute, 37);
+
+  const compactClock = await tools.resolveClockTime({ text: '5p', calendarContext });
+  assert.equal(compactClock.candidates[0]?.hour, 17);
+  assert.equal(compactClock.candidates[0]?.minute, 0);
 
   const shifted = await tools.shiftDateTime({ base: { isoInstant: referenceInstant }, delta: { weeks: 1, days: 2 }, calendarContext });
   const combined = await tools.setClockTime({

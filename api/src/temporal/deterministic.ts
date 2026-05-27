@@ -59,6 +59,7 @@ const ORDINAL_WEEKDAY_OF_MONTH_PATTERN = new RegExp(
 const DISCORD_TIMESTAMP_PATTERN = /<t:(\d+)(?::[tTdDfFR])?>/;
 const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 const TWELVE_HOUR_TIME_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/i;
+const COMPACT_MERIDIEM_TIME_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap])\b/i;
 const TWENTY_FOUR_HOUR_TIME_PATTERN = /\b([01]?\d|2[0-3]):([0-5]\d)\b/;
 const NUMBER_TEXT_PATTERN = String.raw`(?:\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const RELATIVE_NOON_TIME_PATTERN = new RegExp(String.raw`\b(?:(?<hours>${NUMBER_TEXT_PATTERN})\s+hours?\s+)?(?:past|after)\s+noon(?:\s+and\s+(?<minutes>${NUMBER_TEXT_PATTERN})\s+minutes?)?\b`, 'i');
@@ -578,7 +579,7 @@ function chronoTimeFields(start: chrono.ParsedComponents, originalText: string):
 
   return {
     hasTime,
-    hour: start.get('hour') ?? requestedTime.hour,
+    hour: start.isCertain('hour') ? start.get('hour') ?? requestedTime.hour : requestedTime.hour,
     minute: start.isCertain('minute') ? start.get('minute') ?? 0 : requestedTime.minute,
     second: start.isCertain('second') ? start.get('second') ?? 0 : 0,
     millisecond: start.isCertain('millisecond') ? start.get('millisecond') ?? 0 : 0,
@@ -869,6 +870,17 @@ function resolveClockTimeCandidates(text: string): ResolveClockTimeOutput['candi
     }
     const minute = Number(twelveHour[2] ?? 0);
     addCandidate({ hour, minute, normalized: formatRequestedTime({ hour, minute }), assumptions: [`Interpreted ${twelveHour[0]} as a 12-hour clock time.`], confidence: 0.95 });
+  }
+
+  const compactMeridiem = COMPACT_MERIDIEM_TIME_PATTERN.exec(text);
+  if (compactMeridiem?.[1] && compactMeridiem[3]) {
+    const suffix = compactMeridiem[3].toLowerCase();
+    let hour = Number(compactMeridiem[1]) % 12;
+    if (suffix === 'p') {
+      hour += 12;
+    }
+    const minute = Number(compactMeridiem[2] ?? 0);
+    addCandidate({ hour, minute, normalized: formatRequestedTime({ hour, minute }), assumptions: [`Interpreted ${compactMeridiem[0]} as compact AM/PM clock time.`], confidence: 0.94 });
   }
 
   const twentyFourHour = TWENTY_FOUR_HOUR_TIME_PATTERN.exec(text);
