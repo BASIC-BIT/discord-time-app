@@ -8,6 +8,8 @@ type EvalFile = {
 };
 
 type EvalResult = {
+  experimentLabel?: string;
+  featureFlags?: Record<string, boolean>;
   runner?: string;
   model: string;
   provider: string;
@@ -52,6 +54,8 @@ type EvalMetrics = {
 
 type ModelSummary = {
   key: string;
+  experimentLabel: string;
+  featureFlags: Record<string, boolean>;
   runner: string;
   model: string;
   provider: string;
@@ -104,7 +108,7 @@ async function main() {
 }
 
 function summarizeByModel(results: EvalResult[]): ModelSummary[] {
-  return [...groupBy(results, (result) => `${result.runner ?? 'agent'}:${result.provider}:${result.model}:${result.reasoningEffort}`).entries()]
+  return [...groupBy(results, (result) => `${result.experimentLabel ?? 'default'}:${result.runner ?? 'agent'}:${result.provider}:${result.model}:${result.reasoningEffort}`).entries()]
     .map(([key, modelResults]) => summarizeModel(key, modelResults))
     .sort((a, b) => b.requiredPassRate - a.requiredPassRate || a.p95DurationMs - b.p95DurationMs || a.medianDurationMs - b.medianDurationMs);
 }
@@ -121,6 +125,8 @@ function summarizeModel(key: string, results: EvalResult[]): ModelSummary {
 
   return {
     key,
+    experimentLabel: first.experimentLabel ?? 'default',
+    featureFlags: first.featureFlags ?? {},
     runner: first.runner ?? 'agent',
     model: first.model,
     provider: first.provider,
@@ -212,7 +218,7 @@ function renderLeaderboard(summaries: ModelSummary[]): string {
     <thead><tr><th>Model</th><th>Required</th><th>Diagnostics</th><th>Latency</th><th>First Signals</th><th>Graph</th><th>Prompt</th><th>Top Tools</th></tr></thead>
     <tbody>
       ${summaries.map((summary) => `<tr>
-        <td><strong>${escapeHtml(summary.model)}</strong><br><span class="muted">${escapeHtml(summary.runner)} / ${escapeHtml(summary.provider)} / ${escapeHtml(summary.reasoningEffort)}</span></td>
+        <td><strong>${escapeHtml(summary.experimentLabel)} / ${escapeHtml(summary.model)}</strong><br><span class="muted">${escapeHtml(summary.runner)} / ${escapeHtml(summary.provider)} / ${escapeHtml(summary.reasoningEffort)}</span><br>${renderFlags(summary.featureFlags)}</td>
         <td>${formatPassRate(summary.requiredPassed, summary.requiredTotal)}${renderBar(summary.requiredPassRate)}</td>
         <td>${summary.diagnosticTotal === 0 ? '<span class="muted">none</span>' : formatPassRate(summary.diagnosticPassed, summary.diagnosticTotal)}</td>
         <td>median ${formatMs(summary.medianDurationMs)}<br>p95 ${formatMs(summary.p95DurationMs)}<br>max ${formatMs(summary.maxDurationMs)}</td>
@@ -234,7 +240,7 @@ function renderResultTable(results: EvalResult[], includeMismatch: boolean): str
     <tbody>
       ${results.map((result) => `<tr>
         <td>${result.passed ? '<span class="pass">PASS</span>' : result.required === false ? '<span class="diag">DIAG</span>' : '<span class="fail">FAIL</span>'}<br><span class="muted">repeat ${result.repeat ?? 1}</span></td>
-        <td>${escapeHtml(result.model)}<br><span class="muted">${escapeHtml(result.runner ?? 'agent')} / ${escapeHtml(result.reasoningEffort)}</span></td>
+        <td>${escapeHtml(result.experimentLabel ?? 'default')} / ${escapeHtml(result.model)}<br><span class="muted">${escapeHtml(result.runner ?? 'agent')} / ${escapeHtml(result.reasoningEffort)}</span><br>${renderFlags(result.featureFlags ?? {})}</td>
         <td>${escapeHtml(result.caseId)}<br><span class="muted">${escapeHtml(result.category)}</span></td>
         <td class="wrap">${escapeHtml(result.text)}</td>
         <td>${escapeHtml(result.status ?? 'error')}<br>epoch ${escapeHtml(String(result.epoch ?? 'none'))}<br><span class="muted">${escapeHtml(result.method ?? '')}</span></td>
@@ -250,11 +256,19 @@ function renderToolChains(summaries: ModelSummary[]): string {
     <thead><tr><th>Model</th><th>Common Sequences</th></tr></thead>
     <tbody>
       ${summaries.map((summary) => `<tr>
-        <td>${escapeHtml(summary.model)}<br><span class="muted">${escapeHtml(summary.runner)} / ${escapeHtml(summary.reasoningEffort)}</span></td>
+        <td>${escapeHtml(summary.experimentLabel)} / ${escapeHtml(summary.model)}<br><span class="muted">${escapeHtml(summary.runner)} / ${escapeHtml(summary.reasoningEffort)}</span></td>
         <td>${summary.topSequences.length === 0 ? '<span class="muted">No tool calls recorded.</span>' : summary.topSequences.map((sequence) => `<div class="wrap"><code>${escapeHtml(sequence.sequence)}</code> <span class="muted">x${sequence.count}</span></div>`).join('')}</td>
       </tr>`).join('')}
     </tbody>
   </table>`;
+}
+
+function renderFlags(flags: Record<string, boolean>): string {
+  const entries = Object.entries(flags);
+  if (entries.length === 0) {
+    return '<span class="muted">flags: default</span>';
+  }
+  return `<div class="chips">${entries.map(([name, value]) => `<span class="chip">${escapeHtml(name)}=${value ? 'on' : 'off'}</span>`).join('')}</div>`;
 }
 
 function formatPassRate(passed: number, total: number): string {

@@ -6,7 +6,7 @@ import { END, MessagesAnnotation, StateGraph, START } from '@langchain/langgraph
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { Temporal } from '@js-temporal/polyfill';
 import * as z from 'zod';
-import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFinalValidation, TemporalParseRequest, TemporalParseResponse } from './types';
+import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalParseRequest, TemporalParseResponse } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
 
@@ -74,6 +74,7 @@ export interface TemporalGraphOptions {
   openaiApiKey?: string;
   openaiModel?: string;
   openaiReasoningEffort?: string;
+  features?: TemporalFeatureFlags;
   langfuse?: {
     enabled: boolean;
     sessionId?: string;
@@ -101,16 +102,18 @@ export async function runTemporalCoalescingGraph(
   options: TemporalGraphOptions,
 ): Promise<TemporalParseResponse> {
   const totalStartedAt = nowMs();
-  const fallback = await deterministicParse(request, options.implementations);
+  const fallback = await deterministicParse(request, options.implementations, options.features);
   if (!options.openaiApiKey) {
-    attachTopLevelTiming(fallback, totalStartedAt);
+    attachTopLevelTiming(fallback, totalStartedAt, undefined, undefined, options.features);
     return fallback;
   }
 
   if (shouldShortCircuitDeterministic(fallback)) {
     fallback.debug = fallback.debug ?? {};
-    fallback.debug.shortCircuitReason = 'deterministic_resolved_validation_passed';
-    attachTopLevelTiming(fallback, totalStartedAt, fallback.debug.deterministicDurationMs);
+    fallback.debug.shortCircuitReason = fallback.status === 'needs_clarification'
+      ? 'deterministic_clarification_ready'
+      : 'deterministic_resolved_validation_passed';
+    attachTopLevelTiming(fallback, totalStartedAt, fallback.debug.deterministicDurationMs, undefined, options.features);
     return fallback;
   }
 
@@ -120,7 +123,7 @@ export async function runTemporalCoalescingGraph(
   try {
     const agentResult = await runAgentGraph(request, options, maxToolCalls);
     if (agentResult) {
-      attachTopLevelTiming(agentResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt));
+      attachTopLevelTiming(agentResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
       return agentResult;
     }
   } catch (error) {
@@ -132,11 +135,11 @@ export async function runTemporalCoalescingGraph(
         warnings: [...fallback.validation.warnings, `Agent graph failed; used deterministic fallback: ${errorMessage(error)}`],
       },
     };
-    attachTopLevelTiming(response, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt));
+    attachTopLevelTiming(response, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
     return response;
   }
 
-  attachTopLevelTiming(fallback, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt));
+  attachTopLevelTiming(fallback, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
   return fallback;
 }
 
@@ -204,6 +207,7 @@ async function runAgentGraph(
       const parsed = await options.implementations.parseExpression({
         text: input.text,
         calendarContext: toCalendarContext(input.calendarContext),
+        ...(options.features === undefined ? {} : { features: options.features }),
       });
       const enriched = await Promise.all(parsed.candidates.map((candidate) => enrichCandidate(candidate, request, options.implementations)));
       if (enriched.length > 0) {
@@ -229,6 +233,7 @@ async function runAgentGraph(
       const resolved = await options.implementations.resolveCalendarQuery({
         query: input.query,
         calendarContext: toCalendarContext(input.calendarContext),
+        ...(options.features === undefined ? {} : { features: options.features }),
       });
       const enriched = await Promise.all(resolved.candidates.map((candidate) => enrichCandidate(candidate, request, options.implementations)));
       if (enriched.length > 0) {
@@ -638,14 +643,19 @@ async function runAgentGraph(
 async function deterministicParse(
   request: TemporalParseRequest,
   implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
 ): Promise<TemporalParseResponse> {
   const startedAt = nowMs();
-  const parsed = await implementations.parseExpression({ text: request.text, calendarContext: request.calendarContext });
+  const parsed = await implementations.parseExpression({
+    text: request.text,
+    calendarContext: request.calendarContext,
+    ...(features === undefined ? {} : { features }),
+  });
   const candidate = parsed.candidates[0];
   if (!candidate) {
     const needsClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
-    const clarificationAlternatives = needsClarification ? await bareHourAlternatives(request, implementations) : [];
+    const clarificationAlternatives = needsClarification ? await bareHourAlternatives(request, implementations, features) : [];
     const response: TemporalParseResponse = {
       status: needsClarification ? 'needs_clarification' : 'failed',
       confidence: 0,
@@ -688,6 +698,7 @@ async function deterministicParse(
 async function bareHourAlternatives(
   request: TemporalParseRequest,
   implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
 ): Promise<TemporalClarificationAlternative[]> {
   const trailingHour = trailingBareHour(request.text);
   if (trailingHour === null || trailingHour < 1 || trailingHour > 12) {
@@ -696,8 +707,8 @@ async function bareHourAlternatives(
 
   const prefix = request.text.trim().replace(/\b\d{1,2}\s*$/, '').trimEnd();
   const alternatives = await Promise.all([
-    clarificationAlternative(`${prefix} ${trailingHour}am`, `${trailingHour} AM`, request, implementations),
-    clarificationAlternative(`${prefix} ${trailingHour}pm`, `${trailingHour} PM`, request, implementations),
+    clarificationAlternative(`${prefix} ${trailingHour}am`, `${trailingHour} AM`, request, implementations, features),
+    clarificationAlternative(`${prefix} ${trailingHour}pm`, `${trailingHour} PM`, request, implementations, features),
   ]);
   return alternatives.filter((alternative): alternative is TemporalClarificationAlternative => alternative !== null);
 }
@@ -707,8 +718,13 @@ async function clarificationAlternative(
   label: string,
   request: TemporalParseRequest,
   implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
 ): Promise<TemporalClarificationAlternative | null> {
-  const parsed = await implementations.parseExpression({ text, calendarContext: request.calendarContext });
+  const parsed = await implementations.parseExpression({
+    text,
+    calendarContext: request.calendarContext,
+    ...(features === undefined ? {} : { features }),
+  });
   const candidate = parsed.candidates[0];
   if (!candidate) {
     return null;
@@ -1068,6 +1084,7 @@ Rules:
 - For holidays, call resolve_holiday and trust holiday_library candidates; do not propose holiday dates from memory.
 - If factual context contains holiday hints, use them to choose resolve_holiday arguments instead of guessing holiday names or dates.
 - If full-expression parsing fails or returns a rejected partial candidate, decompose the expression with tools.
+- If the input has an obvious typo in a temporal word, interpret the intended temporal word yourself, state it as an assumption, and call candidate-producing tools directly. Do not spend a tool call asking deterministic parsers to parse the misspelled raw text.
 - For relative compositions, resolve or choose an anchor, then apply shift_datetime. If the intended normalized clock time is already known, pass time to shift_datetime instead of calling set_clock_time afterward.
 - Use resolve_clock_time only for conventional explicit clock syntax. For fuzzy clock wording, you may infer the intended normalized 24-hour time yourself, pass it to shift_datetime or set_clock_time, and state that assumption.
 - When inferring a fuzzy clock token, first decide whether the token is wordplay, slang, or a cultural time phrase rather than a literal clock string.
@@ -1149,6 +1166,10 @@ function errorMessage(error: unknown): string {
 }
 
 function shouldShortCircuitDeterministic(response: TemporalParseResponse): boolean {
+  if (response.status === 'needs_clarification' && (response.clarificationAlternatives?.length ?? 0) > 0) {
+    return true;
+  }
+
   return response.status === 'resolved'
     && response.epoch !== undefined
     && response.method === 'deterministic'
@@ -1169,8 +1190,12 @@ function attachTopLevelTiming(
   totalStartedAt: number,
   deterministicDurationMs?: number,
   agentDurationMs?: number,
+  features?: TemporalFeatureFlags,
 ): void {
   response.debug = response.debug ?? {};
+  if (features !== undefined) {
+    response.debug.featureFlags = compactFeatureFlags(features);
+  }
   if (deterministicDurationMs !== undefined) {
     response.debug.deterministicDurationMs = deterministicDurationMs;
   }
@@ -1178,6 +1203,14 @@ function attachTopLevelTiming(
     response.debug.agentDurationMs = agentDurationMs;
   }
   response.debug.totalDurationMs = elapsedMs(totalStartedAt);
+}
+
+function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFlags {
+  const compact: TemporalFeatureFlags = {};
+  if (features.ordinalWeekdayGrammar !== undefined) {
+    compact.ordinalWeekdayGrammar = features.ordinalWeekdayGrammar;
+  }
+  return compact;
 }
 
 function createChatModel(apiKey: string, model: string, reasoningEffort: string): ChatOpenAI {

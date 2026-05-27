@@ -1,4 +1,4 @@
-import type { CalendarContext, Candidate, CandidateFacts, CandidateProposal } from "./types";
+import type { CalendarContext, Candidate, CandidateFacts, CandidateProposal, TemporalFeatureFlags } from "./types";
 import {
   candidateFacts,
   formatCandidate,
@@ -14,6 +14,7 @@ import {
 export interface ParseExpressionInput {
   text: string;
   calendarContext: CalendarContext;
+  features?: TemporalFeatureFlags;
 }
 
 export interface ParseExpressionOutput {
@@ -24,6 +25,7 @@ export interface ParseExpressionOutput {
 export interface ResolveCalendarQueryInput {
   query: string;
   calendarContext: CalendarContext;
+  features?: TemporalFeatureFlags;
 }
 
 export interface ResolveCalendarQueryOutput {

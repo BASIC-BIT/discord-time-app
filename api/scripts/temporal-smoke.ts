@@ -54,6 +54,16 @@ async function main() {
   assert.equal(relativeFormat.status, 'resolved');
   assert.equal(relativeFormat.suggestedFormatIndex, 6);
 
+  const firstSundayNextMonth = await parse('first sunday of next month at 1pm');
+  assert.equal(firstSundayNextMonth.status, 'resolved');
+  assert.equal(firstSundayNextMonth.method, 'deterministic');
+  assert.equal(firstSundayNextMonth.canonical?.zonedDateTime.startsWith('2026-06-07T13:00'), true);
+
+  const dayAfterFirstSunday = await parse('the day after the first sunday of next month at one hour past noon and 10 minutes');
+  assert.equal(dayAfterFirstSunday.status, 'resolved');
+  assert.equal(dayAfterFirstSunday.method, 'deterministic');
+  assert.equal(dayAfterFirstSunday.canonical?.zonedDateTime.startsWith('2026-06-08T13:10'), true);
+
   const dateOnlyNoon = await parseTemporalExpression({
     text: 'tomorrow',
     timeZone,
@@ -79,6 +89,13 @@ async function main() {
 
   const easter2026 = await tools.resolveHoliday({ holidayName: 'easter', year: 2026, calendarContext });
   assert.equal(easter2026.candidates[0]?.zonedDateTime.startsWith('2026-04-05T12:00'), true);
+
+  const easterIndianapolis = await tools.resolveHoliday({
+    holidayName: 'easter',
+    year: 2056,
+    calendarContext: { ...calendarContext, timeZone: 'America/Indianapolis' },
+  });
+  assert.equal(easterIndianapolis.candidates[0]?.zonedDateTime.startsWith('2056-04-02T12:00'), true);
 
   const noUsFallbackHoliday = await tools.resolveHoliday({
     holidayName: 'thanksgiving',

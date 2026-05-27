@@ -130,6 +130,10 @@ export interface TemporalFinalValidation {
   missingOrContradictedSignals: string[];
 }
 
+export interface TemporalFeatureFlags {
+  ordinalWeekdayGrammar?: boolean;
+}
+
 export interface TemporalParseRequest {
   text: string;
   calendarContext: CalendarContext;
@@ -167,6 +171,7 @@ export interface TemporalParseResponse {
     shortCircuitReason?: string;
     model?: string;
     reasoningEffort?: string;
+    featureFlags?: TemporalFeatureFlags;
     trace?: TemporalAgentTraceStep[];
     finalValidation?: TemporalFinalValidation;
     langfuseTraceId?: string;

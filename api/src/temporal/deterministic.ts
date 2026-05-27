@@ -8,6 +8,7 @@ import type {
   CandidateFacts,
   TemporalAgentContext,
   TemporalChronoCandidateContext,
+  TemporalFeatureFlags,
   TemporalHolidayHint,
   TemporalPrecision,
   Weekday,
@@ -50,14 +51,57 @@ const WEEKDAY_NAMES: Record<number, Weekday> = {
 };
 
 const WEEKDAY_PATTERN = /\b(?:(this|next|last)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+const WEEKDAY_NAME_PATTERN = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday';
+const ORDINAL_WEEKDAY_OF_MONTH_PATTERN = new RegExp(
+  `^\\s*(?:(?:the\\s+)?day\\s+(?<dayShift>after|before)\\s+)?(?:the\\s+)?(?<ordinal>first|second|third|fourth|fifth|last)\\s+(?<weekday>${WEEKDAY_NAME_PATTERN})\\s+of\\s+(?:(?<relativeMonth>this|next)\\s+month)(?:\\s+at\\s+(?<timeText>.+?))?\\s*$`,
+  'i',
+);
 const DISCORD_TIMESTAMP_PATTERN = /<t:(\d+)(?::[tTdDfFR])?>/;
 const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 const TWELVE_HOUR_TIME_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/i;
 const TWENTY_FOUR_HOUR_TIME_PATTERN = /\b([01]?\d|2[0-3]):([0-5]\d)\b/;
+const NUMBER_TEXT_PATTERN = String.raw`(?:\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
+const RELATIVE_NOON_TIME_PATTERN = new RegExp(String.raw`\b(?:(?<hours>${NUMBER_TEXT_PATTERN})\s+hours?\s+)?(?:past|after)\s+noon(?:\s+and\s+(?<minutes>${NUMBER_TEXT_PATTERN})\s+minutes?)?\b`, 'i');
 const HOLIDAY_TYPES: HolidaysTypes.HolidayType[] = ['observance', 'optional', 'bank', 'public'];
 const TEMPORAL_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|noon|midnight|morning|afternoon|evening|day|days|week|weeks|month|months|year|years|hour|hours|minute|minutes|after|before|from|next|last|this|coming|upcoming|at|around|about|by|time|clock)\b|\b\d{1,2}\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b/i;
 const MONTH_DAY_AT_END_PATTERN = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\s*$/i;
 const DATE_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next|last|this|coming|upcoming)\b/i;
+const IANA_TIME_ZONE_ALIASES: Record<string, string> = {
+  'America/Indianapolis': 'America/Indiana/Indianapolis',
+};
+const ORDINAL_INDEX: Record<string, number> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+};
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+};
 
 let candidateIdSequence = 0;
 let supportedHolidayCountryCache: Set<string> | undefined;
@@ -99,6 +143,13 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
     return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
   }
 
+  const ordinalWeekday = featureEnabled(input.features, 'ordinalWeekdayGrammar')
+    ? parseOrdinalWeekdayOfMonth(input.text, input.calendarContext)
+    : null;
+  if (ordinalWeekday) {
+    return { candidates: [ordinalWeekday], parserNotes: ['Matched ordinal weekday-of-month expression.'] };
+  }
+
   const chronoCandidate = parseWithChrono(input.text, input.calendarContext);
   if (chronoCandidate) {
     return { candidates: [chronoCandidate], parserNotes: ['Matched chrono-node parse.'] };
@@ -108,7 +159,11 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
 }
 
 export async function resolveCalendarQuery(input: ResolveCalendarQueryInput): Promise<ResolveCalendarQueryOutput> {
-  const parsed = await parseExpression({ text: input.query, calendarContext: input.calendarContext });
+  const parsed = await parseExpression({
+    text: input.query,
+    calendarContext: input.calendarContext,
+    ...(input.features === undefined ? {} : { features: input.features }),
+  });
   return {
     candidates: parsed.candidates,
     source: parsed.candidates[0]?.provenance ?? 'chrono',
@@ -331,6 +386,82 @@ function candidateFromHoliday(
   }
 
   return createCandidate(zonedDateTime, time.explicit ? 'datetime' : 'date', assumptions, 'holiday_library');
+}
+
+function featureEnabled(features: TemporalFeatureFlags | undefined, key: keyof TemporalFeatureFlags): boolean {
+  return features?.[key] !== false;
+}
+
+function parseOrdinalWeekdayOfMonth(text: string, calendarContext: CalendarContext): Candidate | null {
+  const match = ORDINAL_WEEKDAY_OF_MONTH_PATTERN.exec(text);
+  const groups = match?.groups;
+  if (!groups) {
+    return null;
+  }
+
+  const weekday = groups['weekday']?.toLowerCase() as Weekday | undefined;
+  const ordinal = groups['ordinal']?.toLowerCase();
+  const relativeMonth = groups['relativeMonth']?.toLowerCase();
+  if (!weekday || !isWeekday(weekday) || !ordinal || !relativeMonth) {
+    return null;
+  }
+
+  const reference = referenceZdt(calendarContext);
+  const targetMonth = reference.toPlainDate().with({ day: 1 }).add({ months: relativeMonth === 'next' ? 1 : 0 });
+  const targetDay = ordinal === 'last'
+    ? lastWeekdayOfMonth(targetMonth.year, targetMonth.month, weekday)
+    : nthWeekdayOfMonth(targetMonth.year, targetMonth.month, weekday, ORDINAL_INDEX[ordinal] ?? 0);
+  if (targetDay === null) {
+    return null;
+  }
+
+  let targetDate = Temporal.PlainDate.from({ year: targetMonth.year, month: targetMonth.month, day: targetDay });
+  const dayShift = groups['dayShift']?.toLowerCase();
+  if (dayShift === 'after') {
+    targetDate = targetDate.add({ days: 1 });
+  } else if (dayShift === 'before') {
+    targetDate = targetDate.subtract({ days: 1 });
+  }
+
+  const time = groups['timeText'] === undefined
+    ? { hour: 12, minute: 0, explicit: false }
+    : extractTimeOfDay(groups['timeText']);
+  if (groups['timeText'] !== undefined && !time.explicit) {
+    return null;
+  }
+
+  const zonedDateTime = targetDate.toZonedDateTime({
+    timeZone: calendarContext.timeZone,
+    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+  });
+  const assumptions = [`Resolved ${ordinal} ${weekday} of ${relativeMonth} month with calendar arithmetic.`];
+  if (dayShift !== undefined) {
+    assumptions.push(`Applied one day ${dayShift} the resolved date.`);
+  }
+  if (time.explicit) {
+    assumptions.push(`Applied explicit clock time ${formatRequestedTime(time)}.`);
+  } else {
+    assumptions.push('Defaulted date-only expression to 12:00 PM local time.');
+  }
+
+  return createCandidate(zonedDateTime, time.explicit ? 'datetime' : 'date', assumptions, 'shift_math');
+}
+
+function nthWeekdayOfMonth(year: number, month: number, weekday: Weekday, ordinal: number): number | null {
+  if (ordinal < 1) {
+    return null;
+  }
+  const firstOfMonth = Temporal.PlainDate.from({ year, month, day: 1 });
+  const delta = (WEEKDAY_LOOKUP[weekday] - firstOfMonth.dayOfWeek + 7) % 7;
+  const day = 1 + delta + (ordinal - 1) * 7;
+  return day <= firstOfMonth.daysInMonth ? day : null;
+}
+
+function lastWeekdayOfMonth(year: number, month: number, weekday: Weekday): number {
+  const firstOfMonth = Temporal.PlainDate.from({ year, month, day: 1 });
+  const lastOfMonth = firstOfMonth.with({ day: firstOfMonth.daysInMonth });
+  const delta = (lastOfMonth.dayOfWeek - WEEKDAY_LOOKUP[weekday] + 7) % 7;
+  return lastOfMonth.subtract({ days: delta }).day;
 }
 
 function parseWithChrono(text: string, calendarContext: CalendarContext): Candidate | null {
@@ -634,10 +765,16 @@ function countryFromTimeZone(timeZone: string): string | null {
 
 function countryHasTimeZone(country: string, timeZone: string): boolean {
   try {
-    return new Holidays(country).getTimezones().includes(timeZone);
+    const zones = new Holidays(country).getTimezones();
+    return candidateHolidayTimeZones(timeZone).some((candidate) => zones.includes(candidate));
   } catch {
     return false;
   }
+}
+
+function candidateHolidayTimeZones(timeZone: string): string[] {
+  const alias = IANA_TIME_ZONE_ALIASES[timeZone];
+  return alias === undefined || alias === timeZone ? [timeZone] : [timeZone, alias];
 }
 
 function supportedHolidayCountries(): Set<string> {
@@ -711,6 +848,18 @@ function resolveClockTimeCandidates(text: string): ResolveClockTimeOutput['candi
     addCandidate({ hour: 12, minute: 0, normalized: '12:00', assumptions: ['Interpreted noon as 12:00.'], confidence: 0.95 });
   }
 
+  const relativeNoon = RELATIVE_NOON_TIME_PATTERN.exec(text);
+  if (relativeNoon?.groups) {
+    const hours = relativeNoon.groups['hours'] === undefined ? 0 : numberFromText(relativeNoon.groups['hours']);
+    const minutes = relativeNoon.groups['minutes'] === undefined ? 0 : numberFromText(relativeNoon.groups['minutes']);
+    if (hours !== null && minutes !== null && hours >= 0 && minutes >= 0 && minutes < 60) {
+      const totalMinutes = 12 * 60 + hours * 60 + minutes;
+      const hour = Math.floor(totalMinutes / 60) % 24;
+      const minute = totalMinutes % 60;
+      addCandidate({ hour, minute, normalized: formatRequestedTime({ hour, minute }), assumptions: [`Interpreted ${relativeNoon[0]} relative to noon.`], confidence: 0.98 });
+    }
+  }
+
   const twelveHour = TWELVE_HOUR_TIME_PATTERN.exec(text);
   if (twelveHour?.[1] && twelveHour[3]) {
     const suffix = twelveHour[3].toLowerCase();
@@ -730,6 +879,27 @@ function resolveClockTimeCandidates(text: string): ResolveClockTimeOutput['candi
   }
 
   return [...candidates.values()].sort((a, b) => b.confidence - a.confidence);
+}
+
+function numberFromText(text: string): number | null {
+  const normalized = text.toLowerCase().trim().replace(/-/g, ' ').replace(/\s+/g, ' ');
+  if (/^\d{1,2}$/.test(normalized)) {
+    return Number(normalized);
+  }
+
+  const direct = NUMBER_WORDS[normalized];
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const [tensWord, onesWord] = normalized.split(' ');
+  const tens = tensWord === undefined ? undefined : NUMBER_WORDS[tensWord];
+  const ones = onesWord === undefined ? undefined : NUMBER_WORDS[onesWord];
+  if (tens !== undefined && tens >= 20 && ones !== undefined && ones > 0 && ones < 10) {
+    return tens + ones;
+  }
+
+  return null;
 }
 
 function isPartialChronoParse(text: string, parsedText: string, start: chrono.ParsedComponents): boolean {

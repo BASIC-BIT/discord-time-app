@@ -11,7 +11,8 @@
     "test:temporal": "tsx scripts/temporal-smoke.ts",
     "test:temporal:live": "tsx scripts/temporal-live-smoke.ts",
     "eval:temporal": "tsx scripts/temporal-model-eval.ts",
-    "eval:temporal:report": "tsx scripts/temporal-eval-report.ts"
+    "eval:temporal:report": "tsx scripts/temporal-eval-report.ts",
+    "eval:temporal:autoresearch": "tsx scripts/temporal-autoresearch.ts"
   },
   "keywords": [
     "api",

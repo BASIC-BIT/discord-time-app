@@ -57,9 +57,9 @@ npm run preview
 - SQLite database for usage tracking
 - Docker deployment ready
 
-## Critical Security Issue
+## Backend API Integration
 
-⚠️ **The frontend currently makes direct OpenAI API calls** exposing the API key in the client bundle. The backend API has been implemented but NOT integrated. Priority fix needed.
+The frontend uses the backend API for agent-assisted parsing so OpenAI keys are not exposed in the client bundle. In Tauri, the Rust runtime generates a per-install local parser key and starts the bundled API sidecar staged by `npm run prepare:api-sidecar`; browser-only development still uses `VITE_API_BASE_URL` and `VITE_API_KEY` from `.env`.
 
 ## Key Features
 

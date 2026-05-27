@@ -44,11 +44,30 @@ export function Overlay({ onClose }: OverlayProps) {
   const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
   const [confidence, setConfidence] = useState(1);
   const [isClipboardText, setIsClipboardText] = useState(false);
+  const [parseProgressMessage, setParseProgressMessage] = useState<string | null>(null);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const selectionTouchedRef = useRef(false);
+  const progressTimeoutsRef = useRef<number[]>([]);
+
+  const clearProgressTimers = () => {
+    for (const timeoutId of progressTimeoutsRef.current) {
+      clearTimeout(timeoutId);
+    }
+    progressTimeoutsRef.current = [];
+  };
+
+  const startBackendProgress = (hasLocalEstimate: boolean) => {
+    clearProgressTimers();
+    setParseProgressMessage(hasLocalEstimate ? 'Checking' : 'APIing');
+    progressTimeoutsRef.current = [
+      window.setTimeout(() => setParseProgressMessage('Mathing'), 1500),
+      window.setTimeout(() => setParseProgressMessage('Picking'), 3600),
+      window.setTimeout(() => setParseProgressMessage('Still churning'), 6500),
+    ];
+  };
 
   // Initialize and load clipboard content
   useEffect(() => {
@@ -118,6 +137,7 @@ export function Overlay({ onClose }: OverlayProps) {
     if (debounceTimeoutRef.current) {
       clearTimeout(debounceTimeoutRef.current);
     }
+    clearProgressTimers();
 
     // Cancel any ongoing request
     if (abortControllerRef.current) {
@@ -140,6 +160,7 @@ export function Overlay({ onClose }: OverlayProps) {
         setSelectedIndex(formatIndex >= 0 ? formatIndex : 0);
         selectionTouchedRef.current = false;
         setError(null);
+        setParseProgressMessage(null);
         setLoading(false);
       } else {
         setEpoch(null);
@@ -151,6 +172,7 @@ export function Overlay({ onClose }: OverlayProps) {
         selectionTouchedRef.current = false;
         // Parse as natural language with debounce
         setLoading(true);
+        setParseProgressMessage('Settling');
         debounceTimeoutRef.current = setTimeout(() => {
           parseInput(inputText.trim(), isClipboardText);
         }, 300); // 300ms debounce for faster response
@@ -162,6 +184,7 @@ export function Overlay({ onClose }: OverlayProps) {
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
       setConfidence(1);
+      setParseProgressMessage(null);
       selectionTouchedRef.current = false;
       setLoading(false);
     }
@@ -195,6 +218,7 @@ export function Overlay({ onClose }: OverlayProps) {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      clearProgressTimers();
     };
   }, []);
 
@@ -207,6 +231,7 @@ export function Overlay({ onClose }: OverlayProps) {
     setClarificationQuestion(null);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
+    setParseProgressMessage('Localing');
     
     try {
       // Check if request was already cancelled
@@ -233,11 +258,12 @@ export function Overlay({ onClose }: OverlayProps) {
       }
 
       // Verify with backend API after showing a local estimate when possible.
-      const apiClient = createAPIClient();
+      const apiClient = await createAPIClient();
       let result: { epoch: number; suggestedFormatIndex: number; confidence: number; method: string } | null = null;
       let apiError: Error | null = null;
       
       if (apiClient) {
+        startBackendProgress(displayedFallback);
         try {
           result = await apiClient.parseTime(text, timezone, abortController.signal);
           console.log("API Result: ", result);
@@ -249,6 +275,8 @@ export function Overlay({ onClose }: OverlayProps) {
           console.error('API parsing failed:', error);
           // Fall through to chrono-node fallback
         }
+      } else {
+        setParseProgressMessage(null);
       }
 
       // Check if request was cancelled after API call
@@ -299,6 +327,8 @@ export function Overlay({ onClose }: OverlayProps) {
     } finally {
       // Only set loading to false if this request wasn't aborted
       if (!abortController.signal.aborted) {
+        clearProgressTimers();
+        setParseProgressMessage(null);
         setLoading(false);
       }
     }
@@ -309,6 +339,7 @@ export function Overlay({ onClose }: OverlayProps) {
   const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
   const hasInlineStatus = error || hasClarification || showLowConfidence;
   const showVerifyingTab = loading && !hasClarification && !error;
+  const progressText = parseProgressMessage ?? (epoch !== null ? 'Checking' : 'Parsing');
   const overlayTone = error
     ? 'error'
     : hasClarification
@@ -504,7 +535,7 @@ export function Overlay({ onClose }: OverlayProps) {
         <div className="footer-status-slot" aria-live="polite">
           <div className={`verifying-tab ${showVerifyingTab ? 'visible' : ''}`}>
             <span className="progress-dot" />
-            {epoch !== null ? 'Verifying...' : 'Parsing...'}
+            <span className="verifying-label">{progressText}</span>
           </div>
         </div>
         <span className="hint">{footerHint}</span>

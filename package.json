@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:api": "npm --prefix api run build",
+    "prepare:api-sidecar": "node scripts/prepare-api-sidecar.mjs",
+    "build:desktop": "npm run build:api && npm run prepare:api-sidecar && npm run build",
     "tauri:build": "tauri build",
     "preview": "vite preview",
     "tauri": "tauri",

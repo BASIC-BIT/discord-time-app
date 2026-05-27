@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 reports
+src-tauri/sidecars/
 *.local
 
 # Editor directories and files

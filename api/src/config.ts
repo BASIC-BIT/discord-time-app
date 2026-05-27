@@ -1,4 +1,5 @@
 import { EnvConfig } from './types';
+import type { TemporalFeatureFlags } from './temporal/types';
 
 /**
  * Configuration loader for environment variables
@@ -26,6 +27,7 @@ export class Config {
       LANGFUSE_SECRET_KEY: langfuseSecretKey,
       LANGFUSE_BASE_URL: this.getOptionalEnvVar('LANGFUSE_BASE_URL') ?? this.getOptionalEnvVar('LANGFUSE_HOST'),
       STATIC_API_KEY: this.getEnvVar('STATIC_API_KEY', 'STATIC_KEY_123'),
+      TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR: this.getBooleanEnvVar('TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR', true),
       PORT: parseInt(this.getEnvVar('PORT', '8857'), 10),
       DB_PATH: this.getEnvVar('DB_PATH', 'usage.db')
     };
@@ -126,6 +128,12 @@ export class Config {
     return this.config.DB_PATH;
   }
 
+  public get temporalFeatures(): TemporalFeatureFlags {
+    return {
+      ordinalWeekdayGrammar: this.config.TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR,
+    };
+  }
+
   /**
    * Get sanitized config for logging (without secrets)
    */
@@ -138,6 +146,7 @@ export class Config {
       LANGFUSE_PUBLIC_KEY: this.config.LANGFUSE_PUBLIC_KEY === undefined ? 'not configured' : this.config.LANGFUSE_PUBLIC_KEY.slice(0, 7) + '...',
       LANGFUSE_SECRET_KEY: this.config.LANGFUSE_SECRET_KEY === undefined ? 'not configured' : 'configured',
       LANGFUSE_BASE_URL: this.config.LANGFUSE_BASE_URL,
+      TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR: this.config.TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR,
       STATIC_API_KEY: this.config.STATIC_API_KEY.slice(0, 6) + '...',
       PORT: this.config.PORT,
       DB_PATH: this.config.DB_PATH

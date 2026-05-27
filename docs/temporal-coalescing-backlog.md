@@ -35,11 +35,23 @@ This captures follow-up ideas without bloating the v1 implementation.
 - Trace model calls, tool calls, candidate proposals, finalization, validation warnings, latency, and cost.
 - PostHog can come later for product analytics.
 
+## Experimentation And Feature Flags
+
+- Keep the current agent/tool path runnable as the baseline while experimenting with a structured temporal-plan IR.
+- Gate new parser strategies with explicit flags, for example `TEMPORAL_PLAN_IR_ENABLED`, `TEMPORAL_FAST_SINGLE_CALL_ENABLED`, and `TEMPORAL_SKIP_FINAL_VALIDATION_ENABLED`.
+- Include the feature-flag set, model, reasoning effort, status, latency, LLM turns, tool calls, candidate count, failure class, and expected-vs-actual result in eval output.
+- Run eval matrices before promoting a parser strategy: baseline only, one feature at a time, and selected feature permutations.
+- Use `npm --prefix api run eval:temporal:autoresearch` for the local matrix wrapper. By default it writes JSON, summary JSON, and HTML into `api/reports/temporal-autoresearch/`.
+- The current default matrix compares `baseline:ordinalWeekdayGrammar=false` against `candidate:ordinalWeekdayGrammar=true` and includes the deterministic runner plus `gpt-5.5:low` when `OPENAI_API_KEY` is configured.
+- For a deterministic smoke without spending model calls, run with `TEMPORAL_EVAL_MODELS=" "`, `TEMPORAL_EVAL_BASELINES=deterministic`, and optionally `TEMPORAL_EVAL_LIMIT=1`.
+- Treat the LLM's job as semantic decomposition into a plan; keep deterministic code focused on executing calendar operations, validation, and formatting.
+- Remove or demote losing flags after the decision is recorded so experimental paths do not become permanent complexity.
+
 ## Desktop App Follow-Ups
 
 - Investigate start-on-login for HammerOverlay.
-- Bundle or supervise the temporal API with the desktop app so users do not have to start a separate local service after reboot.
-- If the API remains a sidecar, add startup health checks, restart/backoff, visible service status, and logs reachable from settings.
+- Continue hardening the bundled temporal API sidecar so users do not have to start a separate local service after reboot.
+- Add visible service status, restart/backoff controls, and logs reachable from settings.
 - Preserve the existing fast hotkey UX; the app is already useful and should not be destabilized by the temporal engine work.
 
 ## Overlay UX Follow-Ups

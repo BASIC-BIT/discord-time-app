@@ -5,7 +5,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 import { parseTemporalExpression } from '../src/temporal';
-import type { TemporalParseResponse } from '../src/temporal/types';
+import type { TemporalFeatureFlags, TemporalParseResponse } from '../src/temporal/types';
 
 type ExpectedResolved = {
   status: 'resolved';
@@ -42,6 +42,11 @@ type DeterministicSpec = {
 
 type EvalRunnerSpec = ModelSpec | DeterministicSpec;
 
+type EvalExperimentSpec = {
+  label: string;
+  featureFlags: TemporalFeatureFlags;
+};
+
 type EvalParsed = {
   status: TemporalParseResponse['status'];
   epoch?: number;
@@ -53,6 +58,8 @@ type EvalParsed = {
 };
 
 type EvalResult = {
+  experimentLabel: string;
+  featureFlags: TemporalFeatureFlags;
   runner: EvalRunnerSpec['runner'];
   model: string;
   provider: string;
@@ -99,6 +106,7 @@ const openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
 const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
 const modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
 const baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
+const experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
 const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
 const limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
 const repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
@@ -172,6 +180,18 @@ const evalCases: TemporalEvalCase[] = [
     expected: { status: 'resolved', epoch: 1839513600, suggestedFormatIndex: 1 },
   },
   {
+    id: 'ordinal-weekday-next-month-clock',
+    text: 'first sunday of next month at 1pm',
+    category: 'calendar-grammar',
+    expected: { status: 'resolved', epoch: 1780851600, suggestedFormatIndex: 5 },
+  },
+  {
+    id: 'ordinal-weekday-shift-relative-noon',
+    text: 'the day after the first sunday of next month at one hour past noon and 10 minutes',
+    category: 'calendar-grammar',
+    expected: { status: 'resolved', epoch: 1780938600, suggestedFormatIndex: 5 },
+  },
+  {
     id: 'next-weekday-boundary-sunday',
     text: 'next saturday 10pm',
     category: 'weekday-boundary-ambiguity',
@@ -214,9 +234,11 @@ async function main() {
   const cases = limit === undefined ? evalCases : evalCases.slice(0, limit);
   const results: EvalResult[] = [];
   for (const modelSpec of runnerSpecs.filter((spec) => spec.runner === 'deterministic' || openaiApiKey !== undefined)) {
-    for (const evalCase of cases) {
-      for (let repeat = 1; repeat <= repeats; repeat += 1) {
-        results.push(await runCase(modelSpec, evalCase, repeat));
+    for (const experimentSpec of experimentSpecs) {
+      for (const evalCase of cases) {
+        for (let repeat = 1; repeat <= repeats; repeat += 1) {
+          results.push(await runCase(modelSpec, experimentSpec, evalCase, repeat));
+        }
       }
     }
   }
@@ -224,7 +246,7 @@ async function main() {
   printSummary(results);
   if (outputPath !== undefined) {
     await mkdir(dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, `${JSON.stringify({ referenceInstant, timeZone, results }, null, 2)}\n`, 'utf8');
+    await writeFile(outputPath, `${JSON.stringify({ referenceInstant, timeZone, experiments: experimentSpecs, results }, null, 2)}\n`, 'utf8');
     console.log(`Wrote temporal eval results to ${outputPath}`);
   }
 
@@ -233,12 +255,14 @@ async function main() {
   }
 }
 
-async function runCase(modelSpec: EvalRunnerSpec, evalCase: TemporalEvalCase, repeat: number): Promise<EvalResult> {
+async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperimentSpec, evalCase: TemporalEvalCase, repeat: number): Promise<EvalResult> {
   const startedAt = Date.now();
   try {
-    const parsed = await runEvalRunner(modelSpec, evalCase.text);
+    const parsed = await runEvalRunner(modelSpec, experimentSpec, evalCase.text);
     const mismatch = evaluateParsed(evalCase, parsed);
     return {
+      experimentLabel: experimentSpec.label,
+      featureFlags: experimentSpec.featureFlags,
       runner: modelSpec.runner,
       model: modelSpec.model,
       provider: modelSpec.provider,
@@ -260,6 +284,8 @@ async function runCase(modelSpec: EvalRunnerSpec, evalCase: TemporalEvalCase, re
     };
   } catch (error) {
     return {
+      experimentLabel: experimentSpec.label,
+      featureFlags: experimentSpec.featureFlags,
       runner: modelSpec.runner,
       model: modelSpec.model,
       provider: modelSpec.provider,
@@ -276,13 +302,13 @@ async function runCase(modelSpec: EvalRunnerSpec, evalCase: TemporalEvalCase, re
   }
 }
 
-async function runEvalRunner(modelSpec: EvalRunnerSpec, text: string): Promise<EvalParsed> {
+async function runEvalRunner(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperimentSpec, text: string): Promise<EvalParsed> {
   if (modelSpec.runner === 'deterministic') {
-    return parseTemporalExpression({ text, timeZone, referenceInstant });
+    return parseTemporalExpression({ text, timeZone, referenceInstant, features: experimentSpec.featureFlags });
   }
 
   if (modelSpec.runner === 'single_call') {
-    return runSingleCallBaseline(modelSpec, text);
+    return runSingleCallBaseline(modelSpec, experimentSpec, text);
   }
 
   return parseTemporalExpression({
@@ -292,11 +318,12 @@ async function runEvalRunner(modelSpec: EvalRunnerSpec, text: string): Promise<E
     openaiApiKey: openaiApiKey!,
     openaiModel: modelSpec.model,
     openaiReasoningEffort: modelSpec.reasoningEffort,
+    features: experimentSpec.featureFlags,
     langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
   });
 }
 
-async function runSingleCallBaseline(modelSpec: ModelSpec, text: string): Promise<EvalParsed> {
+async function runSingleCallBaseline(modelSpec: ModelSpec, experimentSpec: EvalExperimentSpec, text: string): Promise<EvalParsed> {
   const startedAt = Date.now();
   const system = `Convert natural language temporal text into one exact timestamp or an explicit clarification request.
 
@@ -318,6 +345,7 @@ Do not call tools. Do not explain outside the schema.`;
     debug: {
       model: modelSpec.model,
       reasoningEffort: modelSpec.reasoningEffort,
+      featureFlags: experimentSpec.featureFlags,
       totalDurationMs: durationMs,
       agentDurationMs: durationMs,
       firstLlmResponseMs: durationMs,
@@ -425,8 +453,8 @@ function isPromptMetrics(value: unknown): value is { systemPromptChars: number; 
 }
 
 function printSummary(results: EvalResult[]) {
-  for (const modelKey of unique(results.map((result) => `${result.runner}:${result.model}:${result.reasoningEffort}`))) {
-    const modelResults = results.filter((result) => `${result.runner}:${result.model}:${result.reasoningEffort}` === modelKey);
+  for (const modelKey of unique(results.map((result) => `${result.experimentLabel}:${result.runner}:${result.model}:${result.reasoningEffort}`))) {
+    const modelResults = results.filter((result) => `${result.experimentLabel}:${result.runner}:${result.model}:${result.reasoningEffort}` === modelKey);
     const firstResult = modelResults[0]!;
     const requiredResults = modelResults.filter((result) => result.required);
     const diagnosticResults = modelResults.filter((result) => !result.required);
@@ -440,7 +468,7 @@ function printSummary(results: EvalResult[]) {
     const meanLlmTurns = mean(modelResults.map((result) => result.metrics?.llmTurns ?? 0));
     const meanFirstLlm = mean(modelResults.map((result) => result.metrics?.firstLlmResponseMs ?? 0));
     const diagnosticSummary = diagnosticResults.length > 0 ? `, diagnostics=${diagnosticPassed}/${diagnosticResults.length}` : '';
-    console.log(`${firstResult.runner}/${firstResult.model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}`);
+    console.log(`${firstResult.experimentLabel} ${firstResult.runner}/${firstResult.model}: required=${passed}/${requiredResults.length}${diagnosticSummary}, median=${median}ms, p95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}`);
     for (const result of modelResults) {
       const status = result.required ? (result.passed ? 'PASS' : 'FAIL') : (result.passed ? 'DIAG-PASS' : 'DIAG');
       const detail = result.error ?? result.mismatch ?? `${result.status} epoch=${result.epoch ?? 'none'}`;
@@ -448,6 +476,54 @@ function printSummary(results: EvalResult[]) {
       console.log(`  ${status} ${result.caseId}${repeatSuffix}: ${detail} (${result.durationMs}ms)`);
     }
   }
+}
+
+function parseExperimentSpecs(value: string | undefined): EvalExperimentSpec[] {
+  const entries = splitSemicolonList(value);
+  if (entries.length === 0) {
+    return [{ label: 'default', featureFlags: {} }];
+  }
+
+  return entries.map((entry, index) => {
+    const separator = entry.indexOf(':');
+    const label = separator >= 0 ? entry.slice(0, separator).trim() : `experiment-${index + 1}`;
+    const flagsText = separator >= 0 ? entry.slice(separator + 1).trim() : entry;
+    return {
+      label: label.length > 0 ? label : `experiment-${index + 1}`,
+      featureFlags: parseFeatureFlags(flagsText),
+    };
+  });
+}
+
+function parseFeatureFlags(value: string): TemporalFeatureFlags {
+  const flags: TemporalFeatureFlags = {};
+  for (const assignment of splitList(value)) {
+    const [rawName, rawValue] = assignment.split('=');
+    if (rawName === undefined || rawValue === undefined) {
+      throw new Error(`Feature flag assignment must be name=value: ${assignment}`);
+    }
+    flags[normalizeFeatureName(rawName)] = parseBooleanFlag(rawValue);
+  }
+  return flags;
+}
+
+function normalizeFeatureName(value: string): keyof TemporalFeatureFlags {
+  const normalized = value.trim().toLowerCase().replace(/^temporal_feature_/, '').replace(/[-_]/g, '');
+  if (normalized === 'ordinalweekdaygrammar') {
+    return 'ordinalWeekdayGrammar';
+  }
+  throw new Error(`Unknown temporal feature flag: ${value}`);
+}
+
+function parseBooleanFlag(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+  throw new Error(`Feature flag value must be boolean-like, got: ${value}`);
 }
 
 function parseModelSpecs(value: string | undefined): ModelSpec[] {
@@ -499,6 +575,13 @@ function normalizeReasoningEffort(effort: string): 'none' | 'minimal' | 'low' | 
 function splitList(value: string | undefined): string[] {
   return (value ?? '')
     .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function splitSemicolonList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(';')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
 }

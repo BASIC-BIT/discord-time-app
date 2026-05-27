@@ -1,6 +1,7 @@
 /**
  * API client for backend time parsing service
  */
+import { invoke } from '@tauri-apps/api/core';
 
 export interface ParseResponse {
   epoch: number;
@@ -42,16 +43,27 @@ export class TimeParserUnavailableError extends Error {
   }
 }
 
-const DEFAULT_API_BASE_URL = 'http://localhost:8857';
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8857';
+const DEFAULT_UNAVAILABLE_MESSAGE = 'The local time parser service is not running yet. HammerOverlay will keep using local fallback parsing until it is available.';
+
+interface TimeParserRuntimeConfig {
+  baseUrl: string;
+  apiKey: string;
+  available: boolean;
+  supervised: boolean;
+  message: string;
+}
 
 export class TimeParserAPIClient {
   private baseUrl: string;
   private apiKey: string;
   private apiVersion: string = '1';
+  private unavailableMessage: string;
 
-  constructor(baseUrl: string, apiKey: string) {
+  constructor(baseUrl: string, apiKey: string, unavailableMessage = DEFAULT_UNAVAILABLE_MESSAGE) {
     this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.apiKey = apiKey;
+    this.unavailableMessage = unavailableMessage;
   }
 
   /**
@@ -106,7 +118,7 @@ export class TimeParserAPIClient {
         throw error;
       }
       if (error instanceof TypeError) {
-        throw new TimeParserUnavailableError('The local time parser service is not running yet. Start the HammerOverlay API service, then try again.');
+        throw new TimeParserUnavailableError(this.unavailableMessage);
       }
       
       // Re-throw with more context
@@ -127,22 +139,29 @@ export class TimeParserAPIClient {
   }
 }
 
-// Create singleton instance with environment variables
-export function createAPIClient(): TimeParserAPIClient | null {
+async function getTauriTimeParserConfig(): Promise<TimeParserRuntimeConfig | null> {
+  try {
+    return await invoke<TimeParserRuntimeConfig>('get_time_parser_config');
+  } catch (error) {
+    console.log('Tauri parser runtime config is unavailable:', error);
+    return null;
+  }
+}
+
+// Create singleton instance with environment variables or Tauri runtime config.
+export async function createAPIClient(): Promise<TimeParserAPIClient | null> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
   const apiKey = import.meta.env.VITE_API_KEY;
 
-  if (!apiKey) {
-    console.log('API client disabled because VITE_API_KEY is not configured.');
-    return null;
+  if (apiKey) {
+    return new TimeParserAPIClient(baseUrl, apiKey);
   }
 
-  console.log('API Client Configuration:', {
-    baseUrl,
-    apiKey: `${apiKey.substring(0, 8)}...`,
-    usesDefaultBaseUrl: !import.meta.env.VITE_API_BASE_URL,
-  });
+  const runtimeConfig = await getTauriTimeParserConfig();
+  if (runtimeConfig?.apiKey) {
+    return new TimeParserAPIClient(runtimeConfig.baseUrl || baseUrl, runtimeConfig.apiKey, runtimeConfig.message);
+  }
 
-  console.log('Creating API client with base URL:', baseUrl);
-  return new TimeParserAPIClient(baseUrl, apiKey);
+  console.log('API client disabled because VITE_API_KEY is not configured and no Tauri runtime config is available.');
+  return null;
 }

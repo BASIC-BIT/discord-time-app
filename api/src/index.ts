@@ -193,6 +193,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
     const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
       text,
       timeZone: tz,
+      features: config.temporalFeatures,
     };
     if (now !== undefined) {
       parseInput.referenceInstant = now;
