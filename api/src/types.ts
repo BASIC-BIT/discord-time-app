@@ -55,6 +55,7 @@ export interface EnvConfig {
   LANGFUSE_BASE_URL: string | undefined;
   STATIC_API_KEY: string;
   TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR: boolean;
+  TEMPORAL_FEATURE_PLAN_IR: boolean;
   PORT: number;
   DB_PATH: string;
 }

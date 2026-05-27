@@ -42,6 +42,55 @@ const AgentBaseDateTimeSchema = z.union([
   z.object({ zonedDateTime: z.string() }),
 ]);
 
+const PlanDeltaSchema = z.object({
+  years: z.number().int().nullable(),
+  months: z.number().int().nullable(),
+  weeks: z.number().int().nullable(),
+  days: z.number().int().nullable(),
+  hours: z.number().int().nullable(),
+  minutes: z.number().int().nullable(),
+});
+
+const TemporalPlanStepSchema = z.object({
+  operation: z.enum([
+    'resolve_calendar_query',
+    'resolve_holiday',
+    'resolve_clock_time',
+    'shift_datetime',
+    'set_clock_time',
+    'propose_candidate',
+  ]),
+  query: z.string().nullable(),
+  text: z.string().nullable(),
+  holidayName: z.string().nullable(),
+  year: z.number().int().min(1900).max(2200).nullable(),
+  baseStep: z.number().int().min(0).nullable(),
+  time: TimeOfDaySchema.nullable(),
+  timeStep: z.number().int().min(0).nullable(),
+  delta: PlanDeltaSchema,
+  isoInstant: z.string().nullable(),
+  epochSeconds: z.number().int().nullable(),
+  timeZone: z.string().nullable(),
+  precision: z.enum(['date', 'time', 'datetime', 'relative']).nullable(),
+  assumptions: z.array(z.string()),
+});
+
+const TemporalPlanSchema = z.object({
+  label: z.string(),
+  rationale: z.string(),
+  assumptions: z.array(z.string()),
+  confidence: z.number().min(0).max(1),
+  finalStep: z.number().int().min(0).nullable(),
+  steps: z.array(TemporalPlanStepSchema).min(1).max(6),
+});
+
+const TemporalPlanPlannerSchema = z.object({
+  outcome: z.enum(['plans', 'clarification', 'no_plan']),
+  reason: z.string(),
+  clarificationQuestion: z.string().nullable(),
+  plans: z.array(TemporalPlanSchema).max(4),
+});
+
 const FinalValidationSchema = z.object({
   accepted: z.boolean(),
   confidence: z.number().min(0).max(1),
@@ -50,6 +99,21 @@ const FinalValidationSchema = z.object({
 });
 
 type LangfuseHandler = BaseCallbackHandler & { last_trace_id: string | null };
+type TemporalPlan = z.infer<typeof TemporalPlanSchema>;
+type TemporalPlanStep = z.infer<typeof TemporalPlanStepSchema>;
+type RawTemporalPlanStep = z.input<typeof TemporalPlanStepSchema>;
+type RawTemporalPlan = {
+  label: string;
+  rationale: string;
+  assumptions?: string[] | undefined;
+  confidence?: number | undefined;
+  finalStep?: number | null | undefined;
+  steps: RawTemporalPlanStep[];
+};
+type TemporalPlanStepOutput =
+  | { kind: 'candidate'; candidate: Candidate }
+  | { kind: 'time'; time: { hour: number; minute: number } };
+type UnindexedTraceStep = Omit<TemporalAgentTraceStep, 'index'>;
 type LangfuseCallbackParams = {
   sessionId?: string;
   userId?: string;
@@ -119,6 +183,12 @@ export async function runTemporalCoalescingGraph(
 
   const maxToolCalls = options.maxToolCalls ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxToolCalls;
   const agentStartedAt = nowMs();
+
+  if (planIrEnabled(options.features)) {
+    const planResult = await runPlanIrPath(request, options);
+    attachTopLevelTiming(planResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
+    return planResult;
+  }
 
   try {
     const agentResult = await runAgentGraph(request, options, maxToolCalls);
@@ -617,6 +687,7 @@ async function runAgentGraph(
       toolPasses,
       agentAttempts,
       trace,
+      'agent+tools',
       getLangfuseTraceId(langfuseHandler),
     );
     attachAgentDebug(response);
@@ -638,6 +709,506 @@ async function runAgentGraph(
   );
   attachAgentDebug(response);
   return response;
+}
+
+async function runPlanIrPath(
+  request: TemporalParseRequest,
+  options: TemporalGraphOptions,
+): Promise<TemporalParseResponse> {
+  if (!options.openaiApiKey) {
+    return responseFromFailedPlanIr('Plan IR requires an OpenAI API key.', [], 0, 0, 0);
+  }
+
+  const planStartedAt = nowMs();
+  const modelName = options.openaiModel ?? DEFAULT_OPENAI_MODEL;
+  const reasoningEffort = options.openaiReasoningEffort ?? DEFAULT_OPENAI_REASONING_EFFORT;
+  const trace: TemporalAgentTraceStep[] = [];
+  const agentContext = collectTemporalAgentContext(request);
+  const langfuseHandler = await createLangfuseHandler(options, request);
+  const callbacks = langfuseHandler === null ? undefined : [langfuseHandler];
+  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
+  const planner = model.withStructuredOutput(TemporalPlanPlannerSchema);
+  const system = planIrSystemPrompt(request, agentContext);
+  const human = JSON.stringify({ text: request.text, calendarContext: request.calendarContext });
+
+  let firstLlmResponseMs: number | undefined;
+  let firstCandidateMs: number | undefined;
+  const attachPlanDebug = (response: TemporalParseResponse) => {
+    response.debug = response.debug ?? {};
+    response.debug.model = modelName;
+    response.debug.reasoningEffort = reasoningEffort;
+    response.debug.trace = response.debug.trace ?? trace;
+    if (firstLlmResponseMs !== undefined) {
+      response.debug.firstLlmResponseMs = firstLlmResponseMs;
+    }
+    if (firstCandidateMs !== undefined) {
+      response.debug.firstCandidateMs = firstCandidateMs;
+    }
+    response.debug.finalResponseMs = elapsedMs(planStartedAt);
+    const traceId = getLangfuseTraceId(langfuseHandler);
+    if (traceId !== undefined) {
+      response.debug.langfuseTraceId = traceId;
+    }
+  };
+
+  const llmStartedAt = nowMs();
+  const planResult = await planner.invoke([
+    new SystemMessage(system),
+    new HumanMessage(human),
+  ], callbacks === undefined ? undefined : { callbacks, runName: 'temporal-plan-ir' });
+  firstLlmResponseMs = elapsedMs(planStartedAt);
+  trace.push({
+    index: trace.length + 1,
+    type: 'llm',
+    name: 'plan_ir_planner',
+    durationMs: elapsedMs(llmStartedAt),
+    input: {
+      messageCount: 2,
+      systemPromptChars: system.length,
+      totalMessageChars: system.length + human.length,
+    },
+    output: summarizeValue(planResult),
+  });
+
+  const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
+  if (planResult.outcome === 'no_plan' || plans.length === 0) {
+    const response = responseFromFailedPlanIr(planResult.reason, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
+
+  const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, options)));
+  for (const execution of executions) {
+    appendTrace(trace, execution.trace);
+  }
+
+  const toolPasses = executions.reduce((total, execution) => total + execution.toolPasses, 0);
+  const candidates = executions.filter((execution): execution is PlanExecution & { enriched: EnrichedCandidate } => execution.enriched !== undefined);
+  if (candidates.length > 0) {
+    firstCandidateMs = executions.reduce((min, execution) => {
+      if (execution.firstCandidateMs === undefined) {
+        return min;
+      }
+      return min === undefined ? execution.firstCandidateMs : Math.min(min, execution.firstCandidateMs);
+    }, undefined as number | undefined);
+  }
+
+  const finalizable = candidates.filter((execution) => execution.enriched.finalizable);
+  if (finalizable.length === 0) {
+    const reason = planResult.reason || 'Plan IR did not produce a validation-passing candidate.';
+    const errors = executions.map((execution) => execution.error).filter((error): error is string => error !== undefined);
+    const response = responseFromFailedPlanIr([reason, ...errors].join(' '), trace, candidates.length, toolPasses, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
+
+  const uniqueEpochs = [...new Set(finalizable.map((execution) => String(candidateToEpoch(execution.enriched.candidate))))];
+  if (planResult.outcome === 'clarification' || uniqueEpochs.length > 1) {
+    const response = responseFromPlanClarification(
+      planResult.clarificationQuestion ?? 'Which interpretation did you mean?',
+      finalizable,
+      trace,
+      candidates.length,
+      toolPasses,
+      1,
+      getLangfuseTraceId(langfuseHandler),
+      request.text,
+    );
+    attachPlanDebug(response);
+    return response;
+  }
+
+  const selected = finalizable[0]!;
+  trace.push({
+    index: trace.length + 1,
+    type: 'router',
+    name: 'plan_ir_select_candidate',
+    output: { plan: selected.plan.label, candidate: compactEnrichedCandidate(selected.enriched) },
+  });
+
+  const finalValidationStartedAt = nowMs();
+  const finalValidation = await validateFinalAnswer(model, request, selected.enriched, selected.plan.rationale, trace, callbacks);
+  trace.push({
+    index: trace.length + 1,
+    type: 'final_validation',
+    name: 'plan_ir_final_validation',
+    durationMs: elapsedMs(finalValidationStartedAt),
+    output: finalValidation,
+  });
+  if (!finalValidation.accepted) {
+    const response = responseFromRejectedFinalValidation(
+      selected.enriched,
+      finalValidation,
+      candidates.length,
+      toolPasses,
+      1,
+      trace,
+      'agent+plan',
+      getLangfuseTraceId(langfuseHandler),
+    );
+    attachPlanDebug(response);
+    return response;
+  }
+
+  const response = responseFromEnrichedCandidate(
+    selected.enriched,
+    'agent+plan',
+    Math.min(0.9, Math.max(0.5, finalValidation.confidence, selected.plan.confidence)),
+    selected.plan.rationale,
+    candidates.length,
+    toolPasses,
+    1,
+    trace,
+    finalValidation,
+    getLangfuseTraceId(langfuseHandler),
+    request.text,
+  );
+  attachPlanDebug(response);
+  return response;
+}
+
+type PlanExecution = {
+  plan: TemporalPlan;
+  planIndex: number;
+  enriched?: EnrichedCandidate;
+  error?: string;
+  trace: UnindexedTraceStep[];
+  toolPasses: number;
+  firstCandidateMs?: number;
+};
+
+async function executeTemporalPlan(
+  plan: TemporalPlan,
+  planIndex: number,
+  request: TemporalParseRequest,
+  options: TemporalGraphOptions,
+): Promise<PlanExecution> {
+  const startedAt = nowMs();
+  const trace: UnindexedTraceStep[] = [];
+  const executions = new Map<number, Promise<TemporalPlanStepOutput>>();
+
+  const recordTool = (stepIndex: number, step: TemporalPlanStep, output: unknown, stepStartedAt: number) => {
+    trace.push({
+      type: 'tool',
+      name: step.operation,
+      durationMs: elapsedMs(stepStartedAt),
+      input: summarizeValue({ planIndex, plan: plan.label, stepIndex, step }),
+      output: summarizeValue(output),
+    });
+  };
+
+  const executeStep = (stepIndex: number): Promise<TemporalPlanStepOutput> => {
+    const existing = executions.get(stepIndex);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const step = plan.steps[stepIndex];
+    if (step === undefined) {
+      throw new Error(`Plan ${plan.label} references missing step ${stepIndex}.`);
+    }
+    const execution = executePlanStep(step, stepIndex, executeStep, request, options, recordTool);
+    executions.set(stepIndex, execution);
+    return execution;
+  };
+
+  try {
+    const outputs = await Promise.all(plan.steps.map((_, stepIndex) => executeStep(stepIndex)));
+    const finalOutput = finalPlanOutput(plan, outputs);
+    if (finalOutput.kind !== 'candidate') {
+      throw new Error(`Plan ${plan.label} final output was ${finalOutput.kind}, not a candidate.`);
+    }
+
+    const enriched = await enrichCandidate(finalOutput.candidate, request, options.implementations);
+    trace.push({
+      type: 'router',
+      name: 'plan_ir_final_step',
+      output: { planIndex, plan: plan.label, candidate: compactEnrichedCandidate(enriched) },
+    });
+    return {
+      plan,
+      planIndex,
+      enriched,
+      trace,
+      toolPasses: trace.filter((step) => step.type === 'tool').length,
+      firstCandidateMs: elapsedMs(startedAt),
+    };
+  } catch (error) {
+    trace.push({
+      type: 'router',
+      name: 'plan_ir_plan_failed',
+      output: { planIndex, plan: plan.label, error: errorMessage(error) },
+    });
+    return {
+      plan,
+      planIndex,
+      error: errorMessage(error),
+      trace,
+      toolPasses: trace.filter((step) => step.type === 'tool').length,
+    };
+  }
+}
+
+async function executePlanStep(
+  step: TemporalPlanStep,
+  stepIndex: number,
+  executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
+  request: TemporalParseRequest,
+  options: TemporalGraphOptions,
+  recordTool: (stepIndex: number, step: TemporalPlanStep, output: unknown, startedAt: number) => void,
+): Promise<TemporalPlanStepOutput> {
+  const startedAt = nowMs();
+  switch (step.operation) {
+    case 'resolve_calendar_query': {
+      const query = requirePlanString(step.query, step, 'query');
+      const resolved = await options.implementations.resolveCalendarQuery({
+        query,
+        calendarContext: request.calendarContext,
+        ...(options.features === undefined ? {} : { features: options.features }),
+      });
+      const candidate = resolved.candidates[0];
+      recordTool(stepIndex, step, resolved, startedAt);
+      if (candidate === undefined) {
+        throw new Error(`resolve_calendar_query returned no candidates for ${query}.`);
+      }
+      return { kind: 'candidate', candidate };
+    }
+    case 'resolve_holiday': {
+      const holidayName = requirePlanString(step.holidayName, step, 'holidayName');
+      const holidayInput: Parameters<TemporalToolImplementations['resolveHoliday']>[0] = {
+        holidayName,
+        calendarContext: request.calendarContext,
+      };
+      if (step.year !== null) {
+        holidayInput.year = step.year;
+      }
+      if (step.time !== null) {
+        holidayInput.time = step.time;
+      }
+      const resolved = await options.implementations.resolveHoliday(holidayInput);
+      const candidate = resolved.candidates[0];
+      recordTool(stepIndex, step, resolved, startedAt);
+      if (candidate === undefined) {
+        throw new Error(`resolve_holiday returned no candidates for ${holidayName}.`);
+      }
+      return { kind: 'candidate', candidate };
+    }
+    case 'resolve_clock_time': {
+      const text = requirePlanString(step.text ?? step.query, step, 'text');
+      const resolved = await options.implementations.resolveClockTime({ text, calendarContext: request.calendarContext });
+      const clock = resolved.candidates[0];
+      recordTool(stepIndex, step, resolved, startedAt);
+      if (clock === undefined) {
+        throw new Error(`resolve_clock_time returned no candidates for ${text}.`);
+      }
+      return { kind: 'time', time: { hour: clock.hour, minute: clock.minute } };
+    }
+    case 'shift_datetime': {
+      const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
+      const [base, time] = await Promise.all([
+        candidateOutputFromPlanStep(baseStep, executeStep),
+        timeFromPlanStep(step, executeStep),
+      ]);
+      const shiftInput: Parameters<TemporalToolImplementations['shiftDateTime']>[0] = {
+        base: { zonedDateTime: base.candidate.zonedDateTime },
+        delta: cleanDelta(step.delta),
+        calendarContext: request.calendarContext,
+      };
+      if (time !== undefined) {
+        shiftInput.time = time;
+      }
+      const candidate = await options.implementations.shiftDateTime(shiftInput);
+      recordTool(stepIndex, step, candidate, startedAt);
+      return { kind: 'candidate', candidate };
+    }
+    case 'set_clock_time': {
+      const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
+      const [base, time] = await Promise.all([
+        candidateOutputFromPlanStep(baseStep, executeStep),
+        timeFromPlanStep(step, executeStep),
+      ]);
+      if (time === undefined) {
+        throw new Error('set_clock_time requires either time or timeStep.');
+      }
+      const candidate = await options.implementations.setClockTime({
+        base: { zonedDateTime: base.candidate.zonedDateTime },
+        time,
+        calendarContext: request.calendarContext,
+      });
+      recordTool(stepIndex, step, candidate, startedAt);
+      return { kind: 'candidate', candidate };
+    }
+    case 'propose_candidate': {
+      const isoInstant = step.isoInstant ?? epochSecondsToIso(step.epochSeconds);
+      const candidate = candidateFromProposal({
+        isoInstant,
+        timeZone: step.timeZone ?? request.calendarContext.timeZone,
+        precision: requirePlanPrecision(step.precision, step),
+        assumptions: [...planStepAssumptions(step)],
+      });
+      recordTool(stepIndex, step, candidate, startedAt);
+      return { kind: 'candidate', candidate };
+    }
+  }
+}
+
+async function candidateOutputFromPlanStep(
+  stepIndex: number,
+  executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
+): Promise<Extract<TemporalPlanStepOutput, { kind: 'candidate' }>> {
+  const output = await executeStep(stepIndex);
+  if (output.kind !== 'candidate') {
+    throw new Error(`Step ${stepIndex} produced ${output.kind}, not a candidate.`);
+  }
+  return output;
+}
+
+async function timeFromPlanStep(
+  step: TemporalPlanStep,
+  executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
+): Promise<{ hour: number; minute: number } | undefined> {
+  if (step.time !== null) {
+    return step.time;
+  }
+  if (step.timeStep === null) {
+    return undefined;
+  }
+  const output = await executeStep(step.timeStep);
+  if (output.kind !== 'time') {
+    throw new Error(`Step ${step.timeStep} produced ${output.kind}, not a time.`);
+  }
+  return output.time;
+}
+
+function finalPlanOutput(plan: TemporalPlan, outputs: TemporalPlanStepOutput[]): TemporalPlanStepOutput {
+  if (plan.finalStep !== null) {
+    const output = outputs[plan.finalStep];
+    if (output?.kind === 'candidate') {
+      return output;
+    }
+  }
+
+  for (let index = outputs.length - 1; index >= 0; index -= 1) {
+    const output = outputs[index];
+    if (output?.kind === 'candidate') {
+      return output;
+    }
+  }
+  throw new Error(`Plan ${plan.label} did not produce a candidate.`);
+}
+
+function planStepAssumptions(step: TemporalPlanStep): string[] {
+  const assumptions = step.assumptions ?? [];
+  return assumptions.length > 0 ? assumptions : ['Plan IR proposed an explicit candidate.'];
+}
+
+function normalizeTemporalPlan(plan: RawTemporalPlan): TemporalPlan {
+  const normalized: TemporalPlan = {
+    label: plan.label,
+    rationale: plan.rationale,
+    assumptions: plan.assumptions ?? [],
+    confidence: plan.confidence ?? 0.7,
+    finalStep: plan.finalStep ?? null,
+    steps: plan.steps.map(normalizeTemporalPlanStep),
+  };
+  return normalized;
+}
+
+function normalizeTemporalPlanStep(step: RawTemporalPlanStep): TemporalPlanStep {
+  return {
+    ...step,
+    assumptions: step.assumptions ?? [],
+  };
+}
+
+function requirePlanString(value: string | null, step: TemporalPlanStep, field: string): string {
+  if (value === null || value.trim() === '') {
+    throw new Error(`${step.operation} requires ${field}.`);
+  }
+  return value;
+}
+
+function requirePlanNumber(value: number | null, step: TemporalPlanStep, field: string): number {
+  if (value === null) {
+    throw new Error(`${step.operation} requires ${field}.`);
+  }
+  return value;
+}
+
+function requirePlanPrecision(value: Candidate['precision'] | null, step: TemporalPlanStep): Candidate['precision'] {
+  if (value === null) {
+    throw new Error(`${step.operation} requires precision.`);
+  }
+  return value;
+}
+
+function appendTrace(trace: TemporalAgentTraceStep[], entries: UnindexedTraceStep[]): void {
+  for (const entry of entries) {
+    trace.push({ index: trace.length + 1, ...entry });
+  }
+}
+
+function responseFromPlanClarification(
+  question: string,
+  executions: Array<PlanExecution & { enriched: EnrichedCandidate }>,
+  trace: TemporalAgentTraceStep[],
+  candidateCount: number,
+  toolPasses: number,
+  agentAttempts: number,
+  langfuseTraceId: string | undefined,
+  originalText: string,
+): TemporalParseResponse {
+  const alternatives = executions
+    .filter((execution) => canUseForClarification(execution.enriched))
+    .map((execution) => alternativeFromEnrichedCandidate(execution.plan.label, execution.enriched, 'agent+plan', 0.75, originalText));
+  const debug: NonNullable<TemporalParseResponse['debug']> = { candidateCount, agentAttempts, toolPasses, trace };
+  if (langfuseTraceId !== undefined) {
+    debug.langfuseTraceId = langfuseTraceId;
+  }
+  const response: TemporalParseResponse = {
+    status: alternatives.length > 1 ? 'needs_clarification' : 'failed',
+    confidence: 0,
+    method: 'agent+plan',
+    assumptions: [],
+    ambiguity: alternatives.length > 1 ? [question] : ['Plan IR produced multiple candidates but not enough usable clarification alternatives.'],
+    validation: {
+      passed: false,
+      warnings: alternatives.length > 1 ? [question] : ['Plan IR clarification failed.'],
+      checks: ['plan_ir_clarification'],
+    },
+    debug,
+  };
+  if (alternatives.length > 1) {
+    response.clarificationQuestion = question;
+    response.clarificationAlternatives = alternatives;
+  }
+  return response;
+}
+
+function responseFromFailedPlanIr(
+  reason: string,
+  trace: TemporalAgentTraceStep[],
+  candidateCount: number,
+  toolPasses: number,
+  agentAttempts: number,
+  langfuseTraceId?: string,
+): TemporalParseResponse {
+  const debug: NonNullable<TemporalParseResponse['debug']> = { candidateCount, agentAttempts, toolPasses, trace };
+  if (langfuseTraceId !== undefined) {
+    debug.langfuseTraceId = langfuseTraceId;
+  }
+  return {
+    status: 'failed',
+    confidence: 0,
+    method: 'agent+plan',
+    assumptions: [],
+    ambiguity: [reason],
+    validation: {
+      passed: false,
+      warnings: [reason],
+      checks: ['plan_ir'],
+    },
+    debug,
+  };
 }
 
 async function deterministicParse(
@@ -956,6 +1527,7 @@ function responseFromRejectedFinalValidation(
   toolPasses: number,
   agentAttempts: number,
   trace: TemporalAgentTraceStep[],
+  method: TemporalParseResponse['method'],
   langfuseTraceId?: string,
 ): TemporalParseResponse {
   const warning = `Final LLM validation rejected candidate: ${finalValidation.reason}`;
@@ -973,7 +1545,7 @@ function responseFromRejectedFinalValidation(
   return {
     status: 'needs_clarification',
     confidence: Math.min(finalValidation.confidence, 0.3),
-    method: 'agent+tools',
+    method,
     assumptions: enriched.candidate.assumptions,
     ambiguity: [warning, ...finalValidation.missingOrContradictedSignals],
     validation: {
@@ -1117,6 +1689,40 @@ function userPrompt(request: TemporalParseRequest): string {
   return `Resolve this time expression into one timestamp: ${request.text}`;
 }
 
+function planIrSystemPrompt(request: TemporalParseRequest, agentContext: TemporalAgentContext): string {
+  return `You convert fuzzy temporal text into small executable plans for a deterministic calendar executor.
+
+Return only structured output matching the schema. Do not answer with prose.
+Every plan step must include every schema field. Set fields that do not apply to null. For delta, set unused units to null.
+
+Available plan operations:
+- resolve_calendar_query: use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", or "May 24 at 13:37".
+- resolve_holiday: use for holiday names; include year and normalized time when the user specified them.
+- resolve_clock_time: use for conventional explicit clock text like "13:37", "1pm", "noon", or "one hour past noon and 10 minutes".
+- shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Use time or timeStep when the final clock is known.
+- set_clock_time: apply a normalized clock time to a prior candidate step.
+- propose_candidate: last resort for explicit epoch/ISO timestamps only; do not guess remembered holiday dates or weekday math.
+
+Planning rules:
+- Emit up to four independent plans. The executor evaluates plans in parallel and also runs independent step dependencies in parallel.
+- Prefer one clear plan when the input has one intended meaning.
+- Use outcome "clarification" with alternative plans when AM/PM, "next weekday", or shorthand ambiguity materially changes the timestamp.
+- For dependent compositions, resolve the anchor and clock independently when possible, then combine with shift_datetime or set_clock_time.
+- For typos in temporal words, correct the phrase in resolve_calendar_query and include the correction in the plan rationale.
+- For fuzzy cultural clock text, infer the semantic clock only when the phrase is stable. For leet/l33t/133t time, use 13:37.
+- Preserve every date, time, holiday, weekday, offset, and timezone signal. If you cannot express the full meaning with the operations, use outcome "no_plan".
+- finalStep should be a zero-based index pointing to the candidate-producing step that represents the final answer. Use null to let the executor use the last candidate step.
+
+Calendar context:
+${JSON.stringify(request.calendarContext)}
+
+Factual context:
+${JSON.stringify(agentContext)}
+
+Original input:
+${request.text}`;
+}
+
 function countToolMessages(messages: BaseMessage[]): number {
   return messages.filter((message) => message.getType() === 'tool').length;
 }
@@ -1210,7 +1816,14 @@ function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFla
   if (features.ordinalWeekdayGrammar !== undefined) {
     compact.ordinalWeekdayGrammar = features.ordinalWeekdayGrammar;
   }
+  if (features.planIr !== undefined) {
+    compact.planIr = features.planIr;
+  }
   return compact;
+}
+
+function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {
+  return features?.planIr === true;
 }
 
 function createChatModel(apiKey: string, model: string, reasoningEffort: string): ChatOpenAI {
@@ -1361,37 +1974,37 @@ function resolveAgentBase(
 }
 
 function cleanDelta(input: {
-  years?: number | undefined;
-  months?: number | undefined;
-  weeks?: number | undefined;
-  days?: number | undefined;
-  hours?: number | undefined;
-  minutes?: number | undefined;
+  years?: number | null | undefined;
+  months?: number | null | undefined;
+  weeks?: number | null | undefined;
+  days?: number | null | undefined;
+  hours?: number | null | undefined;
+  minutes?: number | null | undefined;
 }): { years?: number; months?: number; weeks?: number; days?: number; hours?: number; minutes?: number } {
   const delta: { years?: number; months?: number; weeks?: number; days?: number; hours?: number; minutes?: number } = {};
-  if (input.years !== undefined) {
+  if (input.years !== undefined && input.years !== null) {
     delta.years = input.years;
   }
-  if (input.months !== undefined) {
+  if (input.months !== undefined && input.months !== null) {
     delta.months = input.months;
   }
-  if (input.weeks !== undefined) {
+  if (input.weeks !== undefined && input.weeks !== null) {
     delta.weeks = input.weeks;
   }
-  if (input.days !== undefined) {
+  if (input.days !== undefined && input.days !== null) {
     delta.days = input.days;
   }
-  if (input.hours !== undefined) {
+  if (input.hours !== undefined && input.hours !== null) {
     delta.hours = input.hours;
   }
-  if (input.minutes !== undefined) {
+  if (input.minutes !== undefined && input.minutes !== null) {
     delta.minutes = input.minutes;
   }
   return delta;
 }
 
-function epochSecondsToIso(epochSeconds: number | undefined): string {
-  if (epochSeconds === undefined) {
+function epochSecondsToIso(epochSeconds: number | null | undefined): string {
+  if (epochSeconds === undefined || epochSeconds === null) {
     throw new Error('Either isoInstant or epochSeconds is required.');
   }
   return new Date(epochSeconds * 1000).toISOString();

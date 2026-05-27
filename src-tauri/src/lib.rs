@@ -210,6 +210,7 @@ fn apply_optional_api_env(command: &mut Command) {
         "LANGFUSE_BASE_URL",
         "LANGFUSE_HOST",
         "TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR",
+        "TEMPORAL_FEATURE_PLAN_IR",
     ] {
         let parent_has_value = std::env::var(name)
             .ok()

@@ -15,7 +15,7 @@ const env = cleanEnv({
   ...process.env,
   TEMPORAL_EVAL_BASELINES: process.env['TEMPORAL_EVAL_BASELINES'] ?? 'deterministic',
   TEMPORAL_EVAL_MODELS: process.env['TEMPORAL_EVAL_MODELS'] ?? (process.env['OPENAI_API_KEY'] ? 'gpt-5.5:low' : ''),
-  TEMPORAL_EVAL_EXPERIMENTS: process.env['TEMPORAL_EVAL_EXPERIMENTS'] ?? 'baseline:ordinalWeekdayGrammar=false;candidate:ordinalWeekdayGrammar=true',
+  TEMPORAL_EVAL_EXPERIMENTS: process.env['TEMPORAL_EVAL_EXPERIMENTS'] ?? 'baseline:planIr=false;candidate:planIr=true',
   TEMPORAL_EVAL_OUTPUT: outputPath,
   TEMPORAL_EVAL_SUMMARY: summaryPath,
   TEMPORAL_EVAL_REPORT: reportPath,

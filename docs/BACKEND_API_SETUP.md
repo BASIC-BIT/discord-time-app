@@ -16,6 +16,7 @@ cp .env.example .env
 Edit `.env` and configure:
 - `OPENAI_API_KEY`: optional OpenAI API key for agent-assisted parsing
 - `STATIC_API_KEY`: API key for frontend authentication, defaulting to `STATIC_KEY_123` for local QA
+- `TEMPORAL_FEATURE_PLAN_IR`: optional experimental structured plan/action-list parser, defaulting to `false`
 
 ### 2. Install Dependencies & Run
 

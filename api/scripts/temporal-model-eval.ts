@@ -168,6 +168,12 @@ const evalCases: TemporalEvalCase[] = [
     expected: { status: 'resolved', epoch: 1780162620, suggestedFormatIndex: 5 },
   },
   {
+    id: 'compound-typo-cultural-clock',
+    text: 'day after a week from tomorrow at 133t time',
+    category: 'plan-ir-composition',
+    expected: { status: 'resolved', epoch: 1780421820, suggestedFormatIndex: 4 },
+  },
+  {
     id: 'explicit-year-holiday',
     text: 'easter 2026 noon',
     category: 'holiday',
@@ -511,6 +517,9 @@ function normalizeFeatureName(value: string): keyof TemporalFeatureFlags {
   const normalized = value.trim().toLowerCase().replace(/^temporal_feature_/, '').replace(/[-_]/g, '');
   if (normalized === 'ordinalweekdaygrammar') {
     return 'ordinalWeekdayGrammar';
+  }
+  if (normalized === 'planir') {
+    return 'planIr';
   }
   throw new Error(`Unknown temporal feature flag: ${value}`);
 }

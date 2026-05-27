@@ -59,7 +59,7 @@ A desktop overlay application for quickly converting natural language time expre
 - **Frontend:** React + TypeScript + Vite
 - **Backend:** Rust + Tauri plus bundled local Node API sidecar
 - **Database:** SQLite for usage statistics
-- **Parsing:** LangGraph/OpenAI agent path when configured + chrono-node fallback
+- **Parsing:** LangGraph/OpenAI agent path when configured, optional plan-IR experiments, and chrono-node fallback
 - **Clipboard:** Tauri clipboard plugin
 
 ## License

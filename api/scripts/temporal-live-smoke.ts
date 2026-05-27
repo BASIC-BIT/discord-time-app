@@ -2,6 +2,7 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { parseTemporalExpression } from '../src/temporal';
 import type { ParseAlternative, ParseResponse } from '../src/types';
+import type { TemporalFeatureFlags } from '../src/temporal/types';
 
 type LiveSuccess = ParseResponse & { ok: true };
 type LiveFailure = {
@@ -74,6 +75,7 @@ async function parseLive(text: string): Promise<LiveResult> {
     throw new Error('OPENAI_API_KEY is required for direct live parser tests.');
   }
 
+  const features = temporalFeaturesFromEnv();
   const parsed = await parseTemporalExpression({
     text,
     timeZone,
@@ -81,6 +83,7 @@ async function parseLive(text: string): Promise<LiveResult> {
     openaiApiKey,
     openaiModel: process.env['OPENAI_MODEL'] ?? 'gpt-5.5',
     openaiReasoningEffort: process.env['OPENAI_REASONING_EFFORT'] ?? 'low',
+    ...(features === undefined ? {} : { features }),
     langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
   });
 
@@ -125,6 +128,27 @@ async function parseViaApi(text: string): Promise<LiveResult> {
 
 function isTruthy(value: string | undefined): boolean {
   return value === '1' || value?.toLowerCase() === 'true' || value?.toLowerCase() === 'yes';
+}
+
+function temporalFeaturesFromEnv(): TemporalFeatureFlags | undefined {
+  const features: TemporalFeatureFlags = {};
+  const ordinalWeekdayGrammar = optionalBoolean(process.env['TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR']);
+  const planIr = optionalBoolean(process.env['TEMPORAL_FEATURE_PLAN_IR']);
+  if (ordinalWeekdayGrammar !== undefined) {
+    features.ordinalWeekdayGrammar = ordinalWeekdayGrammar;
+  }
+  if (planIr !== undefined) {
+    features.planIr = planIr;
+  }
+  return Object.keys(features).length === 0 ? undefined : features;
+}
+
+function optionalBoolean(value: string | undefined): boolean | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === undefined || normalized === '') {
+    return undefined;
+  }
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
 function stripTrailingSlash(value: string | undefined): string | undefined {

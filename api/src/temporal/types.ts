@@ -13,6 +13,7 @@ export type TemporalPrecision = "date" | "time" | "datetime" | "relative";
 
 export type TemporalMethod =
   | "deterministic"
+  | "agent+plan"
   | "agent+tools"
   | "agent+tools+sandbox"
   | "agent+tools+web"
@@ -132,6 +133,7 @@ export interface TemporalFinalValidation {
 
 export interface TemporalFeatureFlags {
   ordinalWeekdayGrammar?: boolean;
+  planIr?: boolean;
 }
 
 export interface TemporalParseRequest {
