@@ -174,6 +174,12 @@ const evalCases: TemporalEvalCase[] = [
     expected: { status: 'resolved', epoch: 1780421820, suggestedFormatIndex: 4 },
   },
   {
+    id: 'weekday-after-next-clarification',
+    text: 'sunday after next',
+    category: 'clarification',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1780848000, 1781452800] },
+  },
+  {
     id: 'explicit-year-holiday',
     text: 'easter 2026 noon',
     category: 'holiday',

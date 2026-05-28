@@ -29,6 +29,30 @@ const CalendarContextSchema = z.object({
 });
 
 const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+const WEEKDAY_AFTER_NEXT_PATTERN = /^\s*(?:the\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+after\s+next\s*$/i;
+const WEEKDAY_INDEX: Record<string, number> = {
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+  sunday: 7,
+};
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
 
 const TimeOfDaySchema = z.object({
   hour: z.number().int().min(0).max(23),
@@ -1224,9 +1248,15 @@ async function deterministicParse(
   });
   const candidate = parsed.candidates[0];
   if (!candidate) {
-    const needsClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
+    const needsBareHourClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
+    const needsWeekdayAfterNextClarification = parsed.parserNotes.some((note) => note.includes('ambiguous weekday-after-next'));
+    const needsClarification = needsBareHourClarification || needsWeekdayAfterNextClarification;
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
-    const clarificationAlternatives = needsClarification ? await bareHourAlternatives(request, implementations, features) : [];
+    const clarificationAlternatives = needsBareHourClarification
+      ? await bareHourAlternatives(request, implementations, features)
+      : needsWeekdayAfterNextClarification
+        ? await weekdayAfterNextAlternatives(request, implementations)
+        : [];
     const response: TemporalParseResponse = {
       status: needsClarification ? 'needs_clarification' : 'failed',
       confidence: 0,
@@ -1237,9 +1267,11 @@ async function deterministicParse(
       debug: { candidateCount: 0, deterministicDurationMs: elapsedMs(startedAt) },
     };
     if (needsClarification) {
-      response.clarificationQuestion = clarificationAlternatives.length > 0
-        ? 'Which time did you mean?'
-        : 'Please include AM or PM, or use 24-hour time like 13:00.';
+      response.clarificationQuestion = needsWeekdayAfterNextClarification
+        ? weekdayAfterNextQuestion(request.text)
+        : clarificationAlternatives.length > 0
+          ? 'Which time did you mean?'
+          : 'Please include AM or PM, or use 24-hour time like 13:00.';
       if (clarificationAlternatives.length > 0) {
         response.clarificationAlternatives = clarificationAlternatives;
       }
@@ -1264,6 +1296,46 @@ async function deterministicParse(
   response.debug = response.debug ?? {};
   response.debug.deterministicDurationMs = elapsedMs(startedAt);
   return response;
+}
+
+async function weekdayAfterNextAlternatives(
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+): Promise<TemporalClarificationAlternative[]> {
+  const weekday = weekdayAfterNextFromText(request.text);
+  if (weekday === null) {
+    return [];
+  }
+
+  const reference = Temporal.Instant.from(request.calendarContext.referenceInstant).toZonedDateTimeISO(request.calendarContext.timeZone);
+  const targetDay = WEEKDAY_INDEX[weekday];
+  if (targetDay === undefined) {
+    return [];
+  }
+  const daysUntilUpcoming = (targetDay - reference.dayOfWeek + 7) % 7 || 7;
+  const upcomingDate = reference.toPlainDate().add({ days: daysUntilUpcoming }).toString();
+  const candidates = await Promise.all([
+    implementations.shiftDateTime({ base: { plainDate: upcomingDate, timeZone: request.calendarContext.timeZone }, delta: { weeks: 1 }, calendarContext: request.calendarContext }),
+    implementations.shiftDateTime({ base: { plainDate: upcomingDate, timeZone: request.calendarContext.timeZone }, delta: { weeks: 2 }, calendarContext: request.calendarContext }),
+  ]);
+  const enriched = await Promise.all(candidates.map((candidate) => enrichCandidate(candidate, request, implementations)));
+  return enriched
+    .filter((candidate) => candidate.finalizable)
+    .map((candidate) => alternativeFromEnrichedCandidate(monthDayLabel(candidate), candidate, 'deterministic', 0.8, request.text));
+}
+
+function weekdayAfterNextFromText(text: string): string | null {
+  return WEEKDAY_AFTER_NEXT_PATTERN.exec(text)?.[1]?.toLowerCase() ?? null;
+}
+
+function weekdayAfterNextQuestion(text: string): string {
+  const weekday = weekdayAfterNextFromText(text);
+  return weekday === null ? 'Which date did you mean?' : `Which ${weekday} did you mean?`;
+}
+
+function monthDayLabel(enriched: EnrichedCandidate): string {
+  const zdt = Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime);
+  return `${MONTH_NAMES[zdt.month - 1] ?? String(zdt.month)} ${zdt.day}`;
 }
 
 async function bareHourAlternatives(

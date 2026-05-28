@@ -52,6 +52,7 @@ const WEEKDAY_NAMES: Record<number, Weekday> = {
 
 const WEEKDAY_PATTERN = /\b(?:(this|next|last)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const WEEKDAY_NAME_PATTERN = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday';
+const WEEKDAY_AFTER_NEXT_PATTERN = new RegExp(`^\\s*(?:the\\s+)?(?:${WEEKDAY_NAME_PATTERN})\\s+after\\s+next\\s*$`, 'i');
 const ORDINAL_WEEKDAY_OF_MONTH_PATTERN = new RegExp(
   `^\\s*(?:(?:the\\s+)?day\\s+(?<dayShift>after|before)\\s+)?(?:the\\s+)?(?<ordinal>first|second|third|fourth|fifth|last)\\s+(?<weekday>${WEEKDAY_NAME_PATTERN})\\s+of\\s+(?:(?<relativeMonth>this|next)\\s+month)(?:\\s+at\\s+(?<timeText>.+?))?\\s*$`,
   'i',
@@ -137,6 +138,10 @@ export function collectTemporalAgentContext(input: { text: string; calendarConte
 export async function parseExpression(input: ParseExpressionInput): Promise<ParseExpressionOutput> {
   if (hasTrailingBareNumericTimeSignal(input.text)) {
     return { candidates: [], parserNotes: ['Input contains a trailing bare number that looks like an unresolved time signal.'] };
+  }
+
+  if (WEEKDAY_AFTER_NEXT_PATTERN.test(input.text)) {
+    return { candidates: [], parserNotes: ['Input contains ambiguous weekday-after-next phrase.'] };
   }
 
   const explicit = parseExplicitTimestamp(input.text, input.calendarContext);
