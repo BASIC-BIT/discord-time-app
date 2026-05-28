@@ -35,12 +35,8 @@ async function main() {
   assert.equal(nextWednesday.canonical?.zonedDateTime.startsWith('2026-05-20'), true);
 
   const sundayAfterNext = await parse('sunday after next');
-  assert.equal(sundayAfterNext.status, 'needs_clarification');
-  assert.equal(sundayAfterNext.clarificationQuestion, 'Which sunday did you mean?');
-  assert.deepEqual(
-    sundayAfterNext.clarificationAlternatives?.map((alternative) => alternative.canonical.zonedDateTime.slice(0, 10)),
-    ['2026-05-24', '2026-05-31'],
-  );
+  assert.equal(sundayAfterNext.status, 'failed');
+  assert.equal(sundayAfterNext.validation.warnings.includes('Input contains ambiguous weekday-after-next phrase.'), true);
 
   const explicitDiscord = await parse('<t:1776221807:f>');
   assert.equal(explicitDiscord.status, 'resolved');
