@@ -1,0 +1,6 @@
+accelerate
+bitsandbytes
+huggingface_hub
+peft
+runpod
+transformers

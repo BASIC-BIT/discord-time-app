@@ -1,0 +1,27 @@
+ARG TEMPORAL_IR_BASE_IMAGE=runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
+FROM ${TEMPORAL_IR_BASE_IMAGE}
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    TEMPORAL_IR_SERVER_HOST=0.0.0.0 \
+    TEMPORAL_IR_SERVER_PORT=8000 \
+    TEMPORAL_IR_BASE_MODEL=Qwen/Qwen2.5-0.5B-Instruct \
+    TEMPORAL_IR_ADAPTER_DIR=sjkneisler/hammer-overlay-temporal-qwen2p5-0p5b-lora \
+    TEMPORAL_IR_SERVED_MODEL_NAME=qwen-temporal-ir
+
+COPY ml/temporal-ir/requirements-peft-server.txt /tmp/requirements-peft-server.txt
+RUN python -m pip install --upgrade pip && \
+    python -m pip install --no-cache-dir -r /tmp/requirements-peft-server.txt
+
+COPY ml/temporal-ir/peft_runtime.py /app/ml/temporal-ir/peft_runtime.py
+COPY ml/temporal-ir/predict_peft.py /app/ml/temporal-ir/predict_peft.py
+COPY ml/temporal-ir/runpod_worker_peft.py /app/ml/temporal-ir/runpod_worker_peft.py
+COPY ml/temporal-ir/serve_peft_openai.py /app/ml/temporal-ir/serve_peft_openai.py
+COPY ml/temporal-ir/temporal_ir_prompts.py /app/ml/temporal-ir/temporal_ir_prompts.py
+
+ENV PYTHONPATH=/app/ml/temporal-ir
+
+EXPOSE 8000
+
+CMD ["python", "/app/ml/temporal-ir/runpod_worker_peft.py"]
