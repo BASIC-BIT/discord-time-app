@@ -972,13 +972,22 @@ function explicitTimestampRows(): TemporalIrTrainingRow[] {
     explicitTimestampRow('direct-epoch-zero', '0', 'Unix epoch zero', 'train'),
     explicitTimestampRow('padded-epoch-zero-train', '0000000000', 'Padded Unix epoch zero', 'train'),
     explicitTimestampRow('discord-epoch-zero-train', '<t:0:F>', 'Discord epoch zero', 'train'),
-    row({
-      id: 'negative-epoch-unsupported',
-      text: '-1',
-      tags: ['explicit-epoch', 'unsupported', 'negative'],
-      output: planner('no_plan', 'Negative Unix epochs are outside supported product behavior.', []),
-    }),
+    unsupportedEpochRow('negative-epoch-unsupported', '-1', 'holdout'),
+    unsupportedEpochRow('negative-epoch-repeat-train', '-1', 'train'),
+    unsupportedEpochRow('negative-hour-shaped-unsupported-train', '-12', 'train'),
+    unsupportedEpochRow('negative-compact-clock-shaped-unsupported-validation', '-430', 'validation'),
+    unsupportedEpochRow('negative-large-epoch-unsupported-train', '-1779724800', 'train'),
   ];
+}
+
+function unsupportedEpochRow(id: string, text: string, split: Split): TemporalIrTrainingRow {
+  return row({
+    id,
+    text,
+    split,
+    tags: ['explicit-epoch', 'unsupported', 'negative'],
+    output: planner('no_plan', 'Negative Unix epochs are outside supported product behavior.', []),
+  });
 }
 
 function explicitTimestampRow(id: string, text: string, label: string, split?: Split): TemporalIrTrainingRow {
