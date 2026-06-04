@@ -79,12 +79,14 @@ impl Drop for TimeParserServiceState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub auto_start: bool,
     pub global_hotkey: String,
     pub auto_close_on_focus_loss: bool,
     pub auto_load_clipboard: bool,
     pub use_llm_parsing: bool,
+    pub deterministic_preflight: bool,
     pub theme: String, // "dark", "light", "system"
 }
 
@@ -96,6 +98,7 @@ impl Default for AppSettings {
             auto_close_on_focus_loss: false,
             auto_load_clipboard: true,
             use_llm_parsing: true,
+            deterministic_preflight: false,
             theme: "dark".to_string(),
         }
     }
@@ -177,6 +180,14 @@ fn read_api_env_var(name: &str) -> Option<String> {
     if let Ok(current_dir) = std::env::current_dir() {
         candidates.push(current_dir.join("api").join(".env"));
         candidates.push(current_dir.join("..").join("api").join(".env"));
+        candidates.push(
+            current_dir
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("api")
+                .join(".env"),
+        );
     }
 
     let prefix = format!("{name}=");
@@ -209,8 +220,16 @@ fn apply_optional_api_env(command: &mut Command) {
         "LANGFUSE_SECRET_KEY",
         "LANGFUSE_BASE_URL",
         "LANGFUSE_HOST",
+        "TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT",
         "TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR",
         "TEMPORAL_FEATURE_PLAN_IR",
+        "TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE",
+        "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL",
+        "TEMPORAL_PLAN_IR_ENDPOINT_MODEL",
+        "TEMPORAL_PLAN_IR_ENDPOINT_API_KEY",
+        "TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET",
+        "TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS",
+        "TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS",
     ] {
         let parent_has_value = std::env::var(name)
             .ok()
@@ -250,6 +269,18 @@ fn time_parser_health_check() -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+fn supervised_time_parser_disabled() -> bool {
+    std::env::var("HAMMEROVERLAY_DISABLE_SUPERVISED_API")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn find_time_parser_entrypoint(app: &AppHandle) -> Option<PathBuf> {
@@ -411,6 +442,11 @@ fn time_parser_log_stdio(app: &AppHandle) -> (Stdio, Stdio) {
 }
 
 fn start_time_parser_service(app: &AppHandle) {
+    if supervised_time_parser_disabled() {
+        log::info!("Supervised local time parser service is disabled for this session");
+        return;
+    }
+
     if time_parser_health_check() {
         log::info!("Local time parser service is already healthy");
         return;
@@ -498,7 +534,7 @@ async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfi
     let mut supervised = parser_child_is_running(&state)?;
     let mut available = time_parser_health_check();
 
-    if !available && !supervised {
+    if !available && !supervised && !supervised_time_parser_disabled() {
         start_time_parser_service(&app);
         supervised = parser_child_is_running(&state)?;
         available = time_parser_health_check();

@@ -1,14 +1,33 @@
 import { useState, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { Row } from './Row';
 import { formats, getFormatLabel } from '../lib/formats';
 import { getUserTimezone } from '../lib/prompt';
-import { createAPIClient, TimeParserAPIError, TimeParserUnavailableError, type ParseAlternative } from '../lib/api-client';
+import { createAPIClient, TimeParserAPIError, TimeParserUnavailableError, type ParseAlternative, type ParseResponse } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 
 const LOCAL_FALLBACK_CONFIDENCE = 0.65;
+
+interface AppSettings {
+  deterministic_preflight: boolean;
+}
+
+function clarificationKeyLabel(index: number): string {
+  return index === 9 ? '0' : String(index + 1);
+}
+
+function clarificationIndexForKey(key: string): number | null {
+  if (key === '0') {
+    return 9;
+  }
+  if (/^[1-9]$/.test(key)) {
+    return Number(key) - 1;
+  }
+  return null;
+}
 
 // Function to detect and parse existing Discord timestamps
 function parseExistingTimestamp(text: string): { epoch: number; formatCode: string } | null {
@@ -43,12 +62,16 @@ export function Overlay({ onClose }: OverlayProps) {
   const [clarificationAlternatives, setClarificationAlternatives] = useState<ParseAlternative[]>([]);
   const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
   const [confidence, setConfidence] = useState(1);
+  const [generationId, setGenerationId] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const [isClipboardText, setIsClipboardText] = useState(false);
   const [parseProgressMessage, setParseProgressMessage] = useState<string | null>(null);
+  const [deterministicPreflight, setDeterministicPreflight] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const verificationAbortControllerRef = useRef<AbortController | null>(null);
   const selectionTouchedRef = useRef(false);
   const progressTimeoutsRef = useRef<number[]>([]);
 
@@ -75,6 +98,13 @@ export function Overlay({ onClose }: OverlayProps) {
       try {
         // Initialize stats database
         await initStats();
+
+        try {
+          const settings = await invoke<AppSettings>('get_settings');
+          setDeterministicPreflight(settings.deterministic_preflight);
+        } catch (settingsError) {
+          console.log('Settings unavailable, using parser defaults:', settingsError);
+        }
         
         // Load clipboard content (handle empty clipboard gracefully)
         let clipboardText = '';
@@ -144,6 +174,11 @@ export function Overlay({ onClose }: OverlayProps) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    if (verificationAbortControllerRef.current) {
+      verificationAbortControllerRef.current.abort();
+      verificationAbortControllerRef.current = null;
+    }
+    setVerifying(false);
 
     if (inputText.trim()) {
       // Check if input is already a Discord timestamp (no debounce needed)
@@ -156,6 +191,8 @@ export function Overlay({ onClose }: OverlayProps) {
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
+        setGenerationId(null);
+        setVerifying(false);
         const formatIndex = formats.findIndex(f => f.code === existingTimestamp.formatCode);
         setSelectedIndex(formatIndex >= 0 ? formatIndex : 0);
         selectionTouchedRef.current = false;
@@ -169,6 +206,8 @@ export function Overlay({ onClose }: OverlayProps) {
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
+        setGenerationId(null);
+        setVerifying(false);
         selectionTouchedRef.current = false;
         // Parse as natural language with debounce
         setLoading(true);
@@ -183,6 +222,8 @@ export function Overlay({ onClose }: OverlayProps) {
       setClarificationQuestion(null);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
+      setGenerationId(null);
+      setVerifying(false);
       setConfidence(1);
       setParseProgressMessage(null);
       selectionTouchedRef.current = false;
@@ -218,6 +259,9 @@ export function Overlay({ onClose }: OverlayProps) {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      if (verificationAbortControllerRef.current) {
+        verificationAbortControllerRef.current.abort();
+      }
       clearProgressTimers();
     };
   }, []);
@@ -231,6 +275,8 @@ export function Overlay({ onClose }: OverlayProps) {
     setClarificationQuestion(null);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
+    setGenerationId(null);
+    setVerifying(false);
     setParseProgressMessage('Localing');
     
     try {
@@ -248,7 +294,8 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      const fallbackEpoch = isFromClipboard ? null : parseFallback(text);
+      const apiClient = await createAPIClient();
+      const fallbackEpoch = apiClient || isFromClipboard ? null : parseFallback(text);
       let displayedFallback = false;
       if (fallbackEpoch) {
         setEpoch(fallbackEpoch);
@@ -257,21 +304,24 @@ export function Overlay({ onClose }: OverlayProps) {
         displayedFallback = true;
       }
 
-      // Verify with backend API after showing a local estimate when possible.
-      const apiClient = await createAPIClient();
-      let result: { epoch: number; suggestedFormatIndex: number; confidence: number; method: string } | null = null;
+      // Prefer the supervised parser when available; local chrono is an offline fallback.
+      let result: ParseResponse | null = null;
       let apiError: Error | null = null;
       
       if (apiClient) {
         startBackendProgress(displayedFallback);
         try {
-          result = await apiClient.parseTime(text, timezone, abortController.signal);
+          result = await apiClient.parseTime(text, timezone, abortController.signal, { deterministicPreflight });
+          setGenerationId(result.generationId);
           console.log("API Result: ", result);
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
           apiError = error instanceof Error ? error : new Error('Unknown API parsing error');
+          if (error instanceof TimeParserAPIError) {
+            setGenerationId(error.generationId ?? null);
+          }
           console.error('API parsing failed:', error);
           // Fall through to chrono-node fallback
         }
@@ -284,7 +334,7 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      if (result && result.epoch) {
+      if (result && typeof result.epoch === 'number') {
         console.log('API parsed successfully:', result);
         setEpoch(result.epoch);
         if (!selectionTouchedRef.current) {
@@ -294,6 +344,7 @@ export function Overlay({ onClose }: OverlayProps) {
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
+        void verifyDisplayedResult(apiClient, text, timezone, result);
       } else {
         const hardParseRejection = apiError instanceof TimeParserAPIError && apiError.status === 400;
         if (displayedFallback && !hardParseRejection) {
@@ -334,17 +385,58 @@ export function Overlay({ onClose }: OverlayProps) {
     }
   };
 
+  const verifyDisplayedResult = async (apiClient: Awaited<ReturnType<typeof createAPIClient>>, text: string, timezone: string, result: ParseResponse) => {
+    if (!apiClient || result.method !== 'agent+plan') {
+      return;
+    }
+
+    const verificationController = new AbortController();
+    verificationAbortControllerRef.current = verificationController;
+    setVerifying(true);
+
+    try {
+      const verification = await apiClient.verifyParse({ text, tz: timezone, ...result }, verificationController.signal);
+      if (verificationController.signal.aborted) {
+        return;
+      }
+      if (verification.decision === 'uncertain' && verification.reasonCodes.includes('missing_openai_api_key')) {
+        return;
+      }
+      if (verification.decision !== 'accept') {
+        setEpoch(null);
+        setConfidence(1);
+        setError('I could not verify that timestamp. Try adding AM/PM, a date, or more context.');
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      console.log('Post-display verification failed:', error);
+    } finally {
+      if (verificationAbortControllerRef.current === verificationController) {
+        verificationAbortControllerRef.current = null;
+      }
+      if (!verificationController.signal.aborted) {
+        setVerifying(false);
+      }
+    }
+  };
+
   const hasClarification = clarificationQuestion !== null && clarificationAlternatives.length > 0;
   const showLowConfidence = !loading && epoch !== null && confidence < 0.5;
   const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
   const hasInlineStatus = error || hasClarification || showLowConfidence;
-  const showVerifyingTab = loading && !hasClarification && !error;
-  const progressText = parseProgressMessage ?? (epoch !== null ? 'Checking' : 'Parsing');
+  const isBusy = loading || verifying;
+  const showVerifyingTab = isBusy && !hasClarification && !error;
+  const progressText = verifying ? 'Verifying' : parseProgressMessage ?? (epoch !== null ? 'Checking' : 'Parsing');
   const overlayTone = error
     ? 'error'
     : hasClarification
       ? 'clarifying'
-      : loading
+      : isBusy
         ? 'verifying'
         : showLowConfidence
           ? 'low-confidence'
@@ -354,7 +446,9 @@ export function Overlay({ onClose }: OverlayProps) {
               ? 'ready'
               : 'idle';
   const footerHint = hasClarification
-    ? '←→/Tab to choose • Enter to use • Esc to close'
+    ? '←→/Tab or 1-9/0 to choose • Enter to use • Esc to close'
+    : verifying
+      ? 'Verifying before copy • Esc to close'
     : epoch !== null
       ? '↑↓/Tab to choose format • Enter to copy • Esc to close'
       : 'Type a time expression • Esc to close';
@@ -379,8 +473,21 @@ export function Overlay({ onClose }: OverlayProps) {
     setSelectedAlternativeIndex(0);
   };
 
+  const recordParserOutcome = async (action: 'copied' | 'dismissed') => {
+    if (generationId === null) {
+      return;
+    }
+    try {
+      const apiClient = await createAPIClient();
+      await apiClient?.recordOutcome({ generationId, action, selectedFormatIndex: selectedIndex });
+    } catch (error) {
+      console.log('Parser outcome logging failed:', error);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
+      void recordParserOutcome('dismissed');
       onClose();
     } else if (hasClarification) {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -397,8 +504,11 @@ export function Overlay({ onClose }: OverlayProps) {
         e.preventDefault();
         selectionTouchedRef.current = true;
         moveAlternativeSelection(1);
-      } else if (/^[1-9]$/.test(e.key)) {
-        const alternativeIndex = Number(e.key) - 1;
+      } else {
+        const alternativeIndex = clarificationIndexForKey(e.key);
+        if (alternativeIndex === null) {
+          return;
+        }
         const alternative = clarificationAlternatives[alternativeIndex];
         if (alternative) {
           e.preventDefault();
@@ -422,11 +532,16 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   const handleCopy = async () => {
+    if (verifying) {
+      return;
+    }
+
     if (epoch !== null) {
       try {
         const discordCode = `<t:${epoch}${formats[selectedIndex].code}>`;
         await writeText(discordCode);
         await incrementFormatUsage(selectedIndex);
+        void recordParserOutcome('copied');
         onClose();
       } catch (error) {
         console.error('Error copying:', error);
@@ -486,7 +601,7 @@ export function Overlay({ onClose }: OverlayProps) {
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>
-                <div className="clarification-help">Use ←/→ or Tab to choose, then Enter.</div>
+                <div className="clarification-help">Use ←/→, Tab, or number keys to choose, then Enter.</div>
                 <div className="clarification-options">
                   {clarificationAlternatives.map((alternative, index) => (
                     <button
@@ -498,7 +613,7 @@ export function Overlay({ onClose }: OverlayProps) {
                       onFocus={() => setSelectedAlternativeIndex(index)}
                       onMouseEnter={() => setSelectedAlternativeIndex(index)}
                     >
-                      <span className="clarification-key">{index + 1}</span>
+                      <span className="clarification-key">{clarificationKeyLabel(index)}</span>
                       <span className="clarification-label">{alternative.label}</span>
                       <span className="clarification-preview">{getFormatLabel(alternative.epoch, alternative.suggestedFormatIndex)}</span>
                     </button>
@@ -522,7 +637,7 @@ export function Overlay({ onClose }: OverlayProps) {
                 epoch={epoch}
                 formatIndex={index}
                 isSelected={index === selectedIndex}
-                isTentative={loading && index === selectedIndex}
+                isTentative={isBusy && index === selectedIndex}
                 onCopyAndClose={handleCopy}
                 onMouseEnter={() => handleRowMouseEnter(index)}
               />

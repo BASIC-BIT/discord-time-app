@@ -4,10 +4,20 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export interface ParseResponse {
+  generationId: string;
   epoch: number;
   suggestedFormatIndex: number;
   confidence: number;
   method: string;
+  canonical?: ParseCanonical;
+}
+
+export interface ParseCanonical {
+  isoInstant: string;
+  zonedDateTime: string;
+  timeZone: string;
+  precision: 'date' | 'time' | 'datetime' | 'relative';
+  weekday?: string;
 }
 
 export interface ParseAlternative {
@@ -21,7 +31,34 @@ export interface ParseAlternative {
 export interface ParseError {
   error: string;
   message?: string;
+  generationId?: string;
   alternatives?: ParseAlternative[];
+}
+
+export interface ParseOptions {
+  deterministicPreflight?: boolean;
+  ordinalWeekdayGrammar?: boolean;
+  semanticConsistencyGate?: boolean;
+}
+
+export interface ParseOutcome {
+  generationId: string;
+  action: 'copied' | 'inserted' | 'dismissed' | 'edited_before_copy' | 'timeout' | 'feedback_submitted';
+  selectedFormatIndex?: number;
+  feedbackCategory?: 'wrong_date' | 'wrong_time' | 'should_have_clarified' | 'should_have_parsed' | 'other';
+}
+
+export interface ParseVerificationRequest extends ParseResponse {
+  text: string;
+  tz: string;
+}
+
+export interface ParseVerificationResponse {
+  generationId: string;
+  decision: 'accept' | 'reject' | 'uncertain';
+  confidence: number;
+  reasonCodes: string[];
+  explanation: string;
 }
 
 export class TimeParserAPIError extends Error {
@@ -30,6 +67,7 @@ export class TimeParserAPIError extends Error {
     public readonly status?: number,
     public readonly code?: string,
     public readonly alternatives?: ParseAlternative[],
+    public readonly generationId?: string,
   ) {
     super(message);
     this.name = 'TimeParserAPIError';
@@ -72,9 +110,15 @@ export class TimeParserAPIClient {
   async parseTime(
     text: string,
     timezone: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options?: ParseOptions,
   ): Promise<ParseResponse> {
     const url = `${this.baseUrl}/parse`;
+    const featureOverrides = {
+      ...(options?.deterministicPreflight === undefined ? {} : { deterministicPreflight: options.deterministicPreflight }),
+      ...(options?.ordinalWeekdayGrammar === undefined ? {} : { ordinalWeekdayGrammar: options.ordinalWeekdayGrammar }),
+      ...(options?.semanticConsistencyGate === undefined ? {} : { semanticConsistencyGate: options.semanticConsistencyGate }),
+    };
     
     try {
       const response = await fetch(url, {
@@ -87,19 +131,21 @@ export class TimeParserAPIClient {
         body: JSON.stringify({
           text,
           tz: timezone,
+          ...(Object.keys(featureOverrides).length === 0 ? {} : { features: featureOverrides }),
         }),
         signal: abortSignal,
       });
 
       if (!response.ok) {
         const errorData = await response.json() as ParseError;
-        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives);
+        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId);
       }
 
       const data = await response.json() as ParseResponse;
       
       // Validate response
       if (
+        typeof data.generationId !== 'string' ||
         typeof data.epoch !== 'number' ||
         typeof data.suggestedFormatIndex !== 'number' ||
         typeof data.confidence !== 'number' ||
@@ -136,6 +182,55 @@ export class TimeParserAPIClient {
     } catch {
       return false;
     }
+  }
+
+  async recordOutcome(outcome: ParseOutcome, abortSignal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/parse/outcome`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'x-api-version': this.apiVersion,
+      },
+      body: JSON.stringify(outcome),
+      signal: abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json() as ParseError;
+      throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId);
+    }
+  }
+
+  async verifyParse(candidate: ParseVerificationRequest, abortSignal?: AbortSignal): Promise<ParseVerificationResponse> {
+    const response = await fetch(`${this.baseUrl}/parse/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'x-api-version': this.apiVersion,
+      },
+      body: JSON.stringify(candidate),
+      signal: abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json() as ParseError;
+      throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId);
+    }
+
+    const data = await response.json() as ParseVerificationResponse;
+    if (
+      typeof data.generationId !== 'string' ||
+      (data.decision !== 'accept' && data.decision !== 'reject' && data.decision !== 'uncertain') ||
+      typeof data.confidence !== 'number' ||
+      !Array.isArray(data.reasonCodes) ||
+      typeof data.explanation !== 'string'
+    ) {
+      throw new Error('Invalid API verification response format');
+    }
+
+    return data;
   }
 }
 

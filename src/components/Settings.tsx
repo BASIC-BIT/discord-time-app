@@ -8,6 +8,7 @@ interface AppSettings {
   auto_close_on_focus_loss: boolean;
   auto_load_clipboard: boolean;
   use_llm_parsing: boolean;
+  deterministic_preflight: boolean;
   theme: string; // "dark", "light", "system"
 }
 
@@ -17,6 +18,7 @@ const defaultSettings: AppSettings = {
   auto_close_on_focus_loss: false,
   auto_load_clipboard: true,
   use_llm_parsing: true,
+  deterministic_preflight: false,
   theme: "dark",
 };
 
@@ -207,6 +209,14 @@ export function Settings({ onClose }: SettingsProps) {
               />
               <span>Use AI parsing for better time understanding</span>
             </label>
+            <label className="setting-item">
+              <input
+                type="checkbox"
+                checked={settings.deterministic_preflight}
+                onChange={(e) => handleSettingChange('deterministic_preflight', e.target.checked)}
+              />
+              <span>Run deterministic preflight before AI parsing</span>
+            </label>
           </div>
 
           <div className="setting-group">
@@ -256,4 +266,4 @@ export function Settings({ onClose }: SettingsProps) {
         )}
     </div>
   );
-} 
+}

@@ -18,9 +18,17 @@ A desktop overlay application for quickly converting natural language time expre
    The desktop build runs a bundled local API sidecar and generates a per-install local API key. OpenAI keys are not embedded in the frontend bundle.
 
 3. **Run in development mode:**
-   ```bash
-   npm run tauri dev
-   ```
+    ```bash
+    npm run dev:desktop
+    ```
+
+    This starts the API through `tsx watch` on `127.0.0.1:8858`, waits for `/health`, then starts Tauri dev with `VITE_API_BASE_URL`/`VITE_API_KEY` pointed at that live-reloading API. The dev lane disables the supervised `8857` sidecar so API source edits are picked up without rebuilding `api/dist`.
+
+    If you are testing the local release executable instead, rebuild and restart its supervised parser child with:
+
+    ```bash
+    npm run reload:api
+    ```
 
 4. **Build for production:**
    ```bash

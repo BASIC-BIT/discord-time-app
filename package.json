@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\dev-hammer-overlay.ps1",
     "build": "vite build",
     "build:api": "npm --prefix api run build",
+    "reload:api": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\reload-local-parser-api.ps1",
     "prepare:api-sidecar": "node scripts/prepare-api-sidecar.mjs",
     "build:desktop": "npm run build:api && npm run prepare:api-sidecar && npm run build",
     "tauri:build": "tauri build",
