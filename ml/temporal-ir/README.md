@@ -251,7 +251,7 @@ Enable the API sidecar with ignored local env values in `api/.env`:
 ```text
 TEMPORAL_FEATURE_PLAN_IR=true
 TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-month-clock
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2584
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -275,17 +275,17 @@ powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "D:\
 
 After rebuilding the API sidecar, restart the parser service or HammerOverlay so the running sidecar picks up the new `dist` files and environment. Confirm with `/health`: `TEMPORAL_FEATURE_PLAN_IR` should be `true`, `TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL` should point at `127.0.0.1:8765/v1`, `TEMPORAL_PLAN_IR_ENDPOINT_API` and `TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT` should both be `chat`, and `OPENAI_API_KEY` can be `not configured` for a local-only test.
 
-Then evaluate it as an OpenAI-compatible completions endpoint:
+Then evaluate it as an OpenAI-compatible chat endpoint:
 
-```bash
-TEMPORAL_EVAL_BASELINES=endpoint-plan \
-TEMPORAL_EVAL_ENDPOINT_BASE_URL=http://127.0.0.1:8000/v1 \
-TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir \
-TEMPORAL_EVAL_ENDPOINT_PROVIDER=local-peft-bnb \
-TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET=minimal \
-TEMPORAL_EVAL_ENDPOINT_API=completions \
-TEMPORAL_EVAL_ENDPOINT_RESPONSE_FORMAT=none \
-TEMPORAL_EVAL_ENDPOINT_MAX_TOKENS=512 \
+```powershell
+$env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
+$env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8765/v1"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2584"
+$env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
+$env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
+$env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
+$env:TEMPORAL_EVAL_ENDPOINT_MAX_TOKENS = "512"
+$env:TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS = "60000"
 npm --prefix api run eval:temporal
 ```
 
