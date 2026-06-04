@@ -116,6 +116,15 @@ Health check endpoint for monitoring.
   "status": "healthy",
   "timestamp": "2025-01-16T10:30:00.000Z",
   "version": "1",
+  "runtime": {
+    "startedAt": "2025-01-16T10:29:58.000Z",
+    "pid": 1234,
+    "nodeVersion": "v24.15.0",
+    "entrypoint": "D:\\bench\\discord-time-app-src\\api\\dist\\index.js",
+    "entrypointMtime": "2025-01-16T10:29:50.000Z",
+    "cwd": "D:\\bench\\discord-time-app-src\\api",
+    "mode": "dist"
+  },
   "database": {
     "connected": true,
     "size": 32768,
@@ -416,4 +425,4 @@ For issues and questions:
 - SQLite usage logging
 - Rate limiting and authentication
 - Docker support
-- Health monitoring 
+- Health monitoring

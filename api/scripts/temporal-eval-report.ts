@@ -39,6 +39,7 @@ type EvalMetrics = {
   deterministicDurationMs?: number;
   firstLlmResponseMs?: number;
   firstCandidateMs?: number;
+  firstCorrectDisplayMs?: number;
   finalResponseMs?: number;
   llmDurationMs?: number;
   toolDurationMs?: number;
@@ -66,6 +67,8 @@ type ModelSummary = {
   diagnosticTotal: number;
   requiredPassRate: number;
   medianDurationMs: number;
+  medianFirstCorrectDisplayMs?: number;
+  p95FirstCorrectDisplayMs?: number;
   p75DurationMs: number;
   p95DurationMs: number;
   maxDurationMs: number;
@@ -118,6 +121,10 @@ function summarizeModel(key: string, results: EvalResult[]): ModelSummary {
   const required = results.filter((result) => result.required !== false);
   const diagnostics = results.filter((result) => result.required === false);
   const durations = results.map((result) => result.durationMs).sort((a, b) => a - b);
+  const firstCorrectDurations = results
+    .map((result) => result.metrics?.firstCorrectDisplayMs)
+    .filter((value): value is number => value !== undefined)
+    .sort((a, b) => a - b);
   const toolCounts = mergeCounts(results.map((result) => result.metrics?.toolCounts ?? {}));
   const sequenceCounts = countBy(results
     .map((result) => result.metrics?.toolSequence?.join(' -> ') ?? '')
@@ -137,6 +144,8 @@ function summarizeModel(key: string, results: EvalResult[]): ModelSummary {
     diagnosticTotal: diagnostics.length,
     requiredPassRate: ratio(required.filter((result) => result.passed).length, required.length),
     medianDurationMs: percentile(durations, 0.5),
+    medianFirstCorrectDisplayMs: firstCorrectDurations.length === 0 ? undefined : percentile(firstCorrectDurations, 0.5),
+    p95FirstCorrectDisplayMs: firstCorrectDurations.length === 0 ? undefined : percentile(firstCorrectDurations, 0.95),
     p75DurationMs: percentile(durations, 0.75),
     p95DurationMs: percentile(durations, 0.95),
     maxDurationMs: Math.max(0, ...durations),
@@ -221,7 +230,7 @@ function renderLeaderboard(summaries: ModelSummary[]): string {
         <td><strong>${escapeHtml(summary.experimentLabel)} / ${escapeHtml(summary.model)}</strong><br><span class="muted">${escapeHtml(summary.runner)} / ${escapeHtml(summary.provider)} / ${escapeHtml(summary.reasoningEffort)}</span><br>${renderFlags(summary.featureFlags)}</td>
         <td>${formatPassRate(summary.requiredPassed, summary.requiredTotal)}${renderBar(summary.requiredPassRate)}</td>
         <td>${summary.diagnosticTotal === 0 ? '<span class="muted">none</span>' : formatPassRate(summary.diagnosticPassed, summary.diagnosticTotal)}</td>
-        <td>median ${formatMs(summary.medianDurationMs)}<br>p95 ${formatMs(summary.p95DurationMs)}<br>max ${formatMs(summary.maxDurationMs)}</td>
+        <td>first correct median ${formatMs(summary.medianFirstCorrectDisplayMs)}<br>first correct p95 ${formatMs(summary.p95FirstCorrectDisplayMs)}<br>final median ${formatMs(summary.medianDurationMs)}<br>final p95 ${formatMs(summary.p95DurationMs)}<br>max ${formatMs(summary.maxDurationMs)}</td>
         <td>first LLM ${formatMs(summary.meanFirstLlmMs)}<br>first candidate ${formatMs(summary.meanFirstCandidateMs)}<br>final ${formatMs(summary.meanFinalResponseMs)}</td>
         <td>LLM turns ${summary.meanLlmTurns.toFixed(1)}<br>tool calls ${summary.meanToolCalls.toFixed(1)}<br>validator ${formatMs(summary.meanFinalValidationMs)}</td>
         <td>${summary.maxPromptChars.toLocaleString()} chars max</td>
@@ -244,7 +253,7 @@ function renderResultTable(results: EvalResult[], includeMismatch: boolean): str
         <td>${escapeHtml(result.caseId)}<br><span class="muted">${escapeHtml(result.category)}</span></td>
         <td class="wrap">${escapeHtml(result.text)}</td>
         <td>${escapeHtml(result.status ?? 'error')}<br>epoch ${escapeHtml(String(result.epoch ?? 'none'))}<br><span class="muted">${escapeHtml(result.method ?? '')}</span></td>
-        <td>${formatMs(result.durationMs)}<br>first LLM ${formatMs(result.metrics?.firstLlmResponseMs)}<br>tools ${result.metrics?.toolCallCount ?? 0}</td>
+        <td>first correct ${formatMs(result.metrics?.firstCorrectDisplayMs)}<br>final ${formatMs(result.durationMs)}<br>first LLM ${formatMs(result.metrics?.firstLlmResponseMs)}<br>tools ${result.metrics?.toolCallCount ?? 0}</td>
         ${includeMismatch ? `<td class="wrap">${escapeHtml(result.error ?? result.mismatch ?? '')}</td>` : ''}
       </tr>`).join('')}
     </tbody>

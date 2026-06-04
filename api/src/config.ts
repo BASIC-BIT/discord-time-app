@@ -1,5 +1,5 @@
 import { EnvConfig } from './types';
-import type { TemporalFeatureFlags } from './temporal/types';
+import type { TemporalFeatureFlags, TemporalPlanIrEndpointApi, TemporalPlanIrEndpointConfig, TemporalPlanIrEndpointPromptFormat, TemporalPlanIrInstructionPreset } from './temporal/types';
 
 /**
  * Configuration loader for environment variables
@@ -27,8 +27,18 @@ export class Config {
       LANGFUSE_SECRET_KEY: langfuseSecretKey,
       LANGFUSE_BASE_URL: this.getOptionalEnvVar('LANGFUSE_BASE_URL') ?? this.getOptionalEnvVar('LANGFUSE_HOST'),
       STATIC_API_KEY: this.getEnvVar('STATIC_API_KEY', 'STATIC_KEY_123'),
+      TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT: this.getBooleanEnvVar('TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT', false),
       TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR: this.getBooleanEnvVar('TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR', true),
       TEMPORAL_FEATURE_PLAN_IR: this.getBooleanEnvVar('TEMPORAL_FEATURE_PLAN_IR', false),
+      TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: this.getBooleanEnvVar('TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE', false),
+      TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: this.getOptionalEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL'),
+      TEMPORAL_PLAN_IR_ENDPOINT_MODEL: this.getEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_MODEL', 'qwen-temporal-ir'),
+      TEMPORAL_PLAN_IR_ENDPOINT_API_KEY: this.getOptionalEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_API_KEY'),
+      TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET: this.getEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET', 'minimal'),
+      TEMPORAL_PLAN_IR_ENDPOINT_API: this.getEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_API', 'completions'),
+      TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT: this.getEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT', 'custom'),
+      TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS: this.getPositiveIntegerEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS', 512),
+      TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS: this.getPositiveIntegerEnvVar('TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS', 8000),
       PORT: parseInt(this.getEnvVar('PORT', '8857'), 10),
       DB_PATH: this.getEnvVar('DB_PATH', 'usage.db')
     };
@@ -61,6 +71,15 @@ export class Config {
     return value === '1' || value === 'true' || value === 'yes' || value === 'on';
   }
 
+  private getPositiveIntegerEnvVar(name: string, defaultValue: number): number {
+    const raw = this.getEnvVar(name, String(defaultValue));
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`${name} must be a positive integer`);
+    }
+    return value;
+  }
+
   /**
    * Validate configuration
    */
@@ -84,7 +103,31 @@ export class Config {
       throw new Error('LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when LANGFUSE_ENABLED is true');
     }
 
+    if (!this.isTemporalPlanIrInstructionPreset(this.config.TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET)) {
+      throw new Error('TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET must be "minimal" or "detailed"');
+    }
+
+    if (!this.isTemporalPlanIrEndpointApi(this.config.TEMPORAL_PLAN_IR_ENDPOINT_API)) {
+      throw new Error('TEMPORAL_PLAN_IR_ENDPOINT_API must be "completions" or "chat"');
+    }
+
+    if (!this.isTemporalPlanIrEndpointPromptFormat(this.config.TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT)) {
+      throw new Error('TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT must be "custom" or "chat"');
+    }
+
     console.log('Configuration validated successfully');
+  }
+
+  private isTemporalPlanIrInstructionPreset(value: string): value is TemporalPlanIrInstructionPreset {
+    return value === 'minimal' || value === 'detailed';
+  }
+
+  private isTemporalPlanIrEndpointApi(value: string): value is TemporalPlanIrEndpointApi {
+    return value === 'completions' || value === 'chat';
+  }
+
+  private isTemporalPlanIrEndpointPromptFormat(value: string): value is TemporalPlanIrEndpointPromptFormat {
+    return value === 'custom' || value === 'chat';
   }
 
   /**
@@ -131,9 +174,31 @@ export class Config {
 
   public get temporalFeatures(): TemporalFeatureFlags {
     return {
+      deterministicPreflight: this.config.TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT,
       ordinalWeekdayGrammar: this.config.TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR,
       planIr: this.config.TEMPORAL_FEATURE_PLAN_IR,
+      semanticConsistencyGate: this.config.TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE,
     };
+  }
+
+  public get temporalPlanIrEndpoint(): TemporalPlanIrEndpointConfig | undefined {
+    const baseUrl = this.config.TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL;
+    if (baseUrl === undefined) {
+      return undefined;
+    }
+    const endpoint: TemporalPlanIrEndpointConfig = {
+      baseUrl,
+      model: this.config.TEMPORAL_PLAN_IR_ENDPOINT_MODEL,
+      instructionPreset: this.config.TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET as TemporalPlanIrInstructionPreset,
+      api: this.config.TEMPORAL_PLAN_IR_ENDPOINT_API as TemporalPlanIrEndpointApi,
+      promptFormat: this.config.TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT as TemporalPlanIrEndpointPromptFormat,
+      maxTokens: this.config.TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS,
+      timeoutMs: this.config.TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS,
+    };
+    if (this.config.TEMPORAL_PLAN_IR_ENDPOINT_API_KEY !== undefined) {
+      endpoint.apiKey = this.config.TEMPORAL_PLAN_IR_ENDPOINT_API_KEY;
+    }
+    return endpoint;
   }
 
   /**
@@ -148,8 +213,18 @@ export class Config {
       LANGFUSE_PUBLIC_KEY: this.config.LANGFUSE_PUBLIC_KEY === undefined ? 'not configured' : this.config.LANGFUSE_PUBLIC_KEY.slice(0, 7) + '...',
       LANGFUSE_SECRET_KEY: this.config.LANGFUSE_SECRET_KEY === undefined ? 'not configured' : 'configured',
       LANGFUSE_BASE_URL: this.config.LANGFUSE_BASE_URL,
+      TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT: this.config.TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT,
       TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR: this.config.TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR,
       TEMPORAL_FEATURE_PLAN_IR: this.config.TEMPORAL_FEATURE_PLAN_IR,
+      TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: this.config.TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE,
+      TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: this.config.TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL,
+      TEMPORAL_PLAN_IR_ENDPOINT_MODEL: this.config.TEMPORAL_PLAN_IR_ENDPOINT_MODEL,
+      TEMPORAL_PLAN_IR_ENDPOINT_API_KEY: this.config.TEMPORAL_PLAN_IR_ENDPOINT_API_KEY === undefined ? 'not configured' : 'configured',
+      TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET: this.config.TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET,
+      TEMPORAL_PLAN_IR_ENDPOINT_API: this.config.TEMPORAL_PLAN_IR_ENDPOINT_API,
+      TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT: this.config.TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT,
+      TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS: this.config.TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS,
+      TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS: this.config.TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS,
       STATIC_API_KEY: this.config.STATIC_API_KEY.slice(0, 6) + '...',
       PORT: this.config.PORT,
       DB_PATH: this.config.DB_PATH

@@ -3,10 +3,16 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { Temporal } from '@js-temporal/polyfill';
-import { ParseRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
+import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
+import { ParseOutcomeRequest, ParseRequest, ParseVerificationRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
 import { db, getDatabase } from './database';
 import { parseTemporalExpression } from './temporal';
+import { parseCalendarContext } from './temporal/deterministic';
+import { verifyTemporalParseResponseWithSemanticConsistencyGate } from './temporal/graph';
+import { createDeterministicTemporalToolImplementations } from './temporal/tools';
+import type { Candidate, TemporalParseResponse, Weekday } from './temporal/types';
 
 /**
  * Create Fastify server instance
@@ -38,6 +44,18 @@ const server = Fastify({
   logger: createLoggerConfig(),
   trustProxy: true,
 });
+
+const apiStartedAt = new Date().toISOString();
+const apiEntrypoint = process.argv[1];
+const apiRuntime = {
+  startedAt: apiStartedAt,
+  pid: process.pid,
+  nodeVersion: process.version,
+  entrypoint: apiEntrypoint,
+  entrypointMtime: fileMtimeIso(apiEntrypoint),
+  cwd: process.cwd(),
+  mode: inferRuntimeMode(apiEntrypoint),
+};
 
 const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:[zZ]|[+-]\\d{2}:\\d{2})$';
 const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
@@ -75,18 +93,37 @@ const parseRequestSchema = {
   properties: {
     text: { type: 'string', minLength: 1 },
     tz: { type: 'string', default: 'UTC' },
-    now: { type: 'string', pattern: ISO_INSTANT_PATTERN }
+    now: { type: 'string', pattern: ISO_INSTANT_PATTERN },
+    features: {
+      type: 'object',
+      properties: {
+        deterministicPreflight: { type: 'boolean' },
+        ordinalWeekdayGrammar: { type: 'boolean' },
+        semanticConsistencyGate: { type: 'boolean' }
+      }
+    }
   }
 } as const;
 
 const parseResponseSchema = {
   type: 'object',
-  required: ['epoch', 'suggestedFormatIndex', 'confidence', 'method'],
+  required: ['generationId', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
   properties: {
+    generationId: { type: 'string' },
     epoch: { type: 'number' },
     suggestedFormatIndex: { type: 'number' },
     confidence: { type: 'number' },
-    method: { type: 'string' }
+    method: { type: 'string' },
+    canonical: {
+      type: 'object',
+      properties: {
+        isoInstant: { type: 'string' },
+        zonedDateTime: { type: 'string' },
+        timeZone: { type: 'string' },
+        precision: { type: 'string' },
+        weekday: { type: 'string' },
+      }
+    }
   }
 } as const;
 
@@ -95,6 +132,7 @@ const errorResponseSchema = {
   properties: {
     error: { type: 'string' },
     message: { type: 'string' },
+    generationId: { type: 'string' },
     alternatives: {
       type: 'array',
       items: {
@@ -112,6 +150,68 @@ const errorResponseSchema = {
   },
   required: ['error']
 };
+
+const parseOutcomeRequestSchema = {
+  type: 'object',
+  required: ['generationId', 'action'],
+  properties: {
+    generationId: { type: 'string', minLength: 1 },
+    action: {
+      type: 'string',
+      enum: ['copied', 'inserted', 'dismissed', 'edited_before_copy', 'timeout', 'feedback_submitted']
+    },
+    selectedFormatIndex: { type: 'number', minimum: 0, maximum: 6 },
+    feedbackCategory: {
+      type: 'string',
+      enum: ['wrong_date', 'wrong_time', 'should_have_clarified', 'should_have_parsed', 'other']
+    }
+  }
+} as const;
+
+const parseOutcomeResponseSchema = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' }
+  }
+} as const;
+
+const parseVerificationRequestSchema = {
+  type: 'object',
+  required: ['text', 'generationId', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
+  properties: {
+    text: { type: 'string', minLength: 1 },
+    tz: { type: 'string', default: 'UTC' },
+    now: { type: 'string', pattern: ISO_INSTANT_PATTERN },
+    generationId: { type: 'string', minLength: 1 },
+    epoch: { type: 'number' },
+    suggestedFormatIndex: { type: 'number', minimum: 0, maximum: 6 },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    method: { type: 'string' },
+    canonical: {
+      type: 'object',
+      properties: {
+        isoInstant: { type: 'string' },
+        zonedDateTime: { type: 'string' },
+        timeZone: { type: 'string' },
+        precision: { type: 'string' },
+        weekday: { type: 'string' },
+      }
+    }
+  }
+} as const;
+
+const parseVerificationResponseSchema = {
+  type: 'object',
+  required: ['generationId', 'decision', 'confidence', 'reasonCodes', 'explanation'],
+  properties: {
+    generationId: { type: 'string' },
+    decision: { type: 'string', enum: ['accept', 'reject', 'uncertain'] },
+    confidence: { type: 'number' },
+    reasonCodes: { type: 'array', items: { type: 'string' } },
+    explanation: { type: 'string' }
+  }
+} as const;
 
 /**
  * Auth middleware
@@ -156,6 +256,7 @@ server.get('/health', async (_request, reply) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     version: API_VERSION,
+    runtime: apiRuntime,
     database: {
       connected: true,
       size: dbInfo.size,
@@ -193,8 +294,17 @@ server.post<{ Body: ParseRequest }>('/parse', {
     const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
       text,
       timeZone: tz,
-      features: config.temporalFeatures,
+      features: {
+        ...config.temporalFeatures,
+        ...(request.body.features?.deterministicPreflight === undefined ? {} : { deterministicPreflight: request.body.features.deterministicPreflight }),
+        ...(request.body.features?.ordinalWeekdayGrammar === undefined ? {} : { ordinalWeekdayGrammar: request.body.features.ordinalWeekdayGrammar }),
+        ...(request.body.features?.semanticConsistencyGate === undefined ? {} : { semanticConsistencyGate: request.body.features.semanticConsistencyGate }),
+      },
     };
+    const planIrEndpoint = config.temporalPlanIrEndpoint;
+    if (planIrEndpoint !== undefined) {
+      parseInput.planIrEndpoint = planIrEndpoint;
+    }
     if (now !== undefined) {
       parseInput.referenceInstant = now;
     }
@@ -211,10 +321,12 @@ server.post<{ Body: ParseRequest }>('/parse', {
     }
 
     const parsed = await parseTemporalExpression(parseInput);
+    logTemporalGeneration(text, tz, now, parsed);
     request.log.info({
       text,
       tz,
       status: parsed.status,
+      generationId: parsed.generationId,
       method: parsed.method,
       epoch: parsed.epoch,
       confidence: parsed.confidence,
@@ -228,7 +340,8 @@ server.post<{ Body: ParseRequest }>('/parse', {
     if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
         error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
-        message: userFacingParseErrorMessage(parsed),
+        message: userFacingParseErrorMessage(parsed, text),
+        generationId: parsed.generationId,
         alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
           label: alternative.label,
           epoch: alternative.epoch,
@@ -250,10 +363,12 @@ server.post<{ Body: ParseRequest }>('/parse', {
     });
 
     return {
+      generationId: parsed.generationId ?? '',
       epoch: parsed.epoch,
       suggestedFormatIndex: parsed.suggestedFormatIndex ?? 4,
       confidence: parsed.confidence,
-      method: parsed.method
+      method: parsed.method,
+      canonical: parsed.canonical,
     };
 
   } catch (error) {
@@ -263,6 +378,78 @@ server.post<{ Body: ParseRequest }>('/parse', {
       message: 'An unexpected error occurred while parsing the time expression'
     });
   }
+});
+
+server.post<{ Body: ParseVerificationRequest }>('/parse/verify', {
+  schema: {
+    body: parseVerificationRequestSchema,
+    response: {
+      200: parseVerificationResponseSchema,
+      400: errorResponseSchema,
+      500: errorResponseSchema,
+    }
+  }
+}, async (request, reply) => {
+  const { text, tz = 'UTC', now } = request.body;
+  try {
+    if (now !== undefined && !isValidIsoInstant(now)) {
+      return reply.status(400).send({
+        error: 'bad_request',
+        message: 'now must be a valid ISO instant like 2026-05-24T12:00:00Z',
+        generationId: request.body.generationId,
+      });
+    }
+
+    const gate = await verifyTemporalParseResponseWithSemanticConsistencyGate(
+      {
+        text,
+        calendarContext: parseCalendarContext(tz, now),
+      },
+      temporalResponseFromVerificationRequest(request.body, tz),
+      {
+        implementations: createDeterministicTemporalToolImplementations(),
+        ...(config.openaiApiKey === undefined ? {} : {
+          openaiApiKey: config.openaiApiKey,
+          openaiModel: config.openaiModel,
+          openaiReasoningEffort: config.openaiReasoningEffort,
+          langfuse: { enabled: config.langfuseEnabled, ...(config.langfuseBaseUrl === undefined ? {} : { baseUrl: config.langfuseBaseUrl }) },
+        }),
+      },
+    );
+
+    return {
+      generationId: request.body.generationId,
+      decision: gate.decision,
+      confidence: gate.confidence,
+      reasonCodes: gate.reasonCodes,
+      explanation: gate.explanation,
+    };
+  } catch (error) {
+    request.log.error({ err: error, generationId: request.body.generationId }, 'parse verification failed');
+    return reply.status(500).send({
+      error: 'verification_failed',
+      message: 'Could not verify the displayed timestamp.',
+      generationId: request.body.generationId,
+    });
+  }
+});
+
+server.post<{ Body: ParseOutcomeRequest }>('/parse/outcome', {
+  schema: {
+    body: parseOutcomeRequestSchema,
+    response: {
+      200: parseOutcomeResponseSchema,
+      400: errorResponseSchema,
+    }
+  }
+}, async (request) => {
+  db.logGenerationOutcome({
+    generationId: request.body.generationId,
+    action: request.body.action,
+    ...(request.body.selectedFormatIndex === undefined ? {} : { selectedFormatIndex: request.body.selectedFormatIndex }),
+    ...(request.body.feedbackCategory === undefined ? {} : { feedbackCategory: request.body.feedbackCategory }),
+  });
+  return { ok: true };
 });
 
 function isValidIsoInstant(value: string): boolean {
@@ -278,7 +465,7 @@ function isValidIsoInstant(value: string): boolean {
   }
 }
 
-function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemporalExpression>>): string {
+function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemporalExpression>>, text: string): string {
   if (parsed.clarificationQuestion) {
     return parsed.clarificationQuestion;
   }
@@ -291,15 +478,151 @@ function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemp
     return 'I need one more detail before making that timestamp.';
   }
 
-  if (/^Final LLM validation rejected candidate:/i.test(internalMessage)) {
-    return 'I could not confidently turn that into a timestamp. Try adding AM/PM, a date, or more context.';
+  return genericParseFailureMessage(text, internalMessage);
+}
+
+function genericParseFailureMessage(text: string, internalMessage: string): string {
+  if (/am\/pm|meridiem|bare time-like|compact time|bare number|bare 1-12 clock|unresolved time signal/i.test(`${text} ${internalMessage}`)) {
+    return 'I could not confidently turn that into a timestamp. Check the date and include AM or PM if needed.';
   }
 
-  if (/^Agent did not produce a validated final candidate\.?$/i.test(internalMessage)) {
-    return 'I could not confidently turn that into a timestamp. Try adding AM/PM, a date, or more context.';
+  return 'I could not confidently turn that into a timestamp. Check the date, time, and spelling, then try again.';
+}
+
+function temporalResponseFromVerificationRequest(body: ParseVerificationRequest, fallbackTimeZone: string): TemporalParseResponse {
+  const response: TemporalParseResponse = {
+    generationId: body.generationId,
+    status: 'resolved',
+    epoch: body.epoch,
+    suggestedFormatIndex: body.suggestedFormatIndex,
+    confidence: body.confidence,
+    method: body.method as TemporalParseResponse['method'],
+    canonical: canonicalFromVerificationRequest(body, fallbackTimeZone),
+    assumptions: ['Post-display verification of the displayed parser candidate.'],
+    ambiguity: [],
+    validation: {
+      passed: true,
+      warnings: [],
+      checks: ['post_display_candidate'],
+    },
+    debug: {
+      candidateCount: 1,
+      model: body.method,
+    },
+  };
+  return response;
+}
+
+function canonicalFromVerificationRequest(body: ParseVerificationRequest, fallbackTimeZone: string): NonNullable<TemporalParseResponse['canonical']> {
+  if (body.canonical !== undefined) {
+    const canonical: NonNullable<TemporalParseResponse['canonical']> = {
+      isoInstant: body.canonical.isoInstant,
+      zonedDateTime: body.canonical.zonedDateTime,
+      timeZone: body.canonical.timeZone,
+      precision: body.canonical.precision as Candidate['precision'],
+    };
+    if (body.canonical.weekday !== undefined) {
+      canonical.weekday = body.canonical.weekday as Weekday;
+    }
+    return canonical;
   }
 
-  return internalMessage || 'Unable to understand the time expression. Please try being more specific.';
+  const instant = Temporal.Instant.fromEpochMilliseconds(body.epoch * 1000);
+  const zoned = instant.toZonedDateTimeISO(fallbackTimeZone);
+  const canonical: NonNullable<TemporalParseResponse['canonical']> = {
+    isoInstant: instant.toString(),
+    zonedDateTime: zoned.toString(),
+    timeZone: fallbackTimeZone,
+    precision: precisionFromSuggestedFormatIndex(body.suggestedFormatIndex),
+  };
+  return canonical;
+}
+
+function precisionFromSuggestedFormatIndex(index: number): Candidate['precision'] {
+  if (index === 0 || index === 1) {
+    return 'date';
+  }
+  if (index === 2 || index === 3) {
+    return 'time';
+  }
+  if (index === 6) {
+    return 'relative';
+  }
+  return 'datetime';
+}
+
+function logTemporalGeneration(text: string, timeZone: string, referenceInstant: string | undefined, parsed: TemporalParseResponse): void {
+  if (parsed.generationId === undefined) {
+    return;
+  }
+
+  const errorClass = generationErrorClass(parsed);
+
+  db.logGeneration({
+    generationId: parsed.generationId,
+    surface: 'api',
+    flowVersion: 'temporal-cascade-v1',
+    requestTimeZone: timeZone,
+    referenceInstant: referenceInstant ?? new Date().toISOString(),
+    inputTextHash: hashInputText(text),
+    inputTextRetained: false,
+    finalStatus: parsed.status,
+    finalMethod: parsed.method,
+    ...(parsed.epoch === undefined ? {} : { finalEpoch: parsed.epoch }),
+    ...(parsed.debug?.candidateCount === undefined ? {} : { candidateCount: parsed.debug.candidateCount }),
+    clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
+    ...(parsed.debug?.totalDurationMs === undefined ? {} : { totalDurationMs: parsed.debug.totalDurationMs }),
+    ...(errorClass === undefined ? {} : { errorClass }),
+  });
+}
+
+function hashInputText(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function fileMtimeIso(filePath: string | undefined): string | undefined {
+  if (filePath === undefined || filePath.trim() === '') {
+    return undefined;
+  }
+  try {
+    return statSync(filePath).mtime.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+function inferRuntimeMode(entrypoint: string | undefined): 'source' | 'dist' | 'unknown' {
+  if (entrypoint === undefined) {
+    return 'unknown';
+  }
+  const normalized = entrypoint.replace(/\\/g, '/');
+  if (normalized.includes('/src/')) {
+    return 'source';
+  }
+  if (normalized.includes('/dist/')) {
+    return 'dist';
+  }
+  return 'unknown';
+}
+
+function generationErrorClass(parsed: TemporalParseResponse): string | undefined {
+  if (parsed.status === 'resolved') {
+    return undefined;
+  }
+  const message = parsed.ambiguity[0] ?? parsed.validation.warnings[0] ?? '';
+  if (/Semantic Consistency Gate/i.test(message)) {
+    return 'semantic_consistency_gate';
+  }
+  if (/No deterministic parse candidate/i.test(message)) {
+    return 'no_deterministic_candidate';
+  }
+  if (/validation rejected/i.test(message)) {
+    return 'validation_rejected';
+  }
+  if (parsed.status === 'needs_clarification') {
+    return 'needs_clarification';
+  }
+  return 'parse_failed';
 }
 
 /**

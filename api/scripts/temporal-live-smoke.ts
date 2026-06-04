@@ -10,9 +10,11 @@ type LiveFailure = {
   status: number;
   error: string;
   message?: string;
+  generationId?: string;
   alternatives?: ParseAlternative[];
 };
 type LiveResult = LiveSuccess | LiveFailure;
+type LiveContext = { referenceInstant?: string; timeZone?: string };
 
 const referenceInstant = process.env['TEMPORAL_LIVE_SMOKE_NOW'] ?? '2026-05-24T12:00:00Z';
 const timeZone = process.env['TEMPORAL_LIVE_SMOKE_TZ'] ?? 'America/New_York';
@@ -35,15 +37,22 @@ async function main() {
   await expectResolved('day after next saturday', 1780243200, 6);
   await expectResolved('day after next saturday at 13:37', 1780249020, 5);
   await expectResolved('day after next saturday at l33t time', 1780249020, 5);
-  await expectResolved('next saturday at l33t time', 1780162620, 5);
+  await expectClarification('next saturday at l33t time', [1780162620, 1780767420]);
   await expectResolved('easter 2028', 1839513600, 1);
   await expectClarification('saturday at 3', [1780124400, 1780167600]);
+  await expectClarification('next saturday at 5pm', [1780174800, 1780779600]);
+  await expectClarification('next tuesday', [1779811200, 1780416000]);
+  await expectClarification('next saturday', [1780156800, 1780761600], { referenceInstant: '2026-05-29T16:00:00Z' });
+  if (isTruthy(process.env['TEMPORAL_FEATURE_PLAN_IR'])) {
+    await expectResolved('day after a week from tomorrow at 133t time', 1780421820, 4);
+    await expectClarification('sunday after next 5pm', [1780866000, 1781470800]);
+  }
 
   console.log('Live temporal smoke tests passed.');
 }
 
-async function expectResolved(text: string, epoch: number, suggestedFormatIndex: number) {
-  const result = await parseLive(text);
+async function expectResolved(text: string, epoch: number, suggestedFormatIndex: number, context?: LiveContext) {
+  const result = await parseLive(text, context);
   assert.equal(result.ok, true, `${text} should resolve`);
   if (!result.ok) {
     return;
@@ -53,8 +62,8 @@ async function expectResolved(text: string, epoch: number, suggestedFormatIndex:
   assert.match(result.method, /agent|tool/i, `${text} should use the live agent/tool path`);
 }
 
-async function expectClarification(text: string, epochs: number[]) {
-  const result = await parseLive(text);
+async function expectClarification(text: string, epochs: number[], context?: LiveContext) {
+  const result = await parseLive(text, context);
   assert.equal(result.ok, false, `${text} should need clarification`);
   if (result.ok) {
     return;
@@ -66,20 +75,22 @@ async function expectClarification(text: string, epochs: number[]) {
   );
 }
 
-async function parseLive(text: string): Promise<LiveResult> {
+async function parseLive(text: string, context: LiveContext = {}): Promise<LiveResult> {
   if (apiBaseUrl !== undefined) {
-    return parseViaApi(text);
+    return parseViaApi(text, context);
   }
 
   if (openaiApiKey === undefined) {
     throw new Error('OPENAI_API_KEY is required for direct live parser tests.');
   }
 
+  const parseReferenceInstant = context.referenceInstant ?? referenceInstant;
+  const parseTimeZone = context.timeZone ?? timeZone;
   const features = temporalFeaturesFromEnv();
   const parsed = await parseTemporalExpression({
     text,
-    timeZone,
-    referenceInstant,
+    timeZone: parseTimeZone,
+    referenceInstant: parseReferenceInstant,
     openaiApiKey,
     openaiModel: process.env['OPENAI_MODEL'] ?? 'gpt-5.5',
     openaiReasoningEffort: process.env['OPENAI_REASONING_EFFORT'] ?? 'low',
@@ -90,6 +101,7 @@ async function parseLive(text: string): Promise<LiveResult> {
   if (parsed.status === 'resolved' && parsed.epoch !== undefined && parsed.suggestedFormatIndex !== undefined) {
     return {
       ok: true,
+      generationId: parsed.generationId ?? '',
       epoch: parsed.epoch,
       suggestedFormatIndex: parsed.suggestedFormatIndex,
       confidence: parsed.confidence,
@@ -102,11 +114,13 @@ async function parseLive(text: string): Promise<LiveResult> {
     status: parsed.status === 'needs_clarification' ? 400 : 500,
     error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'parse_failed',
     message: parsed.clarificationQuestion ?? parsed.ambiguity[0],
+    generationId: parsed.generationId,
     alternatives: parsed.clarificationAlternatives,
   };
 }
 
-async function parseViaApi(text: string): Promise<LiveResult> {
+async function parseViaApi(text: string, context: LiveContext = {}): Promise<LiveResult> {
+  const features = temporalFeaturesFromEnv();
   const response = await fetch(`${apiBaseUrl}/parse`, {
     method: 'POST',
     headers: {
@@ -114,7 +128,12 @@ async function parseViaApi(text: string): Promise<LiveResult> {
       'x-api-key': apiKey,
       'x-api-version': '1',
     },
-    body: JSON.stringify({ text, tz: timeZone, now: referenceInstant }),
+    body: JSON.stringify({
+      text,
+      tz: context.timeZone ?? timeZone,
+      now: context.referenceInstant ?? referenceInstant,
+      ...(features === undefined ? {} : { features }),
+    }),
   });
 
   if (response.ok) {
@@ -122,7 +141,7 @@ async function parseViaApi(text: string): Promise<LiveResult> {
     return { ok: true, ...parsed };
   }
 
-  const parsed = await response.json() as { error: string; message?: string; alternatives?: ParseAlternative[] };
+  const parsed = await response.json() as { error: string; message?: string; generationId?: string; alternatives?: ParseAlternative[] };
   return { ok: false, status: response.status, ...parsed };
 }
 
@@ -132,13 +151,21 @@ function isTruthy(value: string | undefined): boolean {
 
 function temporalFeaturesFromEnv(): TemporalFeatureFlags | undefined {
   const features: TemporalFeatureFlags = {};
+  const deterministicPreflight = optionalBoolean(process.env['TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT']);
   const ordinalWeekdayGrammar = optionalBoolean(process.env['TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR']);
   const planIr = optionalBoolean(process.env['TEMPORAL_FEATURE_PLAN_IR']);
+  const semanticConsistencyGate = optionalBoolean(process.env['TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE']);
+  if (deterministicPreflight !== undefined) {
+    features.deterministicPreflight = deterministicPreflight;
+  }
   if (ordinalWeekdayGrammar !== undefined) {
     features.ordinalWeekdayGrammar = ordinalWeekdayGrammar;
   }
   if (planIr !== undefined) {
     features.planIr = planIr;
+  }
+  if (semanticConsistencyGate !== undefined) {
+    features.semanticConsistencyGate = semanticConsistencyGate;
   }
   return Object.keys(features).length === 0 ? undefined : features;
 }

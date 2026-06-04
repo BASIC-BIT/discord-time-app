@@ -14,6 +14,7 @@ async function parse(text: string) {
 async function main() {
   const bareSaturday = await parse('Saturday');
   assert.equal(bareSaturday.status, 'resolved');
+  assert.match(bareSaturday.generationId ?? '', /^tp_[0-9a-f-]+$/);
   assert.equal(bareSaturday.canonical?.weekday, 'saturday');
   assert.equal(bareSaturday.canonical?.zonedDateTime.startsWith('2026-05-16'), true);
 
@@ -22,12 +23,24 @@ async function main() {
   assert.equal(nextSaturday.canonical?.weekday, 'saturday');
   assert.equal(nextSaturday.canonical?.zonedDateTime.startsWith('2026-05-23'), true);
 
+  const nextSaturdayAtTwentyFourHour = await parse('next Saturday at 13:37');
+  assert.equal(nextSaturdayAtTwentyFourHour.status, 'resolved');
+  assert.equal(nextSaturdayAtTwentyFourHour.canonical?.zonedDateTime.startsWith('2026-05-23T13:37'), true);
+
   const ambiguousBareTime = await parse('next Saturday 1');
   assert.equal(ambiguousBareTime.status, 'needs_clarification');
   assert.equal(ambiguousBareTime.clarificationQuestion, 'Which time did you mean?');
   assert.equal(ambiguousBareTime.clarificationAlternatives?.length, 2);
   assert.equal(ambiguousBareTime.clarificationAlternatives?.[0]?.label, '1 AM');
   assert.equal(ambiguousBareTime.clarificationAlternatives?.[1]?.label, '1 PM');
+
+  const ambiguousBareMinuteTime = await parse('day after tomorrow 11:34');
+  assert.equal(ambiguousBareMinuteTime.status, 'needs_clarification');
+  assert.equal(ambiguousBareMinuteTime.clarificationQuestion, 'Did you mean AM or PM?');
+  assert.deepEqual(
+    ambiguousBareMinuteTime.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['11:34 AM', '11:34 PM'],
+  );
 
   const nextWednesday = await parse('next Wednesday');
   assert.equal(nextWednesday.status, 'resolved');
@@ -56,12 +69,42 @@ async function main() {
   assert.equal(tuesdayCompactPm.canonical?.zonedDateTime.startsWith('2026-05-19T17:00'), true);
 
   const weekdayDateTimeFormat = await parse('4:30 Tuesday');
-  assert.equal(weekdayDateTimeFormat.status, 'resolved');
-  assert.equal(weekdayDateTimeFormat.suggestedFormatIndex, 5);
+  assert.equal(weekdayDateTimeFormat.status, 'needs_clarification');
+  assert.deepEqual(
+    weekdayDateTimeFormat.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['4:30 AM', '4:30 PM'],
+  );
+
+  const eventWithMultipleTimes = await parseTemporalExpression({
+    text: 'Club night: Friday May 29, doors 8pm, main set 10:30pm',
+    timeZone,
+    referenceInstant: '2026-05-24T12:00:00Z',
+  });
+  assert.equal(eventWithMultipleTimes.status, 'needs_clarification');
+  assert.deepEqual(
+    [...(eventWithMultipleTimes.clarificationAlternatives ?? [])].map((alternative) => alternative.epoch).sort((a, b) => a - b),
+    [1780099200, 1780108200],
+  );
 
   const relativeFormat = await parse('in 3 days');
   assert.equal(relativeFormat.status, 'resolved');
   assert.equal(relativeFormat.suggestedFormatIndex, 6);
+
+  const relativeFromNowFormat = await parse('60 days from now');
+  assert.equal(relativeFromNowFormat.status, 'resolved');
+  assert.equal(relativeFromNowFormat.suggestedFormatIndex, 6);
+
+  const bareTwentyFourHour = await parse('19');
+  assert.equal(bareTwentyFourHour.status, 'resolved');
+  assert.equal(bareTwentyFourHour.epoch, 1778886000);
+
+  const bareTwentyFourHourRollover = await parseTemporalExpression({
+    text: '19',
+    timeZone,
+    referenceInstant: '2026-05-16T01:00:00Z',
+  });
+  assert.equal(bareTwentyFourHourRollover.status, 'resolved');
+  assert.equal(bareTwentyFourHourRollover.epoch, 1778972400);
 
   const firstSundayNextMonth = await parse('first sunday of next month at 1pm');
   assert.equal(firstSundayNextMonth.status, 'resolved');
@@ -83,6 +126,7 @@ async function main() {
 
   const deterministicEaster = await parse('easter');
   assert.equal(deterministicEaster.status, 'failed');
+  assert.match(deterministicEaster.generationId ?? '', /^tp_[0-9a-f-]+$/);
 
   const tools = createDeterministicTemporalToolImplementations();
   const agentContext = collectTemporalAgentContext({ text: 'easter 2026 noon', calendarContext });

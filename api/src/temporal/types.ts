@@ -131,9 +131,33 @@ export interface TemporalFinalValidation {
   missingOrContradictedSignals: string[];
 }
 
+export interface TemporalSemanticConsistencyGateResult {
+  decision: "accept" | "reject" | "uncertain";
+  confidence: number;
+  reasonCodes: string[];
+  explanation: string;
+}
+
 export interface TemporalFeatureFlags {
+  deterministicPreflight?: boolean;
   ordinalWeekdayGrammar?: boolean;
   planIr?: boolean;
+  semanticConsistencyGate?: boolean;
+}
+
+export type TemporalPlanIrInstructionPreset = 'detailed' | 'minimal';
+export type TemporalPlanIrEndpointApi = 'completions' | 'chat';
+export type TemporalPlanIrEndpointPromptFormat = 'custom' | 'chat';
+
+export interface TemporalPlanIrEndpointConfig {
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  instructionPreset: TemporalPlanIrInstructionPreset;
+  api: TemporalPlanIrEndpointApi;
+  promptFormat: TemporalPlanIrEndpointPromptFormat;
+  maxTokens: number;
+  timeoutMs: number;
 }
 
 export interface TemporalParseRequest {
@@ -142,6 +166,7 @@ export interface TemporalParseRequest {
 }
 
 export interface TemporalParseResponse {
+  generationId?: string;
   status: TemporalParseStatus;
   epoch?: number;
   suggestedFormatIndex?: number;
@@ -165,6 +190,7 @@ export interface TemporalParseResponse {
     agentAttempts?: number;
     toolPasses?: number;
     deterministicDurationMs?: number;
+    ambiguityPolicyDurationMs?: number;
     agentDurationMs?: number;
     totalDurationMs?: number;
     firstLlmResponseMs?: number;
@@ -173,9 +199,12 @@ export interface TemporalParseResponse {
     shortCircuitReason?: string;
     model?: string;
     reasoningEffort?: string;
+    instructionPreset?: string;
+    promptFormat?: string;
     featureFlags?: TemporalFeatureFlags;
     trace?: TemporalAgentTraceStep[];
     finalValidation?: TemporalFinalValidation;
+    semanticConsistencyGate?: TemporalSemanticConsistencyGateResult;
     langfuseTraceId?: string;
   };
 }
