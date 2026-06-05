@@ -410,6 +410,8 @@ function monthBoundarySeedRows(): TemporalIrTrainingRow[] {
     calendarQueryRow('month-boundary-first-of-next-month-train', 'first of next month', 'first of next month', 'date', ['month-boundary', 'direction-next'], 'train'),
     calendarQueryRow('month-boundary-first-of-last-month-validation', 'first of last month', 'first of last month', 'date', ['month-boundary', 'direction-last'], 'validation'),
     monthBoundaryClockRow('month-boundary-first-of-last-month-5pm-train', 'first of last month at 5pm', 'first of last month', '5pm', 'First of last month 5 PM', ['direction-last'], 'train'),
+    monthBoundaryClockRow('month-boundary-leading-clock-first-of-last-month-5pm-train', '5pm the first of last month', 'first of last month', '5pm', 'First of last month 5 PM', ['direction-last', 'clock-leading'], 'train'),
+    monthBoundaryClockRow('month-boundary-leading-clock-first-of-last-month-spaced-train', '5 pm first of last month', 'first of last month', '5 pm', 'First of last month 5 PM', ['direction-last', 'clock-leading', 'whitespace'], 'train'),
     monthBoundaryClockRow('month-boundary-leading-clock-first-of-last-month-holdout', '5pm the first of last month', 'first of last month', '5pm', 'First of last month 5 PM', ['direction-last', 'clock-leading'], 'holdout'),
     monthBoundaryClockRow('month-boundary-first-of-next-month-1630-train', 'first of next month 16:30', 'first of next month', '16:30', 'First of next month 16:30', ['direction-next', 'clock-24h'], 'train'),
     monthBoundaryClockRow('month-boundary-leading-clock-first-of-this-month-validation', '9am first of this month', 'first of this month', '9am', 'First of this month 9 AM', ['direction-this', 'clock-leading'], 'validation'),

@@ -251,7 +251,7 @@ Enable the API sidecar with ignored local env values in `api/.env`:
 ```text
 TEMPORAL_FEATURE_PLAN_IR=true
 TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2584
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -280,7 +280,7 @@ Then evaluate it as an OpenAI-compatible chat endpoint:
 ```powershell
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8765/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2584"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"

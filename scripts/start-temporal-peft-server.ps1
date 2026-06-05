@@ -2,8 +2,8 @@
 param(
     [string]$Distro = "Ubuntu-24.04",
     [string]$BaseModel = "Qwen/Qwen3.5-0.8B",
-    [string]$AdapterPath = "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-noisy-input-2584-lora",
-    [string]$ModelName = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2584",
+    [string]$AdapterPath = "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-noisy-input-2586-lora",
+    [string]$ModelName = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586",
     [int]$Port = 8765,
     [int]$MaxNewTokens = 512,
     [string]$Image = "hammer-overlay-temporal-ir-qwen35:cuda12.8",

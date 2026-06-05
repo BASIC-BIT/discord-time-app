@@ -6,10 +6,10 @@ This workstream compares model families without changing runtime semantics or hi
 
 Current promoted adapter:
 
-- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-noisy-input-2584-lora`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-noisy-input-2586-lora`
 - Base: `Qwen/Qwen3.5-0.8B`
 - Required gate: `136/136` promoted endpoint, plus `1/1` diagnostic for `first of Febuarysdf 2:30` returning AM/PM clarification.
-- Dataset note: current generated expanded dataset is `2584` rows with splits `2049/271/264`; the promoted adapter was trained on that dataset after adding bounded noisy-human-input rows for typo variants, suffix junk, spacing/run-together damage, repeated/missing/transposed letters, keyboard-adjacent substitutions, and negative epoch-like rejection reinforcement.
+- Dataset note: current generated expanded dataset is `2586` rows with splits `2051/271/264`; the promoted adapter was trained on that dataset after adding bounded noisy-human-input rows for typo variants, suffix junk, spacing/run-together damage, repeated/missing/transposed letters, keyboard-adjacent substitutions, negative epoch-like rejection reinforcement, and leading-clock last-month reinforcement.
 - Prompt preset: `minimal`; endpoint API/prompt format: `chat`/`chat`.
 
 Any upgraded model must beat or materially complement this baseline on accuracy, latency, cost, or robustness. The prior v4h Qwen2.5 0.5B adapter remains the rollback baseline.
