@@ -8,19 +8,28 @@ import * as z from 'zod';
 import { parseTemporalExpression } from '../src/temporal';
 import { parseCalendarContext } from '../src/temporal/deterministic';
 import { executeTemporalPlanPlannerOutput } from '../src/temporal/graph';
-import { parseTemporalPlanPlannerOutput, PLAN_WEEKDAYS, TEMPORAL_PLAN_MAX_PLANS } from '../src/temporal/plan-ir';
+import { parseTemporalPlanPlannerOutput, PLAN_WEEKDAYS, TEMPORAL_PLAN_MAX_PLANS, TEMPORAL_PLAN_MAX_STEPS } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
 import type { TemporalAgentTraceStep, TemporalFeatureFlags, TemporalParseResponse } from '../src/temporal/types';
 
 type ExpectedResolved = {
   status: 'resolved';
-  epoch: number;
+  epoch?: number;
   suggestedFormatIndex?: number;
+  range?: ExpectedRange;
 };
 
 type ExpectedClarification = {
   status: 'needs_clarification';
   alternativeEpochs: number[];
+  alternativeRanges?: ExpectedRange[];
+};
+
+type ExpectedRange = {
+  startEpoch: number;
+  endEpoch: number;
+  startFormatIndex?: number;
+  endFormatIndex?: number;
 };
 
 type ExpectedFailed = {
@@ -86,11 +95,13 @@ type EvalExperimentSpec = {
 
 type EvalParsed = {
   status: TemporalParseResponse['status'];
+  kind?: TemporalParseResponse['kind'];
   epoch?: number;
   suggestedFormatIndex?: number;
+  range?: TemporalParseResponse['range'];
   confidence: number;
   method: string;
-  clarificationAlternatives?: Array<{ epoch: number }>;
+  clarificationAlternatives?: Array<{ epoch: number; range?: TemporalParseResponse['range'] }>;
   debug?: TemporalParseResponse['debug'];
 };
 
@@ -109,8 +120,10 @@ type EvalResult = {
   passed: boolean;
   durationMs: number;
   status?: string;
+  kind?: string;
   epoch?: number;
   suggestedFormatIndex?: number;
+  range?: TemporalParseResponse['range'];
   confidence?: number;
   method?: string;
   instructionPreset?: string;
@@ -167,7 +180,7 @@ const includeExhaustiveRelativeOffsetEvals = isTruthy(process.env['TEMPORAL_EVAL
 let trainedPlanPredictionCache: Promise<Map<string, TrainedPlanPrediction>> | undefined;
 
 const ENDPOINT_PLAN_INSTRUCTION_PRESETS = {
-  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
+  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; the end must be after the start, so explicitly shift overnight end times. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep, or put an exact IANA/fixed-offset timezone string in timeZone. Use IANA/regional timezone intent for names like Eastern time, UK time, or Japan time; use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, return clarification instead of choosing silently. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
   minimal: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only.',
 } as const;
 
@@ -199,15 +212,18 @@ const CompactTemporalPlanPlannerJsonSchema = {
         additionalProperties: false,
         required: ['label', 'steps'],
         properties: {
+          kind: { type: 'string', enum: ['instant', 'time_range'] },
           label: { type: 'string' },
           rationale: { type: 'string' },
           assumptions: { type: 'array', items: { type: 'string' } },
           confidence: { type: 'number', minimum: 0, maximum: 1 },
           finalStep: { type: ['integer', 'null'], minimum: 0 },
+          startStep: { type: ['integer', 'null'], minimum: 0 },
+          endStep: { type: ['integer', 'null'], minimum: 0 },
           steps: {
             type: 'array',
             minItems: 1,
-            maxItems: 6,
+            maxItems: TEMPORAL_PLAN_MAX_STEPS,
             items: {
               type: 'object',
               additionalProperties: false,
@@ -220,6 +236,7 @@ const CompactTemporalPlanPlannerJsonSchema = {
                     'resolve_weekday_anchor',
                     'resolve_holiday',
                     'resolve_clock_time',
+                    'resolve_timezone',
                     'interpret_clock_phrase',
                     'shift_datetime',
                     'set_clock_time',
@@ -244,6 +261,7 @@ const CompactTemporalPlanPlannerJsonSchema = {
                   },
                 },
                 timeStep: { type: 'integer', minimum: 0 },
+                timeZoneStep: { type: 'integer', minimum: 0 },
                 delta: {
                   type: 'object',
                   additionalProperties: false,
@@ -620,6 +638,144 @@ function epochForLocalDateTime(plainDate: { year: number; month: number; day: nu
   return Math.floor(Number(zonedDateTime.epochMilliseconds) / 1000);
 }
 
+function timezoneEvalCases(): TemporalEvalCase[] {
+  return [
+    {
+      id: 'timezone-iana-los-angeles',
+      text: 'tomorrow at 5pm America/Los_Angeles',
+      category: 'timezone-explicit-iana',
+      expected: { status: 'resolved', epoch: epochForLocalDateTime({ year: 2026, month: 5, day: 25 }, 17, 0, 'America/Los_Angeles'), suggestedFormatIndex: 4 },
+    },
+    {
+      id: 'timezone-named-uk-time',
+      text: 'tomorrow at 5pm UK time',
+      category: 'timezone-named-region',
+      expected: { status: 'resolved', epoch: epochForLocalDateTime({ year: 2026, month: 5, day: 25 }, 17, 0, 'Europe/London'), suggestedFormatIndex: 4 },
+    },
+    {
+      id: 'timezone-offset-utc-plus-two',
+      text: 'tomorrow at 5pm UTC+2',
+      category: 'timezone-fixed-offset',
+      expected: { status: 'resolved', epoch: epochForLocalDateTime({ year: 2026, month: 5, day: 25 }, 17, 0, '+02:00'), suggestedFormatIndex: 4 },
+    },
+    {
+      id: 'timezone-ambiguous-cst',
+      text: 'tomorrow at 5pm CST',
+      category: 'timezone-ambiguous-abbreviation',
+      expected: { status: 'needs_clarification', alternativeEpochs: [] },
+    },
+    {
+      id: 'timezone-dst-gap-fail-closed',
+      text: '2026-03-08 at 2:30am Eastern time',
+      category: 'timezone-dst-gap',
+      expected: { status: 'failed' },
+    },
+  ];
+}
+
+function timeRangeEvalCases(): TemporalEvalCase[] {
+  return [
+    {
+      id: 'range-relative-same-day-hyphen',
+      text: 'tomorrow 3pm-5pm',
+      category: 'time-range-relative',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 25 }, 15, 0, { year: 2026, month: 5, day: 25 }, 17, 0, timeZone, 4, 2) },
+    },
+    {
+      id: 'range-relative-same-day-from-to',
+      text: 'tomorrow from 3pm to 5pm',
+      category: 'time-range-relative',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 25 }, 15, 0, { year: 2026, month: 5, day: 25 }, 17, 0, timeZone, 4, 2) },
+    },
+    {
+      id: 'range-weekday-same-day',
+      text: 'Friday 8pm-10:30pm',
+      category: 'time-range-weekday',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 29 }, 20, 0, { year: 2026, month: 5, day: 29 }, 22, 30, timeZone, 5, 2) },
+    },
+    {
+      id: 'range-explicit-date-same-day',
+      text: 'May 29 2026 8pm-10:30pm',
+      category: 'time-range-explicit-date',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 29 }, 20, 0, { year: 2026, month: 5, day: 29 }, 22, 30, timeZone, 4, 2) },
+    },
+    {
+      id: 'range-24h-same-day',
+      text: 'tomorrow 13:00-15:30',
+      category: 'time-range-24h',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 25 }, 13, 0, { year: 2026, month: 5, day: 25 }, 15, 30, timeZone, 4, 2) },
+    },
+    {
+      id: 'range-overnight-explicit',
+      text: 'Friday 11pm-1am',
+      category: 'time-range-overnight',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 29 }, 23, 0, { year: 2026, month: 5, day: 30 }, 1, 0, timeZone, 5, 5) },
+    },
+    {
+      id: 'range-timezone-named-uk',
+      text: 'tomorrow 3pm-5pm UK time',
+      category: 'time-range-timezone',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 25 }, 15, 0, { year: 2026, month: 5, day: 25 }, 17, 0, 'Europe/London', 4, 2) },
+    },
+    {
+      id: 'range-timezone-fixed-offset',
+      text: 'tomorrow 3pm-5pm UTC+2',
+      category: 'time-range-timezone',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 25 }, 15, 0, { year: 2026, month: 5, day: 25 }, 17, 0, '+02:00', 4, 2) },
+    },
+    {
+      id: 'range-timezone-iana',
+      text: 'May 25 2026 3pm-5pm America/Los_Angeles',
+      category: 'time-range-timezone',
+      expected: { status: 'resolved', range: rangeExpected({ year: 2026, month: 5, day: 25 }, 15, 0, { year: 2026, month: 5, day: 25 }, 17, 0, 'America/Los_Angeles', 4, 2) },
+    },
+    {
+      id: 'range-next-weekday-clarification',
+      text: 'next saturday 3pm-5pm',
+      category: 'time-range-clarification',
+      expected: {
+        status: 'needs_clarification',
+        alternativeEpochs: [],
+        alternativeRanges: [
+          rangeExpected({ year: 2026, month: 5, day: 30 }, 15, 0, { year: 2026, month: 5, day: 30 }, 17, 0, timeZone, 5, 2),
+          rangeExpected({ year: 2026, month: 6, day: 6 }, 15, 0, { year: 2026, month: 6, day: 6 }, 17, 0, timeZone, 5, 2),
+        ],
+      },
+    },
+    {
+      id: 'range-date-span-unsupported',
+      text: 'Tuesday through Thursday',
+      category: 'time-range-unsupported-date-span',
+      expected: { status: 'failed' },
+    },
+    {
+      id: 'range-schedule-block-unsupported',
+      text: 'Tuesday through Thursday 3pm-5pm',
+      category: 'time-range-unsupported-schedule-block',
+      expected: { status: 'failed' },
+    },
+  ];
+}
+
+function rangeExpected(
+  startDate: { year: number; month: number; day: number },
+  startHour: number,
+  startMinute: number,
+  endDate: { year: number; month: number; day: number },
+  endHour: number,
+  endMinute: number,
+  zone: string,
+  startFormatIndex?: number,
+  endFormatIndex?: number,
+): ExpectedRange {
+  return {
+    startEpoch: epochForLocalDateTime(startDate, startHour, startMinute, zone),
+    endEpoch: epochForLocalDateTime(endDate, endHour, endMinute, zone),
+    ...(startFormatIndex === undefined ? {} : { startFormatIndex }),
+    ...(endFormatIndex === undefined ? {} : { endFormatIndex }),
+  };
+}
+
 const evalCases: TemporalEvalCase[] = [
   {
     id: 'relative-date-default-noon',
@@ -670,6 +826,8 @@ const evalCases: TemporalEvalCase[] = [
   ...shorthandRelativeEvalCases(),
   ...relativeOffsetEvalCases(),
   ...boundarySnapEvalCases(),
+  ...timezoneEvalCases(),
+  ...timeRangeEvalCases(),
   ...(includeExhaustiveRelativeOffsetEvals ? exhaustiveRelativeOffsetEvalCases() : []),
   {
     id: 'bare-hour-clarification',
@@ -1134,8 +1292,10 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       passed: mismatch === undefined,
       durationMs,
       status: parsed.status,
+      kind: parsed.kind,
       epoch: parsed.epoch,
       suggestedFormatIndex: parsed.suggestedFormatIndex,
+      range: parsed.range,
       confidence: parsed.confidence,
       method: parsed.method,
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
@@ -1562,8 +1722,15 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
   }
 
   if (evalCase.expected.status === 'resolved') {
+    if (evalCase.expected.range !== undefined) {
+      const mismatch = rangeMismatch(evalCase.expected.range, parsed.range);
+      if (mismatch !== undefined) {
+        return mismatch;
+      }
+      return undefined;
+    }
     if (parsed.epoch !== evalCase.expected.epoch) {
-      return `expected epoch ${evalCase.expected.epoch}, got ${parsed.epoch ?? 'none'}`;
+      return `expected epoch ${evalCase.expected.epoch ?? 'none'}, got ${parsed.epoch ?? 'none'}`;
     }
     if (evalCase.expected.suggestedFormatIndex !== undefined && parsed.suggestedFormatIndex !== evalCase.expected.suggestedFormatIndex) {
       return `expected format ${evalCase.expected.suggestedFormatIndex}, got ${parsed.suggestedFormatIndex ?? 'none'}`;
@@ -1575,14 +1742,50 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
     return undefined;
   }
 
-  const actual = [...(parsed.clarificationAlternatives ?? [])]
-    .map((alternative) => alternative.epoch)
-    .sort((a, b) => a - b);
-  const expected = [...evalCase.expected.alternativeEpochs].sort((a, b) => a - b);
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    return `expected alternatives ${expected.join(',')}, got ${actual.join(',') || 'none'}`;
+  if (evalCase.expected.alternativeRanges !== undefined) {
+    const actualRanges = [...(parsed.clarificationAlternatives ?? [])]
+      .map((alternative) => alternative.range)
+      .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
+      .map(rangeKeyForEval)
+      .sort();
+    const expectedRanges = evalCase.expected.alternativeRanges.map(expectedRangeKey).sort();
+    if (JSON.stringify(actualRanges) !== JSON.stringify(expectedRanges)) {
+      return `expected range alternatives ${expectedRanges.join(',')}, got ${actualRanges.join(',') || 'none'}`;
+    }
+  } else {
+    const actual = [...(parsed.clarificationAlternatives ?? [])]
+      .map((alternative) => alternative.epoch)
+      .sort((a, b) => a - b);
+    const expected = [...evalCase.expected.alternativeEpochs].sort((a, b) => a - b);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      return `expected alternatives ${expected.join(',')}, got ${actual.join(',') || 'none'}`;
+    }
   }
   return undefined;
+}
+
+function rangeMismatch(expected: ExpectedRange, actual: TemporalParseResponse['range'] | undefined): string | undefined {
+  if (actual === undefined) {
+    return `expected range ${expectedRangeKey(expected)}, got none`;
+  }
+  if (actual.start.epoch !== expected.startEpoch || actual.end.epoch !== expected.endEpoch) {
+    return `expected range ${expectedRangeKey(expected)}, got ${rangeKeyForEval(actual)}`;
+  }
+  if (expected.startFormatIndex !== undefined && actual.start.suggestedFormatIndex !== expected.startFormatIndex) {
+    return `expected range start format ${expected.startFormatIndex}, got ${actual.start.suggestedFormatIndex}`;
+  }
+  if (expected.endFormatIndex !== undefined && actual.end.suggestedFormatIndex !== expected.endFormatIndex) {
+    return `expected range end format ${expected.endFormatIndex}, got ${actual.end.suggestedFormatIndex}`;
+  }
+  return undefined;
+}
+
+function rangeKeyForEval(range: NonNullable<TemporalParseResponse['range']>): string {
+  return `${range.start.epoch}:${range.end.epoch}`;
+}
+
+function expectedRangeKey(range: ExpectedRange): string {
+  return `${range.startEpoch}:${range.endEpoch}`;
 }
 
 function metricsFromResponse(parsed: EvalParsed, evalCase: TemporalEvalCase, durationMs: number): EvalResult['metrics'] {
@@ -1628,7 +1831,14 @@ function metricsFromResponse(parsed: EvalParsed, evalCase: TemporalEvalCase, dur
 
 function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, durationMs: number): number | undefined {
   if (evalCase.expected.status === 'resolved') {
-    if (parsed.status !== 'resolved' || parsed.epoch !== evalCase.expected.epoch) {
+    if (parsed.status !== 'resolved') {
+      return undefined;
+    }
+    if (evalCase.expected.range !== undefined) {
+      if (rangeMismatch(evalCase.expected.range, parsed.range) !== undefined) {
+        return undefined;
+      }
+    } else if (parsed.epoch !== evalCase.expected.epoch) {
       return undefined;
     }
     if (parsed.method === 'deterministic') {
@@ -1641,12 +1851,27 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
     return parsed.status === 'failed' ? parsed.debug?.finalResponseMs ?? durationMs : undefined;
   }
 
-  const actual = [...(parsed.clarificationAlternatives ?? [])]
-    .map((alternative) => alternative.epoch)
-    .sort((a, b) => a - b);
-  const expected = [...evalCase.expected.alternativeEpochs].sort((a, b) => a - b);
-  if (parsed.status !== 'needs_clarification' || JSON.stringify(actual) !== JSON.stringify(expected)) {
+  if (parsed.status !== 'needs_clarification') {
     return undefined;
+  }
+  if (evalCase.expected.alternativeRanges !== undefined) {
+    const actualRanges = [...(parsed.clarificationAlternatives ?? [])]
+      .map((alternative) => alternative.range)
+      .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
+      .map(rangeKeyForEval)
+      .sort();
+    const expectedRanges = evalCase.expected.alternativeRanges.map(expectedRangeKey).sort();
+    if (JSON.stringify(actualRanges) !== JSON.stringify(expectedRanges)) {
+      return undefined;
+    }
+  } else {
+    const actual = [...(parsed.clarificationAlternatives ?? [])]
+      .map((alternative) => alternative.epoch)
+      .sort((a, b) => a - b);
+    const expected = [...evalCase.expected.alternativeEpochs].sort((a, b) => a - b);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      return undefined;
+    }
   }
   if (parsed.method === 'fallback') {
     return parsed.debug?.ambiguityPolicyDurationMs ?? parsed.debug?.deterministicDurationMs ?? durationMs;

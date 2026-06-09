@@ -20,7 +20,7 @@ param(
     [int]$Tail = 40,
 
     [string]$Distro = "Ubuntu-24.04",
-    [string]$WslRepoPath = "/mnt/d/bench/discord-time-app-src"
+    [string]$WslRepoPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -36,9 +36,16 @@ Assert-NoSingleQuote "AdapterName" $AdapterName
 Assert-NoSingleQuote "InstructionPreset" $InstructionPreset
 Assert-NoSingleQuote "BaseModel" $BaseModel
 Assert-NoSingleQuote "Dataset" $Dataset
-Assert-NoSingleQuote "WslRepoPath" $WslRepoPath
 
-$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+if ($WslRepoPath.Trim().Length -eq 0) {
+    $resolvedWslRepoPath = (& wsl.exe -d $Distro -- wslpath -a $repoRoot).Trim()
+    if ($LASTEXITCODE -ne 0 -or $resolvedWslRepoPath.Length -eq 0) {
+        throw "Unable to resolve repo root for WSL. Pass -WslRepoPath explicitly."
+    }
+    $WslRepoPath = $resolvedWslRepoPath
+}
+Assert-NoSingleQuote "WslRepoPath" $WslRepoPath
 $reportDir = Join-Path $repoRoot "api\reports\temporal-ml"
 if (-not (Test-Path -LiteralPath $reportDir)) {
     New-Item -ItemType Directory -Path $reportDir | Out-Null

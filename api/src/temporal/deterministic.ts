@@ -24,11 +24,14 @@ import type {
   ResolveCalendarQueryOutput,
   ResolveHolidayInput,
   ResolveHolidayOutput,
+  ResolveTimeZoneInput,
+  ResolveTimeZoneOutput,
   SetClockTimeInput,
   ShiftDateTimeInput,
   ValidateCandidateInput,
   ValidateCandidateOutput,
 } from './tools';
+import { resolveTimeZone as resolveTimeZoneFromText, stripResolvedTimeZoneText, timeZoneValidationForCandidate } from './timezones';
 
 const WEEKDAY_LOOKUP: Record<Weekday, number> = {
   monday: 1,
@@ -152,7 +155,13 @@ interface HolidayMatch {
 }
 
 export function parseCalendarContext(timeZone: string, referenceInstant = new Date().toISOString()): CalendarContext {
-  return { referenceInstant, timeZone };
+  return { referenceInstant: normalizeReferenceInstant(referenceInstant), timeZone };
+}
+
+function normalizeReferenceInstant(referenceInstant: string): string {
+  return Temporal.Instant.from(referenceInstant)
+    .round({ smallestUnit: 'second', roundingMode: 'trunc' })
+    .toString();
 }
 
 export function collectTemporalAgentContext(input: { text: string; calendarContext: CalendarContext }): TemporalAgentContext {
@@ -171,17 +180,40 @@ export function collectTemporalAgentContext(input: { text: string; calendarConte
 }
 
 export async function parseExpression(input: ParseExpressionInput): Promise<ParseExpressionOutput> {
+  const explicit = parseExplicitTimestamp(input.text, input.calendarContext);
+  if (explicit) {
+    return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
+  }
+
+  const timeZoneResolution = resolveTimeZoneFromText({ text: input.text, calendarContext: input.calendarContext });
+  if (timeZoneResolution.status === 'ambiguous') {
+    return { candidates: [], parserNotes: [timeZoneResolution.clarificationQuestion ?? 'Input contains an ambiguous timezone reference.', ...timeZoneResolution.notes] };
+  }
+  const timeZoneCandidate = timeZoneResolution.status === 'resolved' ? timeZoneResolution.candidates[0] : undefined;
+  if (timeZoneCandidate !== undefined) {
+    const strippedText = stripResolvedTimeZoneText(input.text, timeZoneCandidate);
+    if (strippedText.length > 0 && strippedText !== input.text.trim()) {
+      const parsed = await parseExpression({
+        text: strippedText,
+        calendarContext: { ...input.calendarContext, timeZone: timeZoneCandidate.timeZone },
+        ...(input.features === undefined ? {} : { features: input.features }),
+      });
+      return {
+        candidates: parsed.candidates.map((candidate) => ({
+          ...candidate,
+          assumptions: [...candidate.assumptions, ...timeZoneCandidate.assumptions],
+        })),
+        parserNotes: [...timeZoneResolution.notes, ...parsed.parserNotes],
+      };
+    }
+  }
+
   if (hasTrailingBareNumericTimeSignal(input.text)) {
     return { candidates: [], parserNotes: ['Input contains a trailing bare number that looks like an unresolved time signal.'] };
   }
 
   if (WEEKDAY_AFTER_NEXT_PATTERN.test(input.text)) {
     return { candidates: [], parserNotes: ['Input contains ambiguous weekday-after-next phrase.'] };
-  }
-
-  const explicit = parseExplicitTimestamp(input.text, input.calendarContext);
-  if (explicit) {
-    return { candidates: [explicit], parserNotes: ['Matched explicit timestamp.'] };
   }
 
   const ordinalWeekday = featureEnabled(input.features, 'ordinalWeekdayGrammar')
@@ -263,34 +295,24 @@ export async function resolveClockTime(input: ResolveClockTimeInput): Promise<Re
   };
 }
 
+export async function resolveTimeZone(input: ResolveTimeZoneInput): Promise<ResolveTimeZoneOutput> {
+  return resolveTimeZoneFromText(input);
+}
+
 export async function shiftDateTime(input: ShiftDateTimeInput): Promise<Candidate> {
   const base = getBaseZonedDateTime(input);
   let shifted = base.add(input.delta);
   const assumptions = ['Applied timezone-aware duration shift.'];
   if (input.time !== undefined) {
-    shifted = shifted.with({
-      hour: input.time.hour,
-      minute: input.time.minute,
-      second: 0,
-      millisecond: 0,
-      microsecond: 0,
-      nanosecond: 0,
-    });
+    shifted = requireZonedDateTimeFromPlain(shifted.toPlainDate(), shifted.timeZoneId, Temporal.PlainTime.from({ hour: input.time.hour, minute: input.time.minute }));
     assumptions.push(`Applied explicit clock time ${formatRequestedTime(input.time)} to shifted date.`);
   }
   return createCandidate(shifted, input.time === undefined && isDefaultDateOnlyNoon(base) ? 'relative' : 'datetime', assumptions, 'shift_math');
 }
 
 export async function setClockTime(input: SetClockTimeInput): Promise<Candidate> {
-  const base = getBaseZonedDateTime(input).withTimeZone(input.calendarContext.timeZone);
-  const zonedDateTime = base.with({
-    hour: input.time.hour,
-    minute: input.time.minute,
-    second: 0,
-    millisecond: 0,
-    microsecond: 0,
-    nanosecond: 0,
-  });
+  const base = getBaseZonedDateTime(input);
+  const zonedDateTime = requireZonedDateTimeFromPlain(base.toPlainDate(), base.timeZoneId, Temporal.PlainTime.from({ hour: input.time.hour, minute: input.time.minute }));
   return createCandidate(
     zonedDateTime,
     'datetime',
@@ -300,7 +322,7 @@ export async function setClockTime(input: SetClockTimeInput): Promise<Candidate>
 }
 
 export async function formatCandidate(input: FormatCandidateInput): Promise<string> {
-  const zdt = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.calendarContext.timeZone);
+  const zdt = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.candidate.timeZone);
   const locale = input.calendarContext.locale ?? 'en-US';
 
   if (input.style === 'discord-preview') {
@@ -315,14 +337,14 @@ export async function formatCandidate(input: FormatCandidateInput): Promise<stri
   const formatter = new TemporalIntl.DateTimeFormat(locale, {
     dateStyle: input.style === 'full' ? 'full' : 'medium',
     timeStyle: input.candidate.precision === 'date' ? undefined : 'short',
-    timeZone: input.calendarContext.timeZone,
+    timeZone: input.candidate.timeZone,
   });
 
   return formatter.format(zdt.toInstant());
 }
 
 export async function candidateFacts(input: CandidateFactsInput): Promise<CandidateFacts> {
-  const zdt = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.calendarContext.timeZone);
+  const zdt = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.candidate.timeZone);
   const facts: CandidateFacts = {
     weekday: weekdayFromTemporal(zdt.dayOfWeek),
     isoDate: zdt.toPlainDate().toString(),
@@ -346,6 +368,10 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
   const requestedWeekday = extractWeekday(input.originalText);
   const requestedHoliday = resolveHolidayFromText(input.originalText, input.calendarContext);
   const requestedTime = extractTimeOfDay(input.originalText);
+  const timeZoneValidation = timeZoneValidationForCandidate(input.originalText, input.candidate);
+  warnings.push(...timeZoneValidation.warnings);
+  errors.push(...timeZoneValidation.errors);
+  ambiguity.push(...timeZoneValidation.ambiguity);
 
   if (requestedWeekday && requestedWeekday !== facts.weekday) {
     const message = `Input mentioned ${requestedWeekday}, but candidate is ${facts.weekday}.`;
@@ -363,7 +389,7 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
   if (hasAmbiguousBareMeridiemTimeSignal(input.originalText)) {
     errors.push('Input contains a bare 1-12 clock without AM/PM; refusing to choose a meridiem silently.');
   } else if (requestedTime.explicit) {
-    const candidateTime = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.calendarContext.timeZone).toPlainTime();
+    const candidateTime = Temporal.ZonedDateTime.from(input.candidate.zonedDateTime).withTimeZone(input.candidate.timeZone).toPlainTime();
     if (candidateTime.hour !== requestedTime.hour || candidateTime.minute !== requestedTime.minute) {
       errors.push(`Input mentioned ${formatRequestedTime(requestedTime)}, but candidate time is ${candidateTime.toString({ smallestUnit: 'minute' })}.`);
     }
@@ -474,10 +500,11 @@ function candidateFromHoliday(
   calendarContext: CalendarContext,
   time: { hour: number; minute: number; explicit: boolean },
 ): Candidate {
-  const zonedDateTime = Temporal.PlainDate.from(holiday.isoDate).toZonedDateTime({
-    timeZone: calendarContext.timeZone,
-    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
-  });
+  const zonedDateTime = requireZonedDateTimeFromPlain(
+    Temporal.PlainDate.from(holiday.isoDate),
+    calendarContext.timeZone,
+    Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
+  );
   const assumptions = [`Resolved ${holiday.name} using the ${holiday.country} holiday calendar.`];
   if (!time.explicit) {
     assumptions.push('Defaulted date-only expression to 12:00 PM local time.');
@@ -523,10 +550,10 @@ function parseOrdinalWeekdayOfMonth(text: string, calendarContext: CalendarConte
     return null;
   }
 
-  const zonedDateTime = targetDate.toZonedDateTime({
-    timeZone: calendarContext.timeZone,
-    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
-  });
+  const zonedDateTime = zonedDateTimeFromPlain(targetDate, calendarContext.timeZone, Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }));
+  if (zonedDateTime === null) {
+    return null;
+  }
   if (!monthYear.explicitYear && monthName !== undefined && Temporal.Instant.compare(zonedDateTime.toInstant(), reference.toInstant()) <= 0) {
     const rolledTargetDate = ordinalWeekdayDate(monthYear.year + 1, monthYear.month, weekday, ordinal, dayShift);
     if (rolledTargetDate === null) {
@@ -535,10 +562,10 @@ function parseOrdinalWeekdayOfMonth(text: string, calendarContext: CalendarConte
     targetDate = rolledTargetDate;
   }
 
-  const finalZonedDateTime = targetDate.toZonedDateTime({
-    timeZone: calendarContext.timeZone,
-    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
-  });
+  const finalZonedDateTime = zonedDateTimeFromPlain(targetDate, calendarContext.timeZone, Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }));
+  if (finalZonedDateTime === null) {
+    return null;
+  }
   const monthDescription = relativeMonth === undefined ? monthName : `${relativeMonth} month`;
   const assumptions = [`Resolved ${ordinal} ${weekday} of ${monthDescription} with calendar arithmetic.`];
   if (dayShift !== undefined) {
@@ -569,10 +596,10 @@ function parseDayAfterTomorrow(text: string, calendarContext: CalendarContext): 
 
   const reference = referenceZdt(calendarContext);
   const targetDate = reference.toPlainDate().add({ days: 2 });
-  const target = targetDate.toZonedDateTime({
-    timeZone: calendarContext.timeZone,
-    plainTime: Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }),
-  });
+  const target = zonedDateTimeFromPlain(targetDate, calendarContext.timeZone, Temporal.PlainTime.from({ hour: time.hour, minute: time.minute }));
+  if (target === null) {
+    return null;
+  }
   const assumptions = ['Resolved day after tomorrow as two calendar days after the reference date.'];
   if (time.explicit) {
     assumptions.push(`Applied explicit clock time ${formatRequestedTime(time)}.`);
@@ -858,16 +885,16 @@ function parseMonthBoundary(text: string, calendarContext: CalendarContext): Can
   } else if (relativeMonth === 'last') {
     targetDate = targetDate.subtract({ months: 1 });
   }
-  let target = targetDate.toZonedDateTime({
-    timeZone: calendarContext.timeZone,
-    plainTime: Temporal.PlainTime.from('12:00'),
-  });
+  let target = zonedDateTimeFromPlain(targetDate, calendarContext.timeZone, Temporal.PlainTime.from('12:00'));
+  if (target === null) {
+    return null;
+  }
   if (relativeMonth === undefined && Temporal.Instant.compare(target.toInstant(), reference.toInstant()) <= 0) {
     targetDate = targetDate.add({ months: 1 });
-    target = targetDate.toZonedDateTime({
-      timeZone: calendarContext.timeZone,
-      plainTime: Temporal.PlainTime.from('12:00'),
-    });
+    target = zonedDateTimeFromPlain(targetDate, calendarContext.timeZone, Temporal.PlainTime.from('12:00'));
+    if (target === null) {
+      return null;
+    }
   }
 
   return createCandidate(
@@ -902,16 +929,14 @@ function parseWithChrono(text: string, calendarContext: CalendarContext): Candid
   }
 
   const time = chronoTimeFields(start, text);
-  const zonedDateTime = Temporal.ZonedDateTime.from({
-    year,
-    month,
-    day,
-    hour: time.hour,
-    minute: time.minute,
-    second: time.second,
-    millisecond: time.millisecond,
-    timeZone: calendarContext.timeZone,
-  });
+  const zonedDateTime = zonedDateTimeFromPlain(
+    Temporal.PlainDate.from({ year, month, day }),
+    calendarContext.timeZone,
+    Temporal.PlainTime.from({ hour: time.hour, minute: time.minute, second: time.second, millisecond: time.millisecond }),
+  );
+  if (zonedDateTime === null) {
+    return null;
+  }
   const assumptions = ['Parsed with chrono-node using user calendar context.'];
   if (!time.hasTime) {
     assumptions.push('Defaulted date-only expression to 12:00 PM local time.');
@@ -961,16 +986,14 @@ function chronoCandidateContext(
   }
 
   const time = chronoTimeFields(start, originalText);
-  const zonedDateTime = Temporal.ZonedDateTime.from({
-    year,
-    month,
-    day,
-    hour: time.hour,
-    minute: time.minute,
-    second: time.second,
-    millisecond: time.millisecond,
-    timeZone: calendarContext.timeZone,
-  });
+  const zonedDateTime = zonedDateTimeFromPlain(
+    Temporal.PlainDate.from({ year, month, day }),
+    calendarContext.timeZone,
+    Temporal.PlainTime.from({ hour: time.hour, minute: time.minute, second: time.second, millisecond: time.millisecond }),
+  );
+  if (zonedDateTime === null) {
+    return null;
+  }
   return {
     isoInstant: zonedDateTime.toInstant().toString(),
     zonedDateTime: zonedDateTime.toString(),
@@ -1019,13 +1042,26 @@ function getBaseZonedDateTime(input: ShiftDateTimeInput | SetClockTimeInput): Te
   }
 
   if ('plainDate' in input.base) {
-    return Temporal.PlainDate.from(input.base.plainDate).toZonedDateTime({
-      timeZone: input.base.timeZone,
-      plainTime: Temporal.PlainTime.from('12:00'),
-    });
+    return requireZonedDateTimeFromPlain(Temporal.PlainDate.from(input.base.plainDate), input.base.timeZone, Temporal.PlainTime.from('12:00'));
   }
 
   return Temporal.ZonedDateTime.from(input.base.zonedDateTime);
+}
+
+function zonedDateTimeFromPlain(date: Temporal.PlainDate, timeZone: string, plainTime: Temporal.PlainTime): Temporal.ZonedDateTime | null {
+  try {
+    return date.toPlainDateTime(plainTime).toZonedDateTime(timeZone, { disambiguation: 'reject' });
+  } catch {
+    return null;
+  }
+}
+
+function requireZonedDateTimeFromPlain(date: Temporal.PlainDate, timeZone: string, plainTime: Temporal.PlainTime): Temporal.ZonedDateTime {
+  const zonedDateTime = zonedDateTimeFromPlain(date, timeZone, plainTime);
+  if (zonedDateTime === null) {
+    throw new Error(`Local time ${date.toString()} ${plainTime.toString({ smallestUnit: 'minute' })} is invalid or ambiguous in ${timeZone}.`);
+  }
+  return zonedDateTime;
 }
 
 function referenceZdt(calendarContext: CalendarContext): Temporal.ZonedDateTime {
@@ -1103,12 +1139,17 @@ function findHolidayMatches(input: {
     .filter((holiday) => holidayNameMatches(query, holiday.name))
     .map((holiday) => {
       const isoDate = holiday.date.slice(0, 10);
-      const zonedDateTime = Temporal.PlainDate.from(isoDate).toZonedDateTime({
-        timeZone: input.calendarContext.timeZone,
-        plainTime: Temporal.PlainTime.from({ hour: input.time.hour, minute: input.time.minute }),
-      });
+      const zonedDateTime = zonedDateTimeFromPlain(
+        Temporal.PlainDate.from(isoDate),
+        input.calendarContext.timeZone,
+        Temporal.PlainTime.from({ hour: input.time.hour, minute: input.time.minute }),
+      );
+      if (zonedDateTime === null) {
+        return null;
+      }
       return { name: holiday.name, isoDate, instant: zonedDateTime.toInstant(), country };
     })
+    .filter((holiday): holiday is HolidayMatch => holiday !== null)
     .filter((holiday) => input.year !== null || Temporal.Instant.compare(holiday.instant, reference.toInstant()) > 0)
     .sort((a, b) => Temporal.Instant.compare(a.instant, b.instant));
 }
@@ -1348,6 +1389,9 @@ function isPartialChronoParse(text: string, parsedText: string, start: chrono.Pa
 
 function hasTrailingBareNumericTimeSignal(text: string): boolean {
   const trimmed = text.trim();
+  if (/\b(?:UTC|GMT)\s*[+-]\s*\d{1,2}(?::?[0-5]\d)?\s*$/i.test(trimmed) || /(?:^|\s)[+-]\d{2}(?::?[0-5]\d)\s*$/i.test(trimmed)) {
+    return false;
+  }
   if (/\b(?:[01]?\d|2[0-3]):[0-5]\d\s*$/.test(trimmed)) {
     return false;
   }

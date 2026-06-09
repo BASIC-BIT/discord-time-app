@@ -82,6 +82,9 @@ function compactPlan(plan: TemporalPlan) {
     label: plan.label,
     steps: plan.steps.map(compactStep),
   };
+  if (plan.kind !== undefined && plan.kind !== 'instant') {
+    compact.kind = plan.kind;
+  }
   if (plan.rationale.length > 0 && plan.rationale !== plan.label) {
     compact.rationale = plan.rationale;
   }
@@ -94,12 +97,18 @@ function compactPlan(plan: TemporalPlan) {
   if (plan.finalStep !== null) {
     compact.finalStep = plan.finalStep;
   }
+  if (plan.startStep !== undefined && plan.startStep !== null) {
+    compact.startStep = plan.startStep;
+  }
+  if (plan.endStep !== undefined && plan.endStep !== null) {
+    compact.endStep = plan.endStep;
+  }
   return compact;
 }
 
 function compactStep(step: TemporalPlanStep) {
   const compact: Record<string, unknown> = { op: step.operation };
-  for (const key of ['query', 'text', 'holidayName', 'weekday', 'weekdayAnchor', 'year', 'baseStep', 'time', 'timeStep', 'isoInstant', 'epochSeconds', 'timeZone', 'precision'] as const) {
+  for (const key of ['query', 'text', 'holidayName', 'weekday', 'weekdayAnchor', 'year', 'baseStep', 'time', 'timeStep', 'timeZoneStep', 'isoInstant', 'epochSeconds', 'timeZone', 'precision'] as const) {
     if (step[key] !== null) {
       compact[key] = step[key];
     }

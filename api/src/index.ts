@@ -60,11 +60,19 @@ const apiRuntime = {
 const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:[zZ]|[+-]\\d{2}:\\d{2})$';
 const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
 
+const CORS_ORIGINS = ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
+
+server.addHook('onRequest', async (request, reply) => {
+  if (CORS_ORIGINS.includes(request.headers.origin ?? '')) {
+    reply.header('Access-Control-Allow-Private-Network', 'true');
+  }
+});
+
 /**
  * Register CORS plugin
  */
 server.register(cors, {
-  origin: ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost'],
+  origin: CORS_ORIGINS,
   credentials: true,
   allowedHeaders: ['Content-Type', 'x-api-key', 'x-api-version']
 });
@@ -110,8 +118,52 @@ const parseResponseSchema = {
   required: ['generationId', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
   properties: {
     generationId: { type: 'string' },
+    kind: { type: 'string', enum: ['instant', 'time_range'] },
     epoch: { type: 'number' },
     suggestedFormatIndex: { type: 'number' },
+    range: {
+      type: 'object',
+      required: ['start', 'end', 'discord'],
+      properties: {
+        start: {
+          type: 'object',
+          required: ['epoch', 'suggestedFormatIndex', 'canonical'],
+          properties: {
+            epoch: { type: 'number' },
+            suggestedFormatIndex: { type: 'number' },
+            canonical: {
+              type: 'object',
+              properties: {
+                isoInstant: { type: 'string' },
+                zonedDateTime: { type: 'string' },
+                timeZone: { type: 'string' },
+                precision: { type: 'string' },
+                weekday: { type: 'string' },
+              }
+            }
+          }
+        },
+        end: {
+          type: 'object',
+          required: ['epoch', 'suggestedFormatIndex', 'canonical'],
+          properties: {
+            epoch: { type: 'number' },
+            suggestedFormatIndex: { type: 'number' },
+            canonical: {
+              type: 'object',
+              properties: {
+                isoInstant: { type: 'string' },
+                zonedDateTime: { type: 'string' },
+                timeZone: { type: 'string' },
+                precision: { type: 'string' },
+                weekday: { type: 'string' },
+              }
+            }
+          }
+        },
+        discord: { type: 'string' }
+      }
+    },
     confidence: { type: 'number' },
     method: { type: 'string' },
     canonical: {
@@ -140,8 +192,10 @@ const errorResponseSchema = {
         required: ['label', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
         properties: {
           label: { type: 'string' },
+          kind: { type: 'string', enum: ['instant', 'time_range'] },
           epoch: { type: 'number' },
           suggestedFormatIndex: { type: 'number' },
+          range: parseResponseSchema.properties.range,
           confidence: { type: 'number' },
           method: { type: 'string' }
         }
@@ -344,8 +398,10 @@ server.post<{ Body: ParseRequest }>('/parse', {
         generationId: parsed.generationId,
         alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
           label: alternative.label,
+          kind: alternative.kind,
           epoch: alternative.epoch,
           suggestedFormatIndex: alternative.suggestedFormatIndex,
+          range: alternative.range,
           confidence: alternative.confidence,
           method: alternative.method,
         }))
@@ -364,8 +420,10 @@ server.post<{ Body: ParseRequest }>('/parse', {
 
     return {
       generationId: parsed.generationId ?? '',
+      kind: parsed.kind ?? 'instant',
       epoch: parsed.epoch,
       suggestedFormatIndex: parsed.suggestedFormatIndex ?? 4,
+      range: parsed.range,
       confidence: parsed.confidence,
       method: parsed.method,
       canonical: parsed.canonical,

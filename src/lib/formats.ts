@@ -26,6 +26,57 @@ export function formatDiscordTimestamp(epoch: number, formatIndex: number): stri
   return `<t:${epoch}${format.code}>`;
 }
 
+export interface DiscordTimestampRange {
+  start: { epoch: number; suggestedFormatIndex: number };
+  end: { epoch: number; suggestedFormatIndex: number };
+  discord?: string;
+}
+
+export interface DiscordRangeFormat {
+  description: string;
+  startFormatIndex?: number;
+  endFormatIndex?: number;
+}
+
+export const rangeFormats: DiscordRangeFormat[] = [
+  { description: "Suggested Range" },
+  { description: "Short Time Range", startFormatIndex: 2, endFormatIndex: 2 },
+  { description: "Long Time Range", startFormatIndex: 3, endFormatIndex: 3 },
+  { description: "Short Date/Time Range", startFormatIndex: 4, endFormatIndex: 4 },
+  { description: "Long Date/Time Range", startFormatIndex: 5, endFormatIndex: 5 },
+];
+
+function getRangeFormatIndexes(range: DiscordTimestampRange, rangeFormatIndex?: number): { startFormatIndex: number; endFormatIndex: number; usesSuggested: boolean } {
+  const rangeFormat = rangeFormatIndex === undefined ? undefined : rangeFormats[rangeFormatIndex] ?? rangeFormats[0];
+  if (rangeFormat === undefined || rangeFormat.startFormatIndex === undefined || rangeFormat.endFormatIndex === undefined) {
+    return {
+      startFormatIndex: range.start.suggestedFormatIndex,
+      endFormatIndex: range.end.suggestedFormatIndex,
+      usesSuggested: true,
+    };
+  }
+
+  return {
+    startFormatIndex: rangeFormat.startFormatIndex,
+    endFormatIndex: rangeFormat.endFormatIndex,
+    usesSuggested: false,
+  };
+}
+
+export function formatDiscordRange(range: DiscordTimestampRange, rangeFormatIndex?: number): string {
+  const rangeFormat = getRangeFormatIndexes(range, rangeFormatIndex);
+  if (rangeFormat.usesSuggested && range.discord) {
+    return range.discord;
+  }
+
+  return `${formatDiscordTimestamp(range.start.epoch, rangeFormat.startFormatIndex)} - ${formatDiscordTimestamp(range.end.epoch, rangeFormat.endFormatIndex)}`;
+}
+
+export function getRangeLabel(range: DiscordTimestampRange, rangeFormatIndex?: number): string {
+  const rangeFormat = getRangeFormatIndexes(range, rangeFormatIndex);
+  return `${getFormatLabel(range.start.epoch, rangeFormat.startFormatIndex)} - ${getFormatLabel(range.end.epoch, rangeFormat.endFormatIndex)}`;
+}
+
 export function getFormatLabel(epoch: number, formatIndex: number): string {
   if (formatIndex < 0 || formatIndex >= formats.length) {
     return "Invalid format";
@@ -87,4 +138,4 @@ export function getFormatLabel(epoch: number, formatIndex: number): string {
     default:
       return format.label;
   }
-} 
+}

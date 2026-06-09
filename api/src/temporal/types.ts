@@ -21,6 +21,8 @@ export type TemporalMethod =
 
 export type TemporalParseStatus = "resolved" | "ambiguous" | "needs_clarification" | "failed";
 
+export type TemporalParseKind = "instant" | "time_range";
+
 export interface CalendarContext {
   referenceInstant: string;
   timeZone: string;
@@ -37,6 +39,27 @@ export interface Candidate {
   precision: TemporalPrecision;
   assumptions: string[];
   provenance: "chrono" | "holiday_library" | "shift_math" | "sandbox" | "explicit";
+}
+
+export type TimeZoneResolutionStatus = "resolved" | "ambiguous" | "not_found" | "invalid";
+
+export type TimeZoneResolutionKind = "iana" | "fixed_offset";
+
+export interface TimeZoneResolutionCandidate {
+  timeZone: string;
+  label: string;
+  kind: TimeZoneResolutionKind;
+  matchedText: string;
+  confidence: number;
+  assumptions: string[];
+  offsetMinutes?: number;
+}
+
+export interface TimeZoneResolutionOutput {
+  status: TimeZoneResolutionStatus;
+  candidates: TimeZoneResolutionCandidate[];
+  notes: string[];
+  clarificationQuestion?: string;
 }
 
 export interface CandidateFacts {
@@ -167,9 +190,11 @@ export interface TemporalParseRequest {
 
 export interface TemporalParseResponse {
   generationId?: string;
+  kind?: TemporalParseKind;
   status: TemporalParseStatus;
   epoch?: number;
   suggestedFormatIndex?: number;
+  range?: TemporalRangeResult;
   confidence: number;
   method: TemporalMethod;
   canonical?: {
@@ -209,10 +234,30 @@ export interface TemporalParseResponse {
   };
 }
 
-export interface TemporalClarificationAlternative {
-  label: string;
+export interface TemporalRangeEndpoint {
   epoch: number;
   suggestedFormatIndex: number;
+  canonical: {
+    isoInstant: string;
+    zonedDateTime: string;
+    timeZone: string;
+    precision: TemporalPrecision;
+    weekday?: Weekday;
+  };
+}
+
+export interface TemporalRangeResult {
+  start: TemporalRangeEndpoint;
+  end: TemporalRangeEndpoint;
+  discord: string;
+}
+
+export interface TemporalClarificationAlternative {
+  label: string;
+  kind?: TemporalParseKind;
+  epoch: number;
+  suggestedFormatIndex: number;
+  range?: TemporalRangeResult;
   confidence: number;
   method: TemporalMethod;
   canonical: {
@@ -230,6 +275,7 @@ export type AgentToolName =
   | "resolve_calendar_query"
   | "resolve_holiday"
   | "resolve_clock_time"
+  | "resolve_timezone"
   | "shift_datetime"
   | "set_clock_time"
   | "propose_candidate"

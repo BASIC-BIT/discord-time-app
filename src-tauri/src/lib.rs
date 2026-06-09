@@ -53,6 +53,23 @@ pub struct TimeParserServiceConfig {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeTimeParserRequest {
+    pub text: String,
+    pub tz: String,
+    pub now: Option<String>,
+    pub features: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeTimeParserResponse {
+    pub ok: bool,
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
 pub struct TimeParserServiceState {
     child: Mutex<Option<Child>>,
     base_url: String,
@@ -123,6 +140,17 @@ fn time_parser_api_key(app: &AppHandle, allow_api_env: bool) -> Result<String, S
     }
 
     get_or_create_install_api_key(app)
+}
+
+fn time_parser_api_key_candidates(app: &AppHandle) -> Result<Vec<String>, String> {
+    let mut candidates = Vec::new();
+    candidates.push(time_parser_api_key(app, false)?);
+    if let Some(api_key) = read_static_api_key_from_api_env() {
+        if !candidates.iter().any(|candidate| candidate == &api_key) {
+            candidates.push(api_key);
+        }
+    }
+    Ok(candidates)
 }
 
 fn get_or_create_install_api_key(app: &AppHandle) -> Result<String, String> {
@@ -269,6 +297,72 @@ fn time_parser_health_check() -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+fn wait_for_time_parser_service(timeout: Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if time_parser_health_check() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
+fn local_time_parser_request(
+    method: &str,
+    path: &str,
+    api_key: &str,
+    body: Option<&str>,
+    timeout: Duration,
+) -> Result<NativeTimeParserResponse, String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(1000))
+        .map_err(|e| format!("Failed to connect to local parser service: {e}"))?;
+
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+
+    let body = body.unwrap_or("");
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: localhost:{TIME_PARSER_PORT}\r\nConnection: close\r\nContent-Type: application/json\r\nx-api-key: {api_key}\r\nx-api-version: 1\r\nContent-Length: {}\r\n\r\n{body}",
+        body.as_bytes().len()
+    );
+
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Failed to write parser request: {e}"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| format!("Failed to read parser response: {e}"))?;
+
+    parse_local_http_json_response(&response)
+}
+
+fn parse_local_http_json_response(response: &str) -> Result<NativeTimeParserResponse, String> {
+    let (headers, body_text) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "Parser response did not contain HTTP headers".to_string())?;
+    let status = headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|status| status.parse::<u16>().ok())
+        .ok_or_else(|| "Parser response did not contain an HTTP status".to_string())?;
+    let body = serde_json::from_str(body_text).unwrap_or_else(|_| {
+        serde_json::json!({
+            "error": "invalid_parser_response",
+            "message": body_text,
+        })
+    });
+    Ok(NativeTimeParserResponse {
+        ok: (200..300).contains(&status),
+        status,
+        body,
+    })
 }
 
 fn supervised_time_parser_disabled() -> bool {
@@ -540,7 +634,7 @@ async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfi
         available = time_parser_health_check();
     }
 
-    let api_key = time_parser_api_key(&app, available && !supervised)?;
+    let api_key = time_parser_api_key(&app, false)?;
 
     let message = if available {
         "Local time parser service is available.".to_string()
@@ -557,6 +651,49 @@ async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfi
         supervised,
         message,
     })
+}
+
+#[tauri::command]
+async fn parse_time_with_local_service(
+    app: AppHandle,
+    request: NativeTimeParserRequest,
+) -> Result<NativeTimeParserResponse, String> {
+    if !time_parser_health_check() && !supervised_time_parser_disabled() {
+        start_time_parser_service(&app);
+        if !wait_for_time_parser_service(Duration::from_secs(8)) {
+            return Err("The local time parser service is still starting.".to_string());
+        }
+    }
+
+    let api_keys = time_parser_api_key_candidates(&app)?;
+    let mut body = serde_json::Map::new();
+    body.insert("text".to_string(), serde_json::Value::String(request.text));
+    body.insert("tz".to_string(), serde_json::Value::String(request.tz));
+    if let Some(now) = request.now {
+        body.insert("now".to_string(), serde_json::Value::String(now));
+    }
+    if let Some(features) = request.features {
+        body.insert("features".to_string(), features);
+    }
+    let body_text = serde_json::to_string(&body)
+        .map_err(|e| format!("Failed to serialize parser request: {e}"))?;
+
+    let mut last_response = None;
+    for api_key in api_keys {
+        let response = local_time_parser_request(
+            "POST",
+            "/parse",
+            &api_key,
+            Some(&body_text),
+            Duration::from_secs(60),
+        )?;
+        if response.status != 401 {
+            return Ok(response);
+        }
+        last_response = Some(response);
+    }
+
+    last_response.ok_or_else(|| "No parser API key candidates were available.".to_string())
 }
 
 fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, String> {
@@ -1086,6 +1223,7 @@ pub fn run() {
             reload_global_shortcuts,
             debug_store_location,
             get_time_parser_config,
+            parse_time_with_local_service,
         ])
         .setup(|app| {
             // Initialize logging

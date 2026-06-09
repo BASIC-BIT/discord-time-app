@@ -9,7 +9,10 @@ from typing import Any
 PROMPT_PRESETS = {
     "detailed": (
         "Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. "
+        "For time ranges, set plan kind=time_range with startStep and endStep candidate steps; explicitly shift overnight end times. "
         "For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. "
+        "For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep. "
+        "Use fixed offsets only for explicit UTC/GMT offsets. Return clarification for ambiguous timezone abbreviations. "
         "For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. "
         "For negative or unsupported-length bare epoch-like numbers, return no_plan. "
         "For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan."
@@ -108,6 +111,8 @@ def compact_plan(plan: dict[str, Any]) -> dict[str, Any]:
         "label": plan["label"],
         "steps": [compact_step(step) for step in plan.get("steps", [])],
     }
+    if plan.get("kind") and plan.get("kind") != "instant":
+        compact["kind"] = plan["kind"]
     if plan.get("rationale") and plan.get("rationale") != plan["label"]:
         compact["rationale"] = plan["rationale"]
     if plan.get("assumptions"):
@@ -116,6 +121,10 @@ def compact_plan(plan: dict[str, Any]) -> dict[str, Any]:
         compact["confidence"] = plan["confidence"]
     if plan.get("finalStep") is not None:
         compact["finalStep"] = plan["finalStep"]
+    if plan.get("startStep") is not None:
+        compact["startStep"] = plan["startStep"]
+    if plan.get("endStep") is not None:
+        compact["endStep"] = plan["endStep"]
     return compact
 
 
@@ -131,6 +140,7 @@ def compact_step(step: dict[str, Any]) -> dict[str, Any]:
         "baseStep",
         "time",
         "timeStep",
+        "timeZoneStep",
         "isoInstant",
         "epochSeconds",
         "timeZone",

@@ -52,6 +52,10 @@ function buildRows(): TemporalIrTrainingRow[] {
         step({ operation: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' }),
       ], 2)]),
     }),
+    ...timezoneSeedRows(),
+    ...timezoneReinforcementSeedRows(),
+    ...timeRangeSeedRows(),
+    ...timeRangeReinforcementSeedRows(),
     row({
       id: 'relative-duration',
       text: 'in 3 days',
@@ -217,7 +221,278 @@ function buildRows(): TemporalIrTrainingRow[] {
       output: planner('no_plan', 'Recurring schedules are intentionally outside the first text-to-IR training target.', []),
     }),
     ...randomRows(randomRowCount),
+];
+}
+
+function timezoneSeedRows(): TemporalIrTrainingRow[] {
+  return [
+    row({
+      id: 'timezone-named-uk-time',
+      text: 'tomorrow at 5pm UK time',
+      tags: ['timezone', 'timezone-named-region', 'explicit-clock'],
+      output: planner('plans', 'Resolve the named timezone and carry it through date and clock composition.', [plan('Tomorrow 5 PM UK time', [
+        step({ operation: 'resolve_timezone', text: 'UK time' }),
+        step({ operation: 'resolve_calendar_query', query: 'tomorrow', timeZoneStep: 0, precision: 'date' }),
+        step({ operation: 'resolve_clock_time', text: '5pm' }),
+        step({ operation: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' }),
+      ], 3)]),
+    }),
+    row({
+      id: 'timezone-fixed-offset-utc-plus-two',
+      text: 'tomorrow at 5pm UTC+2',
+      tags: ['timezone', 'timezone-fixed-offset', 'explicit-clock'],
+      output: planner('plans', 'Resolve the fixed offset and carry it through date and clock composition.', [plan('Tomorrow 5 PM UTC+2', [
+        step({ operation: 'resolve_timezone', text: 'UTC+2' }),
+        step({ operation: 'resolve_calendar_query', query: 'tomorrow', timeZoneStep: 0, precision: 'date' }),
+        step({ operation: 'resolve_clock_time', text: '5pm' }),
+        step({ operation: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' }),
+      ], 3)]),
+    }),
+    row({
+      id: 'timezone-iana-los-angeles',
+      text: 'tomorrow at 5pm America/Los_Angeles',
+      tags: ['timezone', 'timezone-iana', 'explicit-clock'],
+      output: planner('plans', 'Resolve the IANA timezone and carry it through date and clock composition.', [plan('Tomorrow 5 PM Los Angeles', [
+        step({ operation: 'resolve_timezone', text: 'America/Los_Angeles' }),
+        step({ operation: 'resolve_calendar_query', query: 'tomorrow', timeZoneStep: 0, precision: 'date' }),
+        step({ operation: 'resolve_clock_time', text: '5pm' }),
+        step({ operation: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' }),
+      ], 3)]),
+    }),
+    row({
+      id: 'timezone-ambiguous-cst',
+      text: 'tomorrow at 5pm CST',
+      tags: ['timezone', 'timezone-ambiguous-abbreviation', 'clarification'],
+      output: planner('clarification', 'CST is ambiguous across multiple timezones.', [], 'Which timezone did you mean by CST?'),
+    }),
   ];
+}
+
+function timezoneReinforcementSeedRows(): TemporalIrTrainingRow[] {
+  const zoneTexts = [
+    { id: 'iana-los-angeles', text: 'America/Los_Angeles', label: 'Los Angeles' },
+    { id: 'iana-london', text: 'Europe/London', label: 'London' },
+    { id: 'iana-tokyo', text: 'Asia/Tokyo', label: 'Tokyo' },
+    { id: 'named-pacific', text: 'Pacific time', label: 'Pacific time' },
+    { id: 'named-eastern', text: 'Eastern time', label: 'Eastern time' },
+    { id: 'named-uk', text: 'UK time', label: 'UK time' },
+    { id: 'named-japan', text: 'Japan time', label: 'Japan time' },
+    { id: 'offset-utc-plus-2', text: 'UTC+2', label: 'UTC+2' },
+    { id: 'offset-utc-minus-5', text: 'UTC-05:00', label: 'UTC-05:00' },
+    { id: 'offset-gmt-plus-530', text: 'GMT+05:30', label: 'GMT+05:30' },
+  ];
+  const dateClockPatterns = [
+    { id: 'tomorrow-5pm-suffix', text: (zone: string) => `tomorrow at 5pm ${zone}`, query: 'tomorrow', clock: '5pm', label: 'Tomorrow 5 PM' },
+    { id: 'tomorrow-5pm-prefix', text: (zone: string) => `${zone} tomorrow at 5pm`, query: 'tomorrow', clock: '5pm', label: 'Tomorrow 5 PM' },
+    { id: 'next-saturday-1337-suffix', text: (zone: string) => `next saturday at 13:37 ${zone}`, query: 'next saturday', clock: '13:37', label: 'Next Saturday 13:37' },
+    { id: 'may-29-8pm-suffix', text: (zone: string) => `May 29 2026 8pm ${zone}`, query: 'May 29 2026', clock: '8pm', label: 'May 29 2026 8 PM' },
+  ];
+  const rows = zoneTexts.flatMap((zone, zoneIndex) => dateClockPatterns.map((pattern, patternIndex) => timezoneCompositionRow({
+    id: `timezone-reinforce-${zone.id}-${pattern.id}`,
+    text: pattern.text(zone.text),
+    zoneText: zone.text,
+    query: pattern.query,
+    clockText: pattern.clock,
+    label: `${pattern.label} ${zone.label}`,
+    split: zoneIndex < 8 || patternIndex < 2 ? 'train' : 'validation',
+  })));
+
+  return [
+    ...rows,
+    ...zoneTexts.slice(0, 6).map((zone) => timezoneShiftRow({
+      id: `timezone-reinforce-day-after-next-saturday-${zone.id}`,
+      text: `day after next saturday at 13:37 ${zone.text}`,
+      zoneText: zone.text,
+      split: 'train',
+    })),
+    ...['CST', 'IST', 'BST', 'CT', 'CDT', 'Central time or China time'].map((abbr, index) => timezoneAmbiguityRow({
+      id: `timezone-abbreviation-clarification-${index + 1}`,
+      text: `tomorrow at 5pm ${abbr}`,
+      abbreviation: abbr,
+      split: index < 5 ? 'train' : 'validation',
+    })),
+  ];
+}
+
+function timezoneCompositionRow(spec: {
+  id: string;
+  text: string;
+  zoneText: string;
+  query: string;
+  clockText: string;
+  label: string;
+  split: Split;
+}): TemporalIrTrainingRow {
+  return row({
+    id: spec.id,
+    text: spec.text,
+    split: spec.split,
+    tags: ['timezone', 'timezone-step-index', 'timezone-weighted', 'explicit-clock'],
+    output: planner('plans', 'Resolve the timezone first, then carry timeZoneStep through the date and final composition steps.', [plan(spec.label, [
+      step({ operation: 'resolve_timezone', text: spec.zoneText }),
+      step({ operation: 'resolve_calendar_query', query: spec.query, timeZoneStep: 0, precision: 'date' }),
+      step({ operation: 'resolve_clock_time', text: spec.clockText }),
+      step({ operation: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' }),
+    ], 3)]),
+  });
+}
+
+function timezoneShiftRow(spec: { id: string; text: string; zoneText: string; split: Split }): TemporalIrTrainingRow {
+  return row({
+    id: spec.id,
+    text: spec.text,
+    split: spec.split,
+    tags: ['timezone', 'timezone-step-index', 'timezone-weighted', 'weekday-anchor', 'offset', 'explicit-clock'],
+    output: planner('plans', 'Resolve the timezone first, apply it to the anchor, then carry it through the shifted final candidate.', [plan('Day after next Saturday 13:37 with timezone', [
+      step({ operation: 'resolve_timezone', text: spec.zoneText }),
+      step({ operation: 'resolve_calendar_query', query: 'next saturday', timeZoneStep: 0, precision: 'date' }),
+      step({ operation: 'resolve_clock_time', text: '13:37' }),
+      step({ operation: 'shift_datetime', baseStep: 1, timeStep: 2, timeZoneStep: 0, delta: delta({ days: 1 }), precision: 'datetime' }),
+    ], 3)]),
+  });
+}
+
+function timezoneAmbiguityRow(spec: { id: string; text: string; abbreviation: string; split: Split }): TemporalIrTrainingRow {
+  return row({
+    id: spec.id,
+    text: spec.text,
+    split: spec.split,
+    tags: ['timezone', 'timezone-ambiguous-abbreviation', 'timezone-weighted', 'clarification'],
+    output: planner('clarification', `${spec.abbreviation} is ambiguous across multiple timezones.`, [], `Which timezone did you mean by ${spec.abbreviation}?`),
+  });
+}
+
+function timeRangeSeedRows(): TemporalIrTrainingRow[] {
+  return [
+    timeRangeRow({ id: 'range-relative-same-day-hyphen', text: 'tomorrow 3pm-5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', label: 'Tomorrow 3 PM to 5 PM', split: 'train' }),
+    timeRangeRow({ id: 'range-relative-same-day-from-to', text: 'tomorrow from 3pm to 5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', label: 'Tomorrow 3 PM to 5 PM', split: 'train' }),
+    timeRangeRow({ id: 'range-weekday-same-day', text: 'Friday 8pm-10:30pm', query: 'Friday', startClock: '8pm', endClock: '10:30pm', label: 'Friday 8 PM to 10:30 PM', split: 'train' }),
+    timeRangeRow({ id: 'range-explicit-date-same-day', text: 'May 29 2026 8pm-10:30pm', query: 'May 29 2026', startClock: '8pm', endClock: '10:30pm', label: 'May 29 8 PM to 10:30 PM', split: 'validation' }),
+    timeRangeRow({ id: 'range-24h-same-day', text: 'tomorrow 13:00-15:30', query: 'tomorrow', startClock: '13:00', endClock: '15:30', label: 'Tomorrow 13:00 to 15:30', split: 'holdout' }),
+    timeRangeRow({ id: 'range-overnight-explicit', text: 'Friday 11pm-1am', query: 'Friday', startClock: '11pm', endClock: '1am', label: 'Friday 11 PM to Saturday 1 AM', overnight: true, split: 'train' }),
+    timeRangeRow({ id: 'range-timezone-named-uk', text: 'tomorrow 3pm-5pm UK time', query: 'tomorrow', startClock: '3pm', endClock: '5pm', zoneText: 'UK time', label: 'Tomorrow 3 PM to 5 PM UK time', split: 'train' }),
+    timeRangeRow({ id: 'range-timezone-fixed-offset', text: 'tomorrow 3pm-5pm UTC+2', query: 'tomorrow', startClock: '3pm', endClock: '5pm', zoneText: 'UTC+2', label: 'Tomorrow 3 PM to 5 PM UTC+2', split: 'validation' }),
+    timeRangeRow({ id: 'range-timezone-iana', text: 'May 25 2026 3pm-5pm America/Los_Angeles', query: 'May 25 2026', startClock: '3pm', endClock: '5pm', zoneText: 'America/Los_Angeles', label: 'May 25 3 PM to 5 PM Los Angeles', split: 'holdout' }),
+    nextWeekdayRangeClarificationRow({ id: 'range-next-weekday-clarification', text: 'next saturday 3pm-5pm', weekday: 'saturday', startClock: '3pm', endClock: '5pm', split: 'train' }),
+    unsupportedRangeRow('range-date-span-unsupported', 'Tuesday through Thursday', 'A date span without exact endpoint times is not a single timestamp range.', 'validation'),
+    unsupportedRangeRow('range-schedule-block-unsupported', 'Tuesday through Thursday 3pm-5pm', 'Repeated schedule blocks are not a single continuous timestamp range.', 'holdout'),
+  ];
+}
+
+function timeRangeReinforcementSeedRows(): TemporalIrTrainingRow[] {
+  const specs = [
+    { id: 'tmw-hyphen', text: 'tmw 3pm-5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', label: 'Tomorrow 3 PM to 5 PM', tags: ['relative-typo', 'shorthand'] },
+    { id: 'tomorow-to', text: 'tomorow 3pm to 5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', label: 'Tomorrow 3 PM to 5 PM', tags: ['relative-typo'] },
+    { id: 'between-and', text: 'between 4:15pm and 6:45pm tomorrow', query: 'tomorrow', startClock: '4:15pm', endClock: '6:45pm', label: 'Tomorrow 4:15 PM to 6:45 PM', tags: ['connector-between'] },
+    { id: 'until', text: 'tomorrow 9am until 11am', query: 'tomorrow', startClock: '9am', endClock: '11am', label: 'Tomorrow 9 AM to 11 AM', tags: ['connector-until'] },
+    { id: 'spaced-hyphen', text: 'May 29 2026 8 pm - 10 pm', query: 'May 29 2026', startClock: '8 pm', endClock: '10 pm', label: 'May 29 8 PM to 10 PM', tags: ['whitespace'] },
+    { id: 'dash-word-noise', text: 'raid is friday 8pm - 10pm pls', query: 'friday', startClock: '8pm', endClock: '10pm', label: 'Friday 8 PM to 10 PM', tags: ['event-noise'] },
+    { id: 'date-leading', text: 'May 29th, 2026 from 20:00 to 22:30', query: 'May 29 2026', startClock: '20:00', endClock: '22:30', label: 'May 29 20:00 to 22:30', tags: ['clock-24h'] },
+    { id: 'overnight-word-to', text: 'friday 11:30pm to 1:15am', query: 'friday', startClock: '11:30pm', endClock: '1:15am', label: 'Friday 11:30 PM to Saturday 1:15 AM', overnight: true, tags: ['overnight'] },
+    { id: 'overnight-noise', text: 'set frii 11pm-1am thanks', query: 'friday', startClock: '11pm', endClock: '1am', label: 'Friday 11 PM to Saturday 1 AM', overnight: true, tags: ['overnight', 'weekday-typo', 'noise'] },
+    { id: 'timezone-prefix', text: 'UK time tomorrow 3pm-5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', zoneText: 'UK time', label: 'Tomorrow 3 PM to 5 PM UK time', tags: ['timezone'] },
+    { id: 'timezone-pacific', text: 'Pacific time May 29 2026 8pm-10pm', query: 'May 29 2026', startClock: '8pm', endClock: '10pm', zoneText: 'Pacific time', label: 'May 29 8 PM to 10 PM Pacific time', tags: ['timezone'] },
+    { id: 'timezone-offset-noise', text: 'tomorrow 13:00-15:30 GMT+05:30 sharp', query: 'tomorrow', startClock: '13:00', endClock: '15:30', zoneText: 'GMT+05:30', label: 'Tomorrow 13:00 to 15:30 GMT+05:30', tags: ['timezone', 'clock-24h', 'noise'] },
+  ] as const;
+
+  const weighted = specs.flatMap((spec, index) => [0, 1].map((copy) => timeRangeRow({
+    id: `range-reinforce-${spec.id}-${copy + 1}`,
+    text: spec.text,
+    query: spec.query,
+    startClock: spec.startClock,
+    endClock: spec.endClock,
+    label: spec.label,
+    zoneText: spec.zoneText,
+    overnight: spec.overnight,
+    tags: [...spec.tags, 'time-range-weighted'],
+    split: index < 10 || copy === 0 ? 'train' : 'validation',
+  })));
+
+  return [
+    ...weighted,
+    nextWeekdayRangeClarificationRow({ id: 'range-reinforce-next-saturday-from-to', text: 'next saturday from 3pm to 5pm', weekday: 'saturday', startClock: '3pm', endClock: '5pm', split: 'train' }),
+    nextWeekdayRangeClarificationRow({ id: 'range-reinforce-next-friday-hyphen', text: 'next friday 4pm-6pm', weekday: 'friday', startClock: '4pm', endClock: '6pm', split: 'train' }),
+    nextWeekdayRangeClarificationRow({ id: 'range-reinforce-next-monday-24h', text: 'next monday 09:00-11:00', weekday: 'monday', startClock: '09:00', endClock: '11:00', split: 'train' }),
+    unsupportedRangeRow('range-reinforce-date-span-exact', 'Tuesday through Thursday', 'A date span without exact endpoint times is not a single timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-date-span-weekdays', 'Monday through Wednesday', 'A date span without exact endpoint times is not a single timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-date-span-thru', 'Tue thru Thu', 'A date span without exact endpoint times is not a single timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-date-span-to', 'Friday to Sunday', 'A date span without exact endpoint times is not a single timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-date-span-noise', 'tues thru thurs maybe 3-5', 'Ambiguous schedule blocks are not a single continuous timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-recurring-range', 'every friday 3pm-5pm', 'Recurring time ranges are outside the first range target.', 'train'),
+  ];
+}
+
+function timeRangeRow(spec: {
+  id: string;
+  text: string;
+  query: string;
+  startClock: string;
+  endClock: string;
+  label: string;
+  zoneText?: string;
+  overnight?: boolean;
+  tags?: string[];
+  split: Split;
+}): TemporalIrTrainingRow {
+  return row({
+    id: spec.id,
+    text: spec.text,
+    split: spec.split,
+    tags: ['time-range', 'explicit-clock', ...(spec.overnight ? ['overnight'] : []), ...(spec.zoneText === undefined ? [] : ['timezone']), ...(spec.tags ?? [])],
+    output: planner('plans', 'Resolve the shared anchor and each endpoint clock, then return a first-class time_range plan.', [timeRangePlan(spec)]),
+  });
+}
+
+function timeRangePlan(spec: { query: string; startClock: string; endClock: string; label: string; zoneText?: string; overnight?: boolean }): TemporalPlan {
+  const steps: TemporalPlanStep[] = [];
+  let timeZoneStep: number | null = null;
+  if (spec.zoneText !== undefined) {
+    timeZoneStep = steps.length;
+    steps.push(step({ operation: 'resolve_timezone', text: spec.zoneText }));
+  }
+  const dateStep = steps.length;
+  steps.push(step({ operation: 'resolve_calendar_query', query: spec.query, timeZoneStep, precision: 'date' }));
+  const startClockStep = steps.length;
+  steps.push(step({ operation: 'resolve_clock_time', text: spec.startClock }));
+  const endClockStep = steps.length;
+  steps.push(step({ operation: 'resolve_clock_time', text: spec.endClock }));
+  const startStep = steps.length;
+  steps.push(step({ operation: 'combine_date_time', baseStep: dateStep, timeStep: startClockStep, timeZoneStep, precision: 'datetime' }));
+  let endStep = steps.length;
+  steps.push(step({ operation: 'combine_date_time', baseStep: dateStep, timeStep: endClockStep, timeZoneStep, precision: 'datetime' }));
+  if (spec.overnight) {
+    const overnightEndStep = steps.length;
+    steps.push(step({ operation: 'shift_datetime', baseStep: endStep, timeZoneStep, delta: delta({ days: 1 }), precision: 'datetime' }));
+    endStep = overnightEndStep;
+  }
+  return rangePlan(spec.label, steps, startStep, endStep);
+}
+
+function nextWeekdayRangeClarificationRow(spec: { id: string; text: string; weekday: TemporalPlanStep['weekday']; startClock: string; endClock: string; split: Split }): TemporalIrTrainingRow {
+  const steps = [
+    step({ operation: 'resolve_weekday_anchor', weekday: spec.weekday, weekdayAnchor: 'next_ambiguous', precision: 'date' }),
+    step({ operation: 'resolve_clock_time', text: spec.startClock }),
+    step({ operation: 'resolve_clock_time', text: spec.endClock }),
+    step({ operation: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' }),
+    step({ operation: 'combine_date_time', baseStep: 0, timeStep: 2, precision: 'datetime' }),
+  ];
+  return row({
+    id: spec.id,
+    text: spec.text,
+    split: spec.split,
+    tags: ['time-range', 'weekday-anchor', 'ambiguity', 'explicit-clock'],
+    output: planner('clarification', 'Top-level next weekday range is materially ambiguous.', [rangePlan(`Which ${title(spec.weekday ?? 'weekday')} ${spec.startClock} to ${spec.endClock}?`, steps, 3, 4)], `Do you mean the upcoming ${spec.weekday} range or the ${spec.weekday} after that?`),
+  });
+}
+
+function unsupportedRangeRow(id: string, text: string, reason: string, split: Split): TemporalIrTrainingRow {
+  return row({
+    id,
+    text,
+    split,
+    tags: ['time-range', 'unsupported'],
+    output: planner('no_plan', reason, []),
+  });
 }
 
 function row(input: Omit<TemporalIrTrainingRow, 'split' | 'input'> & { text: string; split?: Split; referenceInstant?: string; timeZone?: string }): TemporalIrTrainingRow {
@@ -272,11 +547,13 @@ function randomRows(count: number): TemporalIrTrainingRow[] {
     randomMonthTypoDateClock,
     randomNoisyHumanInput,
     randomDateSeparatorVariant,
+    randomTimeRange,
     randomWhitespaceCasingVariant,
     randomCompoundTypoAnchorOffsetClock,
     randomCompoundRelativeLeet,
     randomWeekdayTypoClock,
     randomRelativeOffset,
+    randomTimeRange,
     randomBoundarySnap,
     randomRelativeTypoClock,
     randomMonthTypoDateClock,
@@ -296,6 +573,7 @@ function randomRows(count: number): TemporalIrTrainingRow[] {
     randomNoisyEventPost,
     randomUnsupportedEpoch,
     randomChainedDayAfterTomorrow,
+    randomTimeRange,
     randomUnsupportedEpoch,
     randomChainedDayAfterTomorrow,
   ];
@@ -1586,6 +1864,40 @@ function randomDateSeparatorVariant(index: number, rng: () => number): TemporalI
   });
 }
 
+function randomTimeRange(index: number, rng: () => number): TemporalIrTrainingRow {
+  const anchor = pick([
+    { text: 'tomorrow', query: 'tomorrow', tags: ['relative'] },
+    { text: 'tmw', query: 'tomorrow', tags: ['relative', 'relative-typo', 'shorthand'] },
+    { text: 'friday', query: 'friday', tags: ['weekday-anchor'] },
+    { text: 'May 29 2026', query: 'May 29 2026', tags: ['explicit-date'] },
+  ], rng);
+  const clocks = pick([
+    { start: '3pm', end: '5pm', label: '3 PM to 5 PM', tags: [] },
+    { start: '4:15pm', end: '6:45pm', label: '4:15 PM to 6:45 PM', tags: [] },
+    { start: '13:00', end: '15:30', label: '13:00 to 15:30', tags: ['clock-24h'] },
+    { start: '8pm', end: '10pm', label: '8 PM to 10 PM', tags: [] },
+  ], rng);
+  const connector = pick([
+    `${anchor.text} ${clocks.start}-${clocks.end}`,
+    `${anchor.text} from ${clocks.start} to ${clocks.end}`,
+    `${anchor.text} ${clocks.start} until ${clocks.end}`,
+    `between ${clocks.start} and ${clocks.end} ${anchor.text}`,
+  ], rng);
+  const zone = rng() < 0.25 ? pick(['UK time', 'Pacific time', 'UTC+2'], rng) : undefined;
+  const text = maybeDirty(dirtySpacing(`${connector}${zone === undefined ? '' : ` ${zone}`}`, rng), rng);
+  return timeRangeRow({
+    id: `random-time-range-${index}`,
+    text,
+    query: anchor.query,
+    startClock: clocks.start,
+    endClock: clocks.end,
+    label: `${title(anchor.query)} ${clocks.label}${zone === undefined ? '' : ` ${zone}`}`,
+    zoneText: zone,
+    tags: ['random', ...anchor.tags, ...clocks.tags],
+    split: splitForRandomIndex(index),
+  });
+}
+
 function randomNoisyEventPost(index: number, rng: () => number): TemporalIrTrainingRow {
   const month = pick(['May', 'June', 'July'], rng);
   const day = randomInt(1, 28, rng);
@@ -2097,11 +2409,28 @@ function planner(
 
 function plan(label: string, steps: TemporalPlanStep[], finalStep: number | null = null, confidence = 0.9): TemporalPlan {
   return {
+    kind: 'instant',
     label,
     rationale: label,
     assumptions: [],
     confidence,
     finalStep,
+    startStep: null,
+    endStep: null,
+    steps,
+  };
+}
+
+function rangePlan(label: string, steps: TemporalPlanStep[], startStep: number, endStep: number, confidence = 0.9): TemporalPlan {
+  return {
+    kind: 'time_range',
+    label,
+    rationale: label,
+    assumptions: [],
+    confidence,
+    finalStep: null,
+    startStep,
+    endStep,
     steps,
   };
 }
@@ -2118,6 +2447,7 @@ function step(overrides: Partial<TemporalPlanStep> & Pick<TemporalPlanStep, 'ope
     baseStep: overrides.baseStep ?? null,
     time: overrides.time ?? null,
     timeStep: overrides.timeStep ?? null,
+    timeZoneStep: overrides.timeZoneStep ?? null,
     delta: overrides.delta ?? delta({}),
     isoInstant: overrides.isoInstant ?? null,
     epochSeconds: overrides.epochSeconds ?? null,

@@ -5,8 +5,10 @@ import { invoke } from '@tauri-apps/api/core';
 
 export interface ParseResponse {
   generationId: string;
+  kind?: 'instant' | 'time_range';
   epoch: number;
   suggestedFormatIndex: number;
+  range?: ParseRangeResult;
   confidence: number;
   method: string;
   canonical?: ParseCanonical;
@@ -22,10 +24,24 @@ export interface ParseCanonical {
 
 export interface ParseAlternative {
   label: string;
+  kind?: 'instant' | 'time_range';
   epoch: number;
   suggestedFormatIndex: number;
+  range?: ParseRangeResult;
   confidence: number;
   method: string;
+}
+
+export interface ParseRangeEndpoint {
+  epoch: number;
+  suggestedFormatIndex: number;
+  canonical: ParseCanonical;
+}
+
+export interface ParseRangeResult {
+  start: ParseRangeEndpoint;
+  end: ParseRangeEndpoint;
+  discord: string;
 }
 
 export interface ParseError {
@@ -83,6 +99,7 @@ export class TimeParserUnavailableError extends Error {
 
 const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8857';
 const DEFAULT_UNAVAILABLE_MESSAGE = 'The local time parser service is not running yet. HammerOverlay will keep using local fallback parsing until it is available.';
+const STARTUP_RETRY_DELAYS_MS = [250, 750, 1500];
 
 interface TimeParserRuntimeConfig {
   baseUrl: string;
@@ -90,6 +107,12 @@ interface TimeParserRuntimeConfig {
   available: boolean;
   supervised: boolean;
   message: string;
+}
+
+interface NativeTimeParserResponse {
+  ok: boolean;
+  status: number;
+  body: unknown;
 }
 
 export class TimeParserAPIClient {
@@ -119,9 +142,14 @@ export class TimeParserAPIClient {
       ...(options?.ordinalWeekdayGrammar === undefined ? {} : { ordinalWeekdayGrammar: options.ordinalWeekdayGrammar }),
       ...(options?.semanticConsistencyGate === undefined ? {} : { semanticConsistencyGate: options.semanticConsistencyGate }),
     };
+
+    const nativeResult = await this.parseTimeWithNativeBridge(text, timezone, featureOverrides, abortSignal);
+    if (nativeResult !== null) {
+      return nativeResult;
+    }
     
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithStartupRetry(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -142,15 +170,7 @@ export class TimeParserAPIClient {
       }
 
       const data = await response.json() as ParseResponse;
-      
-      // Validate response
-      if (
-        typeof data.generationId !== 'string' ||
-        typeof data.epoch !== 'number' ||
-        typeof data.suggestedFormatIndex !== 'number' ||
-        typeof data.confidence !== 'number' ||
-        typeof data.method !== 'string'
-      ) {
+      if (!isValidParseResponse(data)) {
         throw new Error('Invalid API response format');
       }
 
@@ -172,12 +192,64 @@ export class TimeParserAPIClient {
     }
   }
 
+  private async parseTimeWithNativeBridge(
+    text: string,
+    timezone: string,
+    featureOverrides: Record<string, boolean>,
+    abortSignal?: AbortSignal,
+  ): Promise<ParseResponse | null> {
+    if (abortSignal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+
+    let nativeResponse: NativeTimeParserResponse;
+    try {
+      nativeResponse = await invoke<NativeTimeParserResponse>('parse_time_with_local_service', {
+        request: {
+          text,
+          tz: timezone,
+          ...(Object.keys(featureOverrides).length === 0 ? {} : { features: featureOverrides }),
+        },
+      });
+    } catch (error) {
+      console.log('Native parser bridge unavailable, falling back to fetch:', error);
+      return null;
+    }
+
+    if (abortSignal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+
+    if (!nativeResponse.ok) {
+      const errorData = nativeResponse.body as ParseError;
+      throw new TimeParserAPIError(
+        errorData.message || `API error: ${nativeResponse.status}`,
+        nativeResponse.status,
+        errorData.error,
+        errorData.alternatives,
+        errorData.generationId,
+      );
+    }
+
+    const data = nativeResponse.body as ParseResponse;
+    if (!isValidParseResponse(data)) {
+      throw new Error('Invalid native API response format');
+    }
+
+    return data;
+  }
+
   /**
    * Health check endpoint
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/health`);
+      const response = await fetchWithStartupRetry(`${this.baseUrl}/health`, {
+        headers: {
+          'x-api-key': this.apiKey,
+          'x-api-version': this.apiVersion,
+        },
+      });
       return response.ok;
     } catch {
       return false;
@@ -232,6 +304,73 @@ export class TimeParserAPIClient {
 
     return data;
   }
+}
+
+function isValidParseResponse(data: ParseResponse): boolean {
+  return typeof data.generationId === 'string' &&
+    typeof data.epoch === 'number' &&
+    typeof data.suggestedFormatIndex === 'number' &&
+    typeof data.confidence === 'number' &&
+    typeof data.method === 'string' &&
+    (data.kind !== 'time_range' || isValidParseRange(data.range));
+}
+
+async function fetchWithStartupRetry(url: string, init: RequestInit): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= STARTUP_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+      lastError = error;
+      const delayMs = STARTUP_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined) {
+        break;
+      }
+      await waitForRetry(delayMs, init.signal);
+    }
+  }
+  throw lastError;
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal | null): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      window.clearTimeout(timeoutId);
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+function isValidParseRange(range: ParseRangeResult | undefined): range is ParseRangeResult {
+  return range !== undefined &&
+    typeof range.discord === 'string' &&
+    isValidParseRangeEndpoint(range.start) &&
+    isValidParseRangeEndpoint(range.end);
+}
+
+function isValidParseRangeEndpoint(endpoint: ParseRangeEndpoint | undefined): endpoint is ParseRangeEndpoint {
+  return endpoint !== undefined &&
+    typeof endpoint.epoch === 'number' &&
+    typeof endpoint.suggestedFormatIndex === 'number' &&
+    endpoint.canonical !== undefined &&
+    typeof endpoint.canonical.isoInstant === 'string' &&
+    typeof endpoint.canonical.zonedDateTime === 'string' &&
+    typeof endpoint.canonical.timeZone === 'string' &&
+    typeof endpoint.canonical.precision === 'string';
 }
 
 async function getTauriTimeParserConfig(): Promise<TimeParserRuntimeConfig | null> {

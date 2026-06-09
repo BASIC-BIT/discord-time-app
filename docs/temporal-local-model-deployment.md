@@ -13,7 +13,7 @@ The API should use these local settings:
 ```env
 TEMPORAL_FEATURE_PLAN_IR=true
 TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-time-range-2687
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -29,7 +29,7 @@ When changing the deployed local adapter, update `scripts/start-temporal-peft-se
 $env:PATH = "C:\ProgramData\nvm\v24.15.0;$env:PATH"
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8765/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
@@ -38,13 +38,13 @@ $env:TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS = "60000"
 npm --prefix api run eval:temporal
 ```
 
-Current local adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-noisy-input-2586-lora`.
+Current local adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`.
 
-Current gate result: `136/136` required and `1/1` diagnostic on the promoted production local endpoint at `http://127.0.0.1:8765/v1`. The latest promoted diagnostic is `first of Febuarysdf 2:30`, which returns AM/PM clarification after SLM typo recovery instead of a wrong singular answer. Current promoted endpoint latency from that gate: first-correct median `1017ms`, p95 `2294ms`; final median `1156ms`, p95 `3214ms`; prewarm `24137ms`. Keep `TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000` until clarification output is shortened.
+Current gate result: `153/153` required and `1/1` diagnostic on the promoted production local endpoint at `http://127.0.0.1:8765/v1`. The latest promoted diagnostic is `first of Febuarysdf 2:30`, which returns AM/PM clarification after SLM typo recovery instead of a wrong singular answer. Current promoted endpoint latency from that gate: first-correct median `1306ms`, p95 `3605ms`; final median `1536ms`, p95 `4466ms`; prewarm `29159ms`. Keep `TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000` until clarification output is shortened.
 
 Semantic Consistency Gate validation: local v4h endpoint plus OpenAI-backed gate passed `131/131`. First-correct display median/p95 was `1669ms`/`4851ms`; final verifier median/p95 was `9447ms`/`22329ms`. Keep `TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE=false` for blocking parse mode by default. Product UX should use asynchronous post-display verification through `/parse/verify` so the first correct answer is shown before the verifier finishes.
 
-Current expanded suite: `136` required cases after adding bare whole-input `13`-`23` hour coverage, the month-boundary explicit-clock canary `5pm the first of last month`, ordinal-weekday explicit-month canaries for `first tuesday of July`, and bare-minute AM/PM clarification canaries. The regenerated expanded dataset has `2586` rows with splits `2051/271/264`; the promoted adapter was trained on that dataset after adding bounded noisy-human-input rows for typo variants, suffix junk, spacing/run-together damage, repeated/missing/transposed letters, keyboard-adjacent substitutions, negative epoch-like rejection reinforcement, and leading-clock last-month reinforcement. v4g remains the prior passing baseline for the `129`-case month-boundary and boundary-snap suite. v4h adds bare `19` before-target and after-target-rollover canaries without adding runtime SLM bypasses, and remains the rollback adapter if the Qwen3.5 Docker path is unavailable.
+Current expanded suite: `153` required cases after adding first-class `time_range` coverage for same-day ranges, 24-hour ranges, overnight ranges, timezone ranges, next-weekday range clarification, and unsupported date-span/schedule-block rejection on top of first-class timezone coverage and the earlier bare-hour, month-boundary, ordinal-weekday, noisy-input, and bare-minute ambiguity canaries. The regenerated expanded dataset has `2687` rows with splits `2138/281/268`; the promoted adapter was trained on that dataset after adding range reinforcement for next-weekday ambiguity and unsupported date spans. The previous timezone-step `2642` adapter remains the rollback adapter for non-range behavior; v4h remains the rollback adapter if the Qwen3.5 Docker path is unavailable.
 
 Durable adapter/model comparison notes live in `docs/temporal-model-benchmark-log.md`.
 
@@ -65,13 +65,13 @@ npm --prefix api run eval:temporal
 
 Do not switch Qwen3.5 serving to `-NoLoadIn4Bit` based on speed alone. The bf16/non-4-bit endpoint was much faster (`95/131`, median `1397ms`, p95 `2425ms`) but failed required clarification/composition cases. The 4-bit endpoint was slower but passed the full gate (`131/131`, median `2354ms`, p95 `6185ms`) after prewarm with `max_tokens=512`.
 
-For current Qwen3.5 bf16/chat adapters, stage on a non-production port with both chat prompt formatting and bf16 loading before changing the canonical launcher. Latest noisy-input staged result on `127.0.0.1:8769`: `136/136` required and `1/1` diagnostic, first-correct median `986ms`, p95 `2146ms`, final p95 `3187ms`, prewarm `24154ms`.
+For current Qwen3.5 bf16/chat adapters, stage on a non-production port with both chat prompt formatting and bf16 loading before changing the canonical launcher. Latest time-range staged result on `127.0.0.1:8769`: `153/153` required and `1/1` diagnostic, first-correct median `1125ms`, p95 `3087ms`, final median `1311ms`, final p95 `3523ms`, prewarm `28361ms`.
 
 ```powershell
-.\scripts\start-temporal-peft-server-container.ps1 -AdapterPath "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-noisy-input-2586-lora" -ModelName "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586" -Port 8769 -PromptFormat chat -NoLoadIn4Bit
+.\scripts\start-temporal-peft-server-container.ps1 -AdapterPath "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora" -ModelName "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687" -Port 8769 -PromptFormat chat -NoLoadIn4Bit
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8769/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
@@ -101,27 +101,29 @@ $env:TEMPORAL_IR_CHECK_MIX_ONLY = "1"
 python ml\temporal-ir\train_unsloth.py
 ```
 
-2. Train to a new adapter directory. Never reuse the currently deployed adapter directory.
+2. Train to a new adapter directory. Never reuse the currently deployed adapter directory. For current Qwen3.5 bf16/chat adapters, use the Docker CUDA lane so the command runs from the current checkout instead of a hardcoded WSL path.
 
 ```powershell
-wsl.exe -d Ubuntu-24.04 --cd /mnt/d/bench/discord-time-app-src -- bash -lc "source .venv-temporal-ir/bin/activate && TEMPORAL_IR_OUTPUT_DIR=ml/temporal-ir/outputs/<new-adapter-name> TEMPORAL_IR_INSTRUCTION_PRESET=minimal python ml/temporal-ir/train_unsloth.py"
+.\scripts\start-temporal-ir-training-container.ps1 -AdapterName "<new-adapter-name>" -PromptFormat chat -NoLoadIn4Bit
+.\scripts\start-temporal-ir-training-container.ps1 -AdapterName "<new-adapter-name>" -Status -Tail 40
 ```
 
 3. Export eval input with an absolute Windows path. Avoid repo-relative paths here because `npm --prefix api` can make path expectations easy to misread.
 
 ```powershell
-$env:TEMPORAL_EVAL_EXPORT_INPUT = "D:\bench\discord-time-app-src\api\reports\temporal-ml\temporal-eval-<adapter-name>-input.jsonl"
+$repoRoot = (Resolve-Path .).Path
+$env:TEMPORAL_EVAL_EXPORT_INPUT = Join-Path $repoRoot "api\reports\temporal-ml\temporal-eval-<adapter-name>-input.jsonl"
 $env:TEMPORAL_EVAL_BASELINES = ""
 $env:TEMPORAL_EVAL_MODELS = ""
 npm --prefix api run eval:temporal
 ```
 
-4. Generate offline PEFT predictions from WSL using the matching `/mnt/d/...` paths, then score them with `trained-plan`.
+4. Generate offline predictions with the same Docker image/cache volumes used for training, then score them with `trained-plan`. For bf16/chat adapters, use `predict_unsloth.py` with `TEMPORAL_IR_MODEL_DIR`, `TEMPORAL_IR_PROMPT_FORMAT=chat`, and `TEMPORAL_IR_NO_LOAD_IN_4BIT=1`; `predict_peft.py` is the older plain PEFT path.
 
 ```powershell
-wsl.exe -d Ubuntu-24.04 --cd /mnt/d/bench/discord-time-app-src -- bash -lc "source .venv-temporal-ir/bin/activate && TEMPORAL_IR_ADAPTER_DIR=ml/temporal-ir/outputs/<new-adapter-name> TEMPORAL_IR_INSTRUCTION_PRESET=minimal TEMPORAL_IR_PREDICT_INPUT=/mnt/d/bench/discord-time-app-src/api/reports/temporal-ml/temporal-eval-<adapter-name>-input.jsonl TEMPORAL_IR_PREDICT_OUTPUT=/mnt/d/bench/discord-time-app-src/api/reports/temporal-ml/temporal-eval-<adapter-name>-predictions.jsonl python ml/temporal-ir/predict_peft.py"
+docker run --rm --gpus all --workdir /workspace --volume "${repoRoot}:/workspace" --volume temporal-ir-hf-cache:/cache/huggingface --volume temporal-ir-uv-cache:/cache/uv --env TEMPORAL_IR_MODEL_DIR="ml/temporal-ir/outputs/<new-adapter-name>" --env TEMPORAL_IR_INSTRUCTION_PRESET=minimal --env TEMPORAL_IR_PROMPT_FORMAT=chat --env TEMPORAL_IR_NO_LOAD_IN_4BIT=1 --env TEMPORAL_IR_PREDICT_INPUT="api/reports/temporal-ml/temporal-eval-<adapter-name>-input.jsonl" --env TEMPORAL_IR_PREDICT_OUTPUT="api/reports/temporal-ml/temporal-eval-<adapter-name>-predictions.jsonl" hammer-overlay-temporal-ir-qwen35:cuda12.8 python ml/temporal-ir/predict_unsloth.py
 $env:TEMPORAL_EVAL_BASELINES = "trained-plan"
-$env:TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS = "D:\bench\discord-time-app-src\api\reports\temporal-ml\temporal-eval-<adapter-name>-predictions.jsonl"
+$env:TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS = Join-Path $repoRoot "api\reports\temporal-ml\temporal-eval-<adapter-name>-predictions.jsonl"
 npm --prefix api run eval:temporal
 ```
 

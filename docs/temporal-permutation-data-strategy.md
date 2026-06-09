@@ -23,11 +23,13 @@ The target Plan-IR should normalize fuzzy surface text into deterministic tool c
 - Whitespace: leading/trailing whitespace, multiple spaces, tabs, newlines, and pasted multi-line event text.
 - Separators: dates with `/`, `-`, `.`, spaces, mixed spaces around punctuation, and clock separators such as `10.30pm`.
 - Punctuation: commas, dashes, `@`, parentheses, semicolons, ellipses, and Discord-style surrounding text.
-- Timezones: no timezone specified, explicit IANA zones, offset forms such as `+00:00`, UTC/Z forms, common abbreviations such as `EST`, `EDT`, `PST`, `AEST`, regional names such as `Eastern`, `Central`, `Pacific`, and product phrases such as `JP time`.
+- Timezones: no timezone specified, explicit IANA zones, runtime aliases, offset forms such as `+00:00`, UTC/Z/GMT/Zulu forms, common abbreviations such as `EST`, `EDT`, `PST`, `AEST`, regional names such as `Eastern`, `Central`, `Pacific`, and product phrases such as `JP time`, `Tokyo time`, `UK time`, `Sydney time`, and `west coast`.
+- Time ranges: same-day ranges, `from ... to ...`, 24-hour ranges, overnight ranges where the end must explicitly shift to the next day, ranges with explicit timezone text, and range clarifications for top-level `next <weekday>` ambiguity.
 - Direction modifiers: `this`, `next`, `last`, `previous`, and bare forms applied across weekdays, months, month boundaries, relative offsets, boundary snaps, holidays, and absolute anchors.
 - Noise text: prefixes and suffixes such as `remind me`, `for discord`, `please format it`, event blurbs, venue copy, and ticket/link text.
 - Ambiguity preservation: bare hours, compact times, `next <weekday>`, multiple candidate dates, and multiple event times should still return clarification rather than silent guesses.
 - Unsupported forms: recurrence, vague schedule requests, negative epochs, unsupported epoch lengths, and overlong recursive modifiers should produce `no_plan` or fallback rather than wrong singular timestamps.
+- Unsupported date spans such as `Tuesday through Thursday` and repeated schedule blocks such as `Tuesday through Thursday 3pm-5pm` are not first-slice `time_range` requests; they should produce `no_plan` or clarification rather than invented `date_range` IR.
 
 ## Split Policy
 
@@ -51,7 +53,17 @@ Temporal robustness should come from composing tagged semantic blocks instead of
 
 The generator should sample these axes with weights, not create an unbounded Cartesian product. Product-critical combinations should be promoted to required evals; broad coverage should remain synthetic validation/holdout so training remains balanced.
 
-Timezone composition needs special handling. Abbreviations can be ambiguous and DST-sensitive, so deterministic execution should validate a resolved timezone against the reference instant and region rather than treating every abbreviation as a fixed offset. Inputs without an explicit timezone should use the user's configured/current timezone.
+Timezone composition needs special handling. Abbreviations can be ambiguous and DST-sensitive, so deterministic execution should validate a resolved timezone against the reference instant and region rather than treating every abbreviation as a fixed offset. Inputs without an explicit timezone should use the user's configured/current timezone. Training should heavily weight product-likely regions such as Japan, Australia, North America, and Western Europe while still sampling the long tail of runtime-supported IANA zones.
+
+DST-related timezone rows need explicit semantic tags:
+
+- `regional-time`: `7pm Eastern`, `7pm Pacific`, `8pm UK time` should resolve by event date using a regional IANA zone.
+- `literal-offset`: `7pm -05:00`, `7pm UTC+9` should preserve the fixed offset instead of guessing a region.
+- `abbreviation-season-mismatch`: `7pm EST` in July and `7pm EDT` in January should either normalize to the likely region with an assumption or clarify.
+- `ambiguous-abbreviation`: `CST`, `IST`, and `BST` should clarify unless surrounding text disambiguates.
+- `dst-gap`: nonexistent spring-forward local times should not silently roll forward.
+- `dst-fold`: repeated fall-back local times should clarify first versus second occurrence unless the input includes a fixed offset.
+- `no-dst-counterexample`: Tokyo, Phoenix, Honolulu, Brisbane, and Perth should not be forced into standard/daylight pairs.
 
 `Next` and `last` composition also needs semantic tags. Some nouns have stable product semantics (`first of next month`, `last month`, `next hour` as the next boundary). Other forms are colloquially ambiguous (`next Saturday` can mean upcoming Saturday or the Saturday after that). The generator should label these separately so the model learns when to resolve and when to produce clarification alternatives.
 

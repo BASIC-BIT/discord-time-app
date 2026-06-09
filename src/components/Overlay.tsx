@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { Row } from './Row';
-import { formats, getFormatLabel } from '../lib/formats';
+import { RangeRow } from './RangeRow';
+import { formatDiscordRange, formats, getFormatLabel, getRangeLabel, rangeFormats } from '../lib/formats';
 import { getUserTimezone } from '../lib/prompt';
-import { createAPIClient, TimeParserAPIError, TimeParserUnavailableError, type ParseAlternative, type ParseResponse } from '../lib/api-client';
+import { createAPIClient, TimeParserAPIError, TimeParserUnavailableError, type ParseAlternative, type ParseRangeResult, type ParseResponse } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 
@@ -29,23 +30,88 @@ function clarificationIndexForKey(key: string): number | null {
   return null;
 }
 
+const DISCORD_TIMESTAMP_PATTERN = '<t:(\\d+)(:[dDtTfFR])>';
+const DISCORD_TIMESTAMP_REGEX = new RegExp(DISCORD_TIMESTAMP_PATTERN);
+const DISCORD_TIMESTAMP_RANGE_REGEX = new RegExp(`${DISCORD_TIMESTAMP_PATTERN}\\s*(?:-|–|—|to)\\s*${DISCORD_TIMESTAMP_PATTERN}`, 'i');
+
+function formatIndexForCode(formatCode: string): number {
+  const formatIndex = formats.findIndex(f => f.code === formatCode);
+  return formatIndex >= 0 ? formatIndex : 0;
+}
+
+function isValidDiscordEpoch(epoch: number): boolean {
+  return epoch > 0 && epoch < 2147483647; // Unix timestamp limits
+}
+
+function getZonedDateTimeLabel(epoch: number, timeZone: string): string {
+  const date = new Date(epoch * 1000);
+  try {
+    return date.toLocaleString('sv-SE', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).replace(' ', 'T');
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function buildDiscordRangeEndpoint(epoch: number, formatCode: string, timeZone: string): ParseRangeResult['start'] {
+  const isoInstant = new Date(epoch * 1000).toISOString();
+  return {
+    epoch,
+    suggestedFormatIndex: formatIndexForCode(formatCode),
+    canonical: {
+      isoInstant,
+      zonedDateTime: getZonedDateTimeLabel(epoch, timeZone),
+      timeZone,
+      precision: 'datetime',
+    },
+  };
+}
+
 // Function to detect and parse existing Discord timestamps
 function parseExistingTimestamp(text: string): { epoch: number; formatCode: string } | null {
   // Match Discord timestamp format: <t:1234567890:d>
-  const timestampRegex = /<t:(\d+)(:[dDtTfFR])>/;
-  const match = text.match(timestampRegex);
+  const match = text.match(DISCORD_TIMESTAMP_REGEX);
   
   if (match) {
     const epoch = parseInt(match[1], 10);
     const formatCode = match[2];
     
-    // Validate epoch (reasonable timestamp range)
-    if (epoch > 0 && epoch < 2147483647) { // Unix timestamp limits
+    if (isValidDiscordEpoch(epoch)) {
       return { epoch, formatCode };
     }
   }
   
   return null;
+}
+
+function parseExistingTimestampRange(text: string): ParseRangeResult | null {
+  const match = text.match(DISCORD_TIMESTAMP_RANGE_REGEX);
+  if (!match) {
+    return null;
+  }
+
+  const startEpoch = parseInt(match[1], 10);
+  const startFormatCode = match[2];
+  const endEpoch = parseInt(match[3], 10);
+  const endFormatCode = match[4];
+  if (!isValidDiscordEpoch(startEpoch) || !isValidDiscordEpoch(endEpoch)) {
+    return null;
+  }
+
+  const timeZone = getUserTimezone();
+  return {
+    start: buildDiscordRangeEndpoint(startEpoch, startFormatCode, timeZone),
+    end: buildDiscordRangeEndpoint(endEpoch, endFormatCode, timeZone),
+    discord: `<t:${startEpoch}${startFormatCode}> - <t:${endEpoch}${endFormatCode}>`,
+  };
 }
 
 interface OverlayProps {
@@ -55,6 +121,7 @@ interface OverlayProps {
 export function Overlay({ onClose }: OverlayProps) {
   const [inputText, setInputText] = useState('');
   const [epoch, setEpoch] = useState<number | null>(null);
+  const [range, setRange] = useState<ParseRangeResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,17 +183,23 @@ export function Overlay({ onClose }: OverlayProps) {
         }
         
         if (clipboardText) {
-          // Check if clipboard contains an existing Discord timestamp
-          const existingTimestamp = parseExistingTimestamp(clipboardText);
+          // Check if clipboard contains existing Discord timestamps.
+          const existingRange = parseExistingTimestampRange(clipboardText);
+          const existingTimestamp = existingRange === null ? parseExistingTimestamp(clipboardText) : null;
           
-          if (existingTimestamp) {
+          if (existingRange) {
+            setEpoch(null);
+            setRange(existingRange);
+            setInputText(clipboardText);
+            setSelectedIndex(0);
+          } else if (existingTimestamp) {
             // Found existing timestamp - extract epoch and set format
             setEpoch(existingTimestamp.epoch);
+            setRange(null);
             setInputText(clipboardText);
             
             // Find the format index that matches the current format code
-            const formatIndex = formats.findIndex(f => f.code === existingTimestamp.formatCode);
-            setSelectedIndex(formatIndex >= 0 ? formatIndex : 0);
+            setSelectedIndex(formatIndexForCode(existingTimestamp.formatCode));
           } else {
             // Regular text - set as input for parsing
             setInputText(clipboardText);
@@ -181,26 +254,42 @@ export function Overlay({ onClose }: OverlayProps) {
     setVerifying(false);
 
     if (inputText.trim()) {
-      // Check if input is already a Discord timestamp (no debounce needed)
-      const existingTimestamp = parseExistingTimestamp(inputText.trim());
+      // Check if input is already a Discord timestamp or range (no debounce needed)
+      const existingRange = parseExistingTimestampRange(inputText.trim());
+      const existingTimestamp = existingRange === null ? parseExistingTimestamp(inputText.trim()) : null;
       
-      if (existingTimestamp) {
-        // Already a timestamp - just update the epoch and format immediately
-        setEpoch(existingTimestamp.epoch);
+      if (existingRange) {
+        setEpoch(null);
+        setRange(existingRange);
         setConfidence(1);
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         setGenerationId(null);
         setVerifying(false);
-        const formatIndex = formats.findIndex(f => f.code === existingTimestamp.formatCode);
-        setSelectedIndex(formatIndex >= 0 ? formatIndex : 0);
+        setSelectedIndex(0);
+        selectionTouchedRef.current = false;
+        setError(null);
+        setParseProgressMessage(null);
+        setLoading(false);
+      } else if (existingTimestamp) {
+        // Already a timestamp - just update the epoch and format immediately
+        setEpoch(existingTimestamp.epoch);
+        setRange(null);
+        setConfidence(1);
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
+        setGenerationId(null);
+        setVerifying(false);
+        setSelectedIndex(formatIndexForCode(existingTimestamp.formatCode));
         selectionTouchedRef.current = false;
         setError(null);
         setParseProgressMessage(null);
         setLoading(false);
       } else {
         setEpoch(null);
+        setRange(null);
         setConfidence(1);
         setError(null);
         setClarificationQuestion(null);
@@ -218,6 +307,7 @@ export function Overlay({ onClose }: OverlayProps) {
       }
     } else {
       setEpoch(null);
+      setRange(null);
       setError(null);
       setClarificationQuestion(null);
       setClarificationAlternatives([]);
@@ -248,7 +338,7 @@ export function Overlay({ onClose }: OverlayProps) {
     };
     
     resizeWindow();
-  }, [epoch, loading, error, clarificationQuestion, clarificationAlternatives]); // Resize when content changes
+  }, [epoch, range, selectedIndex, loading, error, clarificationQuestion, clarificationAlternatives]); // Resize when content changes
 
   // Cleanup on unmount
   useEffect(() => {
@@ -272,6 +362,7 @@ export function Overlay({ onClose }: OverlayProps) {
     abortControllerRef.current = abortController;
     
     setError(null);
+    setRange(null);
     setClarificationQuestion(null);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
@@ -299,6 +390,7 @@ export function Overlay({ onClose }: OverlayProps) {
       let displayedFallback = false;
       if (fallbackEpoch) {
         setEpoch(fallbackEpoch);
+        setRange(null);
         setSelectedIndex(getMostUsedFormatIndex(stats));
         setConfidence(LOCAL_FALLBACK_CONFIDENCE);
         displayedFallback = true;
@@ -334,9 +426,19 @@ export function Overlay({ onClose }: OverlayProps) {
         return;
       }
       
-      if (result && typeof result.epoch === 'number') {
+      if (result?.kind === 'time_range' && result.range) {
+        console.log('API parsed range successfully:', result);
+        setEpoch(null);
+        setRange(result.range);
+        setSelectedIndex(0);
+        setConfidence(result.confidence);
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
+      } else if (result && typeof result.epoch === 'number') {
         console.log('API parsed successfully:', result);
         setEpoch(result.epoch);
+        setRange(null);
         if (!selectionTouchedRef.current) {
           setSelectedIndex(result.suggestedFormatIndex);
         }
@@ -351,6 +453,7 @@ export function Overlay({ onClose }: OverlayProps) {
           setConfidence(LOCAL_FALLBACK_CONFIDENCE);
         } else {
           setEpoch(null);
+          setRange(null);
           setConfidence(1);
           if (isFromClipboard) {
             setError(null);
@@ -386,7 +489,7 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   const verifyDisplayedResult = async (apiClient: Awaited<ReturnType<typeof createAPIClient>>, text: string, timezone: string, result: ParseResponse) => {
-    if (!apiClient || result.method !== 'agent+plan') {
+    if (!apiClient || result.method !== 'agent+plan' || result.kind === 'time_range') {
       return;
     }
 
@@ -404,6 +507,7 @@ export function Overlay({ onClose }: OverlayProps) {
       }
       if (verification.decision !== 'accept') {
         setEpoch(null);
+        setRange(null);
         setConfidence(1);
         setError('I could not verify that timestamp. Try adding AM/PM, a date, or more context.');
         setClarificationQuestion(null);
@@ -426,12 +530,13 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   const hasClarification = clarificationQuestion !== null && clarificationAlternatives.length > 0;
-  const showLowConfidence = !loading && epoch !== null && confidence < 0.5;
+  const hasResolvedResult = epoch !== null || range !== null;
+  const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
   const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
   const hasInlineStatus = error || hasClarification || showLowConfidence;
   const isBusy = loading || verifying;
   const showVerifyingTab = isBusy && !hasClarification && !error;
-  const progressText = verifying ? 'Verifying' : parseProgressMessage ?? (epoch !== null ? 'Checking' : 'Parsing');
+  const progressText = verifying ? 'Verifying' : parseProgressMessage ?? (hasResolvedResult ? 'Checking' : 'Parsing');
   const overlayTone = error
     ? 'error'
     : hasClarification
@@ -440,15 +545,17 @@ export function Overlay({ onClose }: OverlayProps) {
         ? 'verifying'
         : showLowConfidence
           ? 'low-confidence'
-          : epoch !== null && confidence >= 0.85
+          : hasResolvedResult && confidence >= 0.85
             ? 'confident'
-            : epoch !== null
+            : hasResolvedResult
               ? 'ready'
               : 'idle';
   const footerHint = hasClarification
     ? '←→/Tab or 1-9/0 to choose • Enter to use • Esc to close'
     : verifying
       ? 'Verifying before copy • Esc to close'
+    : range !== null
+      ? '↑↓/Tab to choose range • Enter to copy • Esc to close'
     : epoch !== null
       ? '↑↓/Tab to choose format • Enter to copy • Esc to close'
       : 'Type a time expression • Esc to close';
@@ -464,8 +571,15 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   const handleClarificationAlternative = (alternative: ParseAlternative) => {
-    setEpoch(alternative.epoch);
-    setSelectedIndex(alternative.suggestedFormatIndex);
+    if (alternative.kind === 'time_range' && alternative.range) {
+      setEpoch(null);
+      setRange(alternative.range);
+      setSelectedIndex(0);
+    } else {
+      setEpoch(alternative.epoch);
+      setRange(null);
+      setSelectedIndex(alternative.suggestedFormatIndex);
+    }
     setConfidence(alternative.confidence);
     setError(null);
     setClarificationQuestion(null);
@@ -486,6 +600,8 @@ export function Overlay({ onClose }: OverlayProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const formatCount = range !== null ? rangeFormats.length : formats.length;
+
     if (e.key === 'Escape') {
       void recordParserOutcome('dismissed');
       onClose();
@@ -517,22 +633,33 @@ export function Overlay({ onClose }: OverlayProps) {
       }
     } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (epoch !== null) {
+      if (hasResolvedResult) {
         handleCopy();
       }
     } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
       e.preventDefault();
       selectionTouchedRef.current = true;
-      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formats.length - 1));
+      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formatCount - 1));
     } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
       e.preventDefault();
       selectionTouchedRef.current = true;
-      setSelectedIndex((prev) => (prev < formats.length - 1 ? prev + 1 : 0));
+      setSelectedIndex((prev) => (prev < formatCount - 1 ? prev + 1 : 0));
     }
   };
 
   const handleCopy = async () => {
     if (verifying) {
+      return;
+    }
+
+    if (range !== null) {
+      try {
+        await writeText(formatDiscordRange(range, selectedIndex));
+        void recordParserOutcome('copied');
+        onClose();
+      } catch (error) {
+        console.error('Error copying range:', error);
+      }
       return;
     }
 
@@ -560,6 +687,7 @@ export function Overlay({ onClose }: OverlayProps) {
     // If this is clipboard text and user is typing (not just selecting)
     if (isClipboardText && newValue !== inputText) {
       setIsClipboardText(false);
+      setRange(null);
       setClarificationQuestion(null);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
@@ -590,7 +718,12 @@ export function Overlay({ onClose }: OverlayProps) {
           className="input-textarea"
           rows={2}
         />
-        {epoch !== null && !hasClarification && (
+        {range !== null && !hasClarification && (
+          <div className="found-time-card" aria-live="polite">
+            <div className="found-time-value">{getRangeLabel(range, selectedIndex)}</div>
+          </div>
+        )}
+        {epoch !== null && range === null && !hasClarification && (
           <div className="found-time-card" aria-live="polite">
             <div className="found-time-value">{getFormatLabel(epoch, 5)}</div>
           </div>
@@ -605,7 +738,7 @@ export function Overlay({ onClose }: OverlayProps) {
                 <div className="clarification-options">
                   {clarificationAlternatives.map((alternative, index) => (
                     <button
-                      key={`${alternative.label}-${alternative.epoch}`}
+                      key={`${alternative.label}-${alternative.range?.start.epoch ?? alternative.epoch}-${alternative.range?.end.epoch ?? 'instant'}`}
                       type="button"
                       className={`clarification-option ${index === selectedAlternativeIndex ? 'selected' : ''}`}
                       aria-pressed={index === selectedAlternativeIndex}
@@ -615,7 +748,7 @@ export function Overlay({ onClose }: OverlayProps) {
                     >
                       <span className="clarification-key">{clarificationKeyLabel(index)}</span>
                       <span className="clarification-label">{alternative.label}</span>
-                      <span className="clarification-preview">{getFormatLabel(alternative.epoch, alternative.suggestedFormatIndex)}</span>
+                      <span className="clarification-preview">{alternative.range ? getRangeLabel(alternative.range) : getFormatLabel(alternative.epoch, alternative.suggestedFormatIndex)}</span>
                     </button>
                   ))}
                 </div>
@@ -628,13 +761,31 @@ export function Overlay({ onClose }: OverlayProps) {
         )}
       </div>
 
-      {epoch !== null && (
+      {epoch !== null && range === null && (
         <div className="results-section">
           <div className="format-list">
             {formats.map((_, index) => (
               <Row
                 key={index}
                 epoch={epoch}
+                formatIndex={index}
+                isSelected={index === selectedIndex}
+                isTentative={isBusy && index === selectedIndex}
+                onCopyAndClose={handleCopy}
+                onMouseEnter={() => handleRowMouseEnter(index)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {range !== null && (
+        <div className="results-section">
+          <div className="format-list">
+            {rangeFormats.map((_, index) => (
+              <RangeRow
+                key={index}
+                range={range}
                 formatIndex={index}
                 isSelected={index === selectedIndex}
                 isTentative={isBusy && index === selectedIndex}

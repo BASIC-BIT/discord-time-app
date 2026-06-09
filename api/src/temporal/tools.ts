@@ -1,4 +1,4 @@
-import type { CalendarContext, Candidate, CandidateFacts, CandidateProposal, TemporalFeatureFlags } from "./types";
+import type { CalendarContext, Candidate, CandidateFacts, CandidateProposal, TemporalFeatureFlags, TimeZoneResolutionOutput } from "./types";
 import {
   candidateFacts,
   formatCandidate,
@@ -6,6 +6,7 @@ import {
   resolveClockTime,
   resolveCalendarQuery,
   resolveHoliday,
+  resolveTimeZone,
   shiftDateTime,
   setClockTime,
   validateCandidate,
@@ -65,6 +66,13 @@ export interface ResolveClockTimeOutput {
   notes: string[];
 }
 
+export interface ResolveTimeZoneInput {
+  text: string;
+  calendarContext: CalendarContext;
+}
+
+export interface ResolveTimeZoneOutput extends TimeZoneResolutionOutput {}
+
 export interface ShiftDateTimeInput {
   base: { isoInstant: string } | { plainDate: string; timeZone: string } | { zonedDateTime: string };
   delta: {
@@ -122,6 +130,7 @@ export interface TemporalToolImplementations {
   resolveCalendarQuery(input: ResolveCalendarQueryInput): Promise<ResolveCalendarQueryOutput>;
   resolveHoliday(input: ResolveHolidayInput): Promise<ResolveHolidayOutput>;
   resolveClockTime(input: ResolveClockTimeInput): Promise<ResolveClockTimeOutput>;
+  resolveTimeZone(input: ResolveTimeZoneInput): Promise<ResolveTimeZoneOutput>;
   shiftDateTime(input: ShiftDateTimeInput): Promise<Candidate>;
   setClockTime(input: SetClockTimeInput): Promise<Candidate>;
   formatCandidate(input: FormatCandidateInput): Promise<string>;
@@ -134,6 +143,7 @@ export const AGENT_FACING_TEMPORAL_TOOL_NAMES = [
   "resolve_calendar_query",
   "resolve_holiday",
   "resolve_clock_time",
+  "resolve_timezone",
   "shift_datetime",
   "set_clock_time",
   "propose_candidate",
@@ -167,6 +177,10 @@ export function createUnimplementedTemporalToolImplementations(): TemporalToolIm
       void input;
       throw new Error("resolveClockTime is not implemented yet.");
     },
+    async resolveTimeZone(input) {
+      void input;
+      throw new Error("resolveTimeZone is not implemented yet.");
+    },
     async setClockTime(input) {
       void input;
       throw new Error("setClockTime is not implemented yet.");
@@ -192,6 +206,7 @@ export function createDeterministicTemporalToolImplementations(): TemporalToolIm
     resolveCalendarQuery,
     resolveHoliday,
     resolveClockTime,
+    resolveTimeZone,
     shiftDateTime,
     setClockTime,
     formatCandidate,

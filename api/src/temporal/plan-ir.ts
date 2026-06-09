@@ -3,6 +3,7 @@ import * as z from 'zod';
 export const PLAN_WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 export type PlanWeekday = typeof PLAN_WEEKDAYS[number];
 export const TEMPORAL_PLAN_MAX_PLANS = 10;
+export const TEMPORAL_PLAN_MAX_STEPS = 12;
 
 export const PLAN_WEEKDAY_INDEX: Record<PlanWeekday, number> = {
   monday: 1,
@@ -49,6 +50,7 @@ export const TemporalPlanStepSchema = z.object({
     'resolve_weekday_anchor',
     'resolve_holiday',
     'resolve_clock_time',
+    'resolve_timezone',
     'interpret_clock_phrase',
     'shift_datetime',
     'set_clock_time',
@@ -64,6 +66,7 @@ export const TemporalPlanStepSchema = z.object({
   baseStep: z.number().int().min(0).nullable(),
   time: TimeOfDaySchema.nullable(),
   timeStep: z.number().int().min(0).nullable(),
+  timeZoneStep: z.number().int().min(0).nullable(),
   delta: PlanDeltaSchema,
   isoInstant: z.string().nullable(),
   epochSeconds: z.number().int().nullable(),
@@ -73,12 +76,15 @@ export const TemporalPlanStepSchema = z.object({
 });
 
 export const TemporalPlanSchema = z.object({
+  kind: z.enum(['instant', 'time_range']).optional(),
   label: z.string(),
   rationale: z.string(),
   assumptions: z.array(z.string()),
   confidence: z.number().min(0).max(1),
   finalStep: z.number().int().min(0).nullable(),
-  steps: z.array(TemporalPlanStepSchema).min(1).max(6),
+  startStep: z.number().int().min(0).nullable().optional(),
+  endStep: z.number().int().min(0).nullable().optional(),
+  steps: z.array(TemporalPlanStepSchema).min(1).max(TEMPORAL_PLAN_MAX_STEPS),
 });
 
 export const TemporalPlanPlannerSchema = z.object({
@@ -103,6 +109,7 @@ export const CompactTemporalPlanStepSchema = z.object({
     'resolve_weekday_anchor',
     'resolve_holiday',
     'resolve_clock_time',
+    'resolve_timezone',
     'interpret_clock_phrase',
     'shift_datetime',
     'set_clock_time',
@@ -118,6 +125,7 @@ export const CompactTemporalPlanStepSchema = z.object({
   baseStep: z.number().int().min(0).optional(),
   time: TimeOfDaySchema.optional(),
   timeStep: z.number().int().min(0).optional(),
+  timeZoneStep: z.number().int().min(0).optional(),
   delta: CompactPlanDeltaSchema.optional(),
   isoInstant: z.string().optional(),
   epochSeconds: z.number().int().optional(),
@@ -127,12 +135,15 @@ export const CompactTemporalPlanStepSchema = z.object({
 });
 
 export const CompactTemporalPlanSchema = z.object({
+  kind: z.enum(['instant', 'time_range']).optional(),
   label: z.string(),
   rationale: z.string().optional(),
   assumptions: z.array(z.string()).optional(),
   confidence: z.number().min(0).max(1).optional(),
   finalStep: z.number().int().min(0).nullable().optional(),
-  steps: z.array(CompactTemporalPlanStepSchema).min(1).max(6),
+  startStep: z.number().int().min(0).nullable().optional(),
+  endStep: z.number().int().min(0).nullable().optional(),
+  steps: z.array(CompactTemporalPlanStepSchema).min(1).max(TEMPORAL_PLAN_MAX_STEPS),
 });
 
 export const CompactTemporalPlanPlannerSchema = z.object({
@@ -163,11 +174,14 @@ export function expandCompactTemporalPlanPlannerOutput(input: unknown): Temporal
     reason: compact.reason ?? '',
     clarificationQuestion: compact.clarificationQuestion ?? null,
     plans: compact.plans.map((plan) => ({
+      kind: plan.kind,
       label: plan.label,
       rationale: plan.rationale ?? plan.label,
       assumptions: plan.assumptions ?? [],
       confidence: plan.confidence ?? 0.8,
       finalStep: plan.finalStep ?? null,
+      startStep: plan.startStep ?? null,
+      endStep: plan.endStep ?? null,
       steps: plan.steps.map((step) => ({
         operation: step.op,
         query: step.query ?? null,
@@ -179,6 +193,7 @@ export function expandCompactTemporalPlanPlannerOutput(input: unknown): Temporal
         baseStep: step.baseStep ?? null,
         time: step.time ?? null,
         timeStep: step.timeStep ?? null,
+        timeZoneStep: step.timeZoneStep ?? null,
         delta: {
           years: step.delta?.years ?? null,
           months: step.delta?.months ?? null,

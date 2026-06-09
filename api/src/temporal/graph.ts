@@ -7,7 +7,7 @@ import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { Temporal } from '@js-temporal/polyfill';
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
-import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalSemanticConsistencyGateResult } from './types';
+import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
 import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TimeOfDaySchema, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
@@ -15,7 +15,7 @@ import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_W
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
 const ENDPOINT_PLAN_INSTRUCTION_PRESETS: Record<TemporalPlanIrInstructionPreset, string> = {
-  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
+  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; the end must be after the start, so explicitly shift overnight end times. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep, or put an exact IANA/fixed-offset timezone string in timeZone. Use IANA/regional timezone intent for names like Eastern time, UK time, or Japan time; use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, return clarification instead of choosing silently. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
   minimal: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only.',
 };
 
@@ -40,6 +40,12 @@ const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|frid
 const AM_PM_CLOCK_MENTION_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
+const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'] as const;
+const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
+const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
+const EXPLICIT_DATED_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<dateText>.+?)\s+(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
+const EXPLICIT_BARE_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
+const EXPLICIT_RANGE_DATE_SIGNAL_PATTERN = new RegExp(String.raw`\b(?:${MONTH_DATE_QUERY_PATTERN.source}|\d{4}-\d{2}-\d{2}|today|tomorrow|tonight|(?:${PLAN_WEEKDAYS.join('|')}))\b`, 'i');
 
 const AgentBaseDateTimeSchema = z.union([
   z.object({ candidateId: z.string() }),
@@ -64,18 +70,29 @@ const SemanticConsistencyGateSchema = z.object({
 
 type LangfuseHandler = BaseCallbackHandler & { last_trace_id: string | null };
 type RawTemporalPlan = {
+  kind?: 'instant' | 'time_range' | undefined;
   label: string;
   rationale: string;
   assumptions?: string[] | undefined;
   confidence?: number | undefined;
   finalStep?: number | null | undefined;
+  startStep?: number | null | undefined;
+  endStep?: number | null | undefined;
   steps: RawTemporalPlanStep[];
 };
 type TemporalPlanStepOutput =
   | { kind: 'candidates'; candidates: PlanCandidateOutput[] }
-  | { kind: 'time'; time: { hour: number; minute: number } };
+  | { kind: 'time'; time: { hour: number; minute: number } }
+  | { kind: 'timezone'; timeZone: TimeZoneResolutionCandidate };
 type PlanCandidateOutput = { candidate: Candidate; label?: string | undefined };
 type PlanCandidateResult = { enriched: EnrichedCandidate; label?: string | undefined };
+type PlanRangeResult = {
+  start: PlanCandidateResult;
+  end: PlanCandidateResult;
+  label?: string | undefined;
+  validation: TemporalValidation;
+  finalizable: boolean;
+};
 type UnindexedTraceStep = Omit<TemporalAgentTraceStep, 'index'>;
 type AmbiguityPolicyResult = {
   name: string;
@@ -89,6 +106,13 @@ type AmbiguousBareClockMention = {
   minute: number;
   replacementBase: string;
 };
+type ExplicitDiscordTimestampRangeParts = {
+  startEpochSeconds: string;
+  startFormatCode: string;
+  endEpochSeconds: string;
+  endFormatCode: string;
+};
+type ExplicitClockMention = { text: string; index: number; label: string; time: { hour: number; minute: number } };
 type LangfuseCallbackParams = {
   sessionId?: string;
   userId?: string;
@@ -102,6 +126,13 @@ type SemanticConsistencyGateContext = {
   planResult?: TemporalPlanPlannerOutput;
   endpointCompletion?: EndpointCompletion;
 };
+type ExplicitDatedTimeRangeParts = {
+  dateText: string;
+  startText: string;
+  endText: string;
+  suffixText: string;
+};
+type ExplicitBareTimeRangeParts = Omit<ExplicitDatedTimeRangeParts, 'dateText'>;
 
 export interface TemporalGraphState {
   request: TemporalParseRequest;
@@ -255,6 +286,12 @@ export async function executeTemporalPlanPlannerOutput(
   const method = options.method ?? 'agent+plan';
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
 
+  if (planResult.outcome === 'clarification' && plans.length === 0 && planResult.clarificationQuestion !== null) {
+    const response = responseFromQuestionOnlyPlanClarification(planResult.clarificationQuestion, planResult.reason, trace, method);
+    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+    return response;
+  }
+
   if (planResult.outcome === 'no_plan' || plans.length === 0) {
     const response = responseFromFailedPlanIr(planResult.reason, trace, 0, 0, 0);
     attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
@@ -282,6 +319,71 @@ export async function executeTemporalPlanPlannerOutput(
   }
 
   const toolPasses = executions.reduce((total, execution) => total + execution.toolPasses, 0);
+  const ranges = executions.flatMap((execution) => (execution.ranges ?? []).map((range) => ({
+    plan: execution.plan,
+    planIndex: execution.planIndex,
+    range,
+  })));
+  const finalizableRanges = ranges.filter((execution) => execution.range.finalizable);
+  if (ranges.length > 0 || plans.some(isTimeRangePlan)) {
+    if (finalizableRanges.length === 0) {
+      const errors = executions.map((execution) => execution.error).filter((error): error is string => error !== undefined);
+      const response = responseFromFailedPlanIr([planResult.reason, ...errors].join(' '), trace, ranges.length, toolPasses, 0);
+      attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+      return response;
+    }
+
+    const uniqueRangeKeys = [...new Set(finalizableRanges.map((execution) => rangeKey(execution.range)))];
+    if (planResult.outcome === 'clarification' || uniqueRangeKeys.length > 1) {
+      const response = responseFromRangePlanClarification(
+        planResult.clarificationQuestion ?? 'Which time range did you mean?',
+        finalizableRanges,
+        trace,
+        ranges.length,
+        toolPasses,
+        0,
+        undefined,
+        request.text,
+      );
+      attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+      return applySemanticConsistencyGateIfConfigured(request, response, {
+        ...options,
+      }, {
+        solverStage: 'execute_plan_ir',
+        ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
+        planResult,
+      });
+    }
+
+    const selected = finalizableRanges[0]!;
+    trace.push({
+      index: trace.length + 1,
+      type: 'router',
+      name: 'plan_ir_select_range',
+      output: { plan: selected.plan.label, range: compactRangeResult(selected.range, request.text) },
+    });
+    const response = responseFromEnrichedRange(
+      selected.range,
+      method,
+      Math.min(0.9, Math.max(0.5, selected.plan.confidence)),
+      selected.plan.rationale,
+      ranges.length,
+      toolPasses,
+      0,
+      trace,
+      undefined,
+      request.text,
+    );
+    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+    return applySemanticConsistencyGateIfConfigured(request, response, {
+      ...options,
+    }, {
+      solverStage: 'execute_plan_ir',
+      ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
+      planResult,
+    });
+  }
+
   const candidates = executions.flatMap((execution) => (execution.candidates ?? []).map((candidate) => ({
     plan: execution.plan,
     planIndex: execution.planIndex,
@@ -538,6 +640,23 @@ async function runAgentGraph(
     },
   );
 
+  const resolveTimeZoneTool = tool(
+    async (input) => {
+      const startedAt = nowMs();
+      const output = await options.implementations.resolveTimeZone({
+        text: input.text,
+        calendarContext: toCalendarContext(input.calendarContext),
+      });
+      recordTool('resolve_timezone', input, output, startedAt);
+      return JSON.stringify(output);
+    },
+    {
+      name: 'resolve_timezone',
+      description: 'Resolve explicit timezone text into validated IANA zones or fixed UTC/GMT offsets. Ambiguous abbreviations return clarification candidates instead of silently choosing.',
+      schema: z.object({ text: z.string(), calendarContext: CalendarContextSchema }),
+    },
+  );
+
   const shiftDateTimeTool = tool(
     async (input) => {
       const startedAt = nowMs();
@@ -723,6 +842,7 @@ async function runAgentGraph(
     resolveCalendarQueryTool,
     resolveHolidayTool,
     resolveClockTimeTool,
+    resolveTimeZoneTool,
     shiftDateTimeTool,
     setClockTimeTool,
     proposeCandidateTool,
@@ -944,6 +1064,68 @@ async function runPlanIrPath(
   }
 
   const toolPasses = executions.reduce((total, execution) => total + execution.toolPasses, 0);
+  const ranges = executions.flatMap((execution) => (execution.ranges ?? []).map((range) => ({
+    plan: execution.plan,
+    planIndex: execution.planIndex,
+    range,
+  })));
+  if (ranges.length > 0) {
+    firstCandidateMs = executions.reduce((min, execution) => {
+      if (execution.firstCandidateMs === undefined) {
+        return min;
+      }
+      return min === undefined ? execution.firstCandidateMs : Math.min(min, execution.firstCandidateMs);
+    }, undefined as number | undefined);
+  }
+  const finalizableRanges = ranges.filter((execution) => execution.range.finalizable);
+  if (ranges.length > 0 || plans.some(isTimeRangePlan)) {
+    if (finalizableRanges.length === 0) {
+      const reason = planResult.reason || 'Plan IR did not produce a validation-passing range.';
+      const errors = executions.map((execution) => execution.error).filter((error): error is string => error !== undefined);
+      const response = responseFromFailedPlanIr([reason, ...errors].join(' '), trace, ranges.length, toolPasses, 1, getLangfuseTraceId(langfuseHandler));
+      attachPlanDebug(response);
+      return response;
+    }
+
+    const uniqueRangeKeys = [...new Set(finalizableRanges.map((execution) => rangeKey(execution.range)))];
+    if (planResult.outcome === 'clarification' || uniqueRangeKeys.length > 1) {
+      const response = responseFromRangePlanClarification(
+        planResult.clarificationQuestion ?? 'Which time range did you mean?',
+        finalizableRanges,
+        trace,
+        ranges.length,
+        toolPasses,
+        1,
+        getLangfuseTraceId(langfuseHandler),
+        request.text,
+      );
+      attachPlanDebug(response);
+      return response;
+    }
+
+    const selected = finalizableRanges[0]!;
+    trace.push({
+      index: trace.length + 1,
+      type: 'router',
+      name: 'plan_ir_select_range',
+      output: { plan: selected.plan.label, range: compactRangeResult(selected.range, request.text) },
+    });
+    const response = responseFromEnrichedRange(
+      selected.range,
+      'agent+plan',
+      Math.min(0.9, Math.max(0.5, selected.plan.confidence)),
+      selected.plan.rationale,
+      ranges.length,
+      toolPasses,
+      1,
+      trace,
+      getLangfuseTraceId(langfuseHandler),
+      request.text,
+    );
+    attachPlanDebug(response);
+    return response;
+  }
+
   const candidates = executions.flatMap((execution) => (execution.candidates ?? []).map((candidate) => ({
     plan: execution.plan,
     planIndex: execution.planIndex,
@@ -1257,6 +1439,7 @@ type PlanExecution = {
   plan: TemporalPlan;
   planIndex: number;
   candidates?: PlanCandidateResult[];
+  ranges?: PlanRangeResult[];
   error?: string;
   trace: UnindexedTraceStep[];
   toolPasses: number;
@@ -1299,6 +1482,23 @@ async function executeTemporalPlan(
 
   try {
     const outputs = await Promise.all(plan.steps.map((_, stepIndex) => executeStep(stepIndex)));
+    if (isTimeRangePlan(plan)) {
+      const ranges = await enrichedRangesFromPlanOutput(plan, outputs, request, options.implementations);
+      trace.push({
+        type: 'router',
+        name: 'plan_ir_final_range',
+        output: { planIndex, plan: plan.label, ranges: ranges.map((range) => compactRangeResult(range, request.text)) },
+      });
+      return {
+        plan,
+        planIndex,
+        ranges,
+        trace,
+        toolPasses: trace.filter((step) => step.type === 'tool').length,
+        firstCandidateMs: elapsedMs(startedAt),
+      };
+    }
+
     const finalOutput = finalPlanOutput(plan, outputs);
     if (finalOutput.kind !== 'candidates') {
       throw new Error(`Plan ${plan.label} final output was ${finalOutput.kind}, not candidates.`);
@@ -1349,9 +1549,10 @@ async function executePlanStep(
   switch (step.operation) {
     case 'resolve_calendar_query': {
       const query = requirePlanString(step.query, step, 'query');
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
       const resolved = await options.implementations.resolveCalendarQuery({
         query,
-        calendarContext: request.calendarContext,
+        calendarContext,
         ...(options.features === undefined ? {} : { features: options.features }),
       });
       const candidate = resolved.candidates[0];
@@ -1362,15 +1563,17 @@ async function executePlanStep(
       return { kind: 'candidates', candidates: [{ candidate }] };
     }
     case 'resolve_weekday_anchor': {
-      const resolved = resolveWeekdayAnchor(step, request);
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
+      const resolved = resolveWeekdayAnchor(step, calendarContext);
       recordTool(stepIndex, step, resolved, startedAt);
       return { kind: 'candidates', candidates: resolved };
     }
     case 'resolve_holiday': {
       const holidayName = requirePlanString(step.holidayName, step, 'holidayName');
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
       const holidayInput: Parameters<TemporalToolImplementations['resolveHoliday']>[0] = {
         holidayName,
-        calendarContext: request.calendarContext,
+        calendarContext,
       };
       if (step.year !== null) {
         holidayInput.year = step.year;
@@ -1385,6 +1588,19 @@ async function executePlanStep(
         throw new Error(`resolve_holiday returned no candidates for ${holidayName}.`);
       }
       return { kind: 'candidates', candidates: [{ candidate }] };
+    }
+    case 'resolve_timezone': {
+      const text = requirePlanString(step.text ?? step.query ?? step.timeZone, step, 'text');
+      const resolved = await options.implementations.resolveTimeZone({ text, calendarContext: request.calendarContext });
+      recordTool(stepIndex, step, resolved, startedAt);
+      if (resolved.status === 'ambiguous') {
+        throw new Error(resolved.clarificationQuestion ?? `resolve_timezone found ambiguous timezone text ${text}.`);
+      }
+      const timeZone = resolved.candidates[0];
+      if (resolved.status !== 'resolved' || timeZone === undefined) {
+        throw new Error(`resolve_timezone returned no timezone for ${text}.`);
+      }
+      return { kind: 'timezone', timeZone };
     }
     case 'resolve_clock_time': {
       const text = requirePlanString(step.text ?? step.query, step, 'text');
@@ -1404,15 +1620,16 @@ async function executePlanStep(
     }
     case 'shift_datetime': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
       const [base, time] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
         timeFromPlanStep(step, executeStep),
       ]);
       const candidates = await Promise.all(base.map(async (baseCandidate) => {
         const shiftInput: Parameters<TemporalToolImplementations['shiftDateTime']>[0] = {
-          base: { zonedDateTime: baseCandidate.candidate.zonedDateTime },
+          base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           delta: cleanDelta(step.delta),
-          calendarContext: request.calendarContext,
+          calendarContext,
         };
         if (time !== undefined) {
           shiftInput.time = time;
@@ -1427,6 +1644,7 @@ async function executePlanStep(
     }
     case 'set_clock_time': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
       const [base, time] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
         timeFromPlanStep(step, executeStep),
@@ -1437,9 +1655,9 @@ async function executePlanStep(
       const candidates = await Promise.all(base.map(async (baseCandidate) => ({
         label: baseCandidate.label,
         candidate: await options.implementations.setClockTime({
-          base: { zonedDateTime: baseCandidate.candidate.zonedDateTime },
+          base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           time,
-          calendarContext: request.calendarContext,
+          calendarContext,
         }),
       })));
       recordTool(stepIndex, step, candidates, startedAt);
@@ -1447,6 +1665,7 @@ async function executePlanStep(
     }
     case 'combine_date_time': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
       const [base, time] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
         timeFromPlanStep(step, executeStep),
@@ -1457,19 +1676,20 @@ async function executePlanStep(
       const candidates = await Promise.all(base.map(async (baseCandidate) => ({
         label: baseCandidate.label,
         candidate: await options.implementations.setClockTime({
-          base: { zonedDateTime: baseCandidate.candidate.zonedDateTime },
+          base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           time,
-          calendarContext: request.calendarContext,
+          calendarContext,
         }),
       })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
     case 'propose_candidate': {
+      const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
       const isoInstant = step.isoInstant ?? epochSecondsToIso(step.epochSeconds);
       const candidate = candidateFromProposal({
         isoInstant,
-        timeZone: step.timeZone ?? request.calendarContext.timeZone,
+        timeZone: calendarContext.timeZone,
         precision: requirePlanPrecision(step.precision, step),
         assumptions: [...planStepAssumptions(step)],
       });
@@ -1507,6 +1727,58 @@ async function timeFromPlanStep(
   return output.time;
 }
 
+async function calendarContextForPlanStep(
+  step: TemporalPlanStep,
+  executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+): Promise<CalendarContext> {
+  const timeZone = await timeZoneFromPlanStep(step, executeStep, request, implementations);
+  if (timeZone === undefined) {
+    return request.calendarContext;
+  }
+  return { ...request.calendarContext, timeZone: timeZone.timeZone };
+}
+
+async function timeZoneFromPlanStep(
+  step: TemporalPlanStep,
+  executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+): Promise<TimeZoneResolutionCandidate | undefined> {
+  if (step.timeZoneStep !== null) {
+    const output = await executeStep(step.timeZoneStep);
+    if (output.kind !== 'timezone') {
+      throw new Error(`Step ${step.timeZoneStep} produced ${output.kind}, not a timezone.`);
+    }
+    return output.timeZone;
+  }
+  if (step.timeZone === null) {
+    return undefined;
+  }
+
+  const resolved = await implementations.resolveTimeZone({ text: step.timeZone, calendarContext: request.calendarContext });
+  if (resolved.status === 'ambiguous') {
+    throw new Error(resolved.clarificationQuestion ?? `Plan timezone ${step.timeZone} is ambiguous.`);
+  }
+  const timeZone = resolved.candidates[0];
+  if (resolved.status !== 'resolved' || timeZone === undefined) {
+    throw new Error(`Plan timezone ${step.timeZone} could not be resolved.`);
+  }
+  return timeZone;
+}
+
+function baseForPlanCandidate(candidate: Candidate, calendarContext: CalendarContext): Parameters<TemporalToolImplementations['shiftDateTime']>[0]['base'] {
+  if (candidate.timeZone === calendarContext.timeZone) {
+    return { zonedDateTime: candidate.zonedDateTime };
+  }
+  const zonedDateTime = Temporal.ZonedDateTime.from(candidate.zonedDateTime);
+  if (candidate.precision === 'date') {
+    return { plainDate: zonedDateTime.toPlainDate().toString(), timeZone: calendarContext.timeZone };
+  }
+  return { zonedDateTime: zonedDateTime.withTimeZone(calendarContext.timeZone).toString() };
+}
+
 function finalPlanOutput(plan: TemporalPlan, outputs: TemporalPlanStepOutput[]): TemporalPlanStepOutput {
   if (plan.finalStep !== null) {
     const output = outputs[plan.finalStep];
@@ -1524,6 +1796,169 @@ function finalPlanOutput(plan: TemporalPlan, outputs: TemporalPlanStepOutput[]):
   throw new Error(`Plan ${plan.label} did not produce a candidate.`);
 }
 
+function isTimeRangePlan(plan: TemporalPlan): boolean {
+  return plan.kind === 'time_range' || plan.startStep !== undefined && plan.startStep !== null || plan.endStep !== undefined && plan.endStep !== null;
+}
+
+async function enrichedRangesFromPlanOutput(
+  plan: TemporalPlan,
+  outputs: TemporalPlanStepOutput[],
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+): Promise<PlanRangeResult[]> {
+  const startStep = requireRangeStep(plan.startStep ?? null, plan, 'startStep');
+  const endStep = requireRangeStep(plan.endStep ?? null, plan, 'endStep');
+  const startOutput = outputs[startStep];
+  const endOutput = outputs[endStep];
+  if (startOutput?.kind !== 'candidates') {
+    throw new Error(`Range plan ${plan.label} startStep ${startStep} did not produce candidates.`);
+  }
+  if (endOutput?.kind !== 'candidates') {
+    throw new Error(`Range plan ${plan.label} endStep ${endStep} did not produce candidates.`);
+  }
+
+  const pairs = pairRangeCandidateOutputs(startOutput.candidates, endOutput.candidates);
+  const startValidationText = rangeEndpointValidationText(plan, startStep, request.text);
+  const endValidationText = rangeEndpointValidationText(plan, endStep, request.text);
+  return Promise.all(pairs.map(async (pair) => {
+    const [start, end] = await Promise.all([
+      enrichCandidate(pair.start.candidate, request, implementations, startValidationText),
+      enrichCandidate(pair.end.candidate, request, implementations, endValidationText),
+    ]);
+    const range: PlanRangeResult = {
+      start: { enriched: start, label: pair.start.label },
+      end: { enriched: end, label: pair.end.label },
+      label: pair.label ?? plan.label,
+      validation: validateRange(start, end),
+      finalizable: false,
+    };
+    range.finalizable = range.validation.passed;
+    return range;
+  }));
+}
+
+function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string): string {
+  return planStepValidationText(plan, stepIndex, new Set()) ?? fallback;
+}
+
+function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set<number>): string | null {
+  if (seen.has(stepIndex)) {
+    return null;
+  }
+  seen.add(stepIndex);
+  const step = plan.steps[stepIndex];
+  if (step === undefined) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (step.baseStep !== null) {
+    const baseText = planStepValidationText(plan, step.baseStep, seen);
+    if (baseText !== null) {
+      parts.push(baseText);
+    }
+  }
+  if (step.timeStep !== null) {
+    const timeText = planStepValidationText(plan, step.timeStep, seen);
+    if (timeText !== null) {
+      parts.push(timeText);
+    }
+  }
+  if (step.timeZoneStep !== null) {
+    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen);
+    if (timeZoneText !== null) {
+      parts.push(timeZoneText);
+    }
+  }
+
+  switch (step.operation) {
+    case 'resolve_calendar_query':
+      parts.push(...optionalPlanText(step.query));
+      break;
+    case 'resolve_clock_time':
+    case 'interpret_clock_phrase':
+    case 'resolve_timezone':
+      parts.push(...optionalPlanText(step.text));
+      break;
+    case 'resolve_holiday':
+      parts.push(...optionalPlanText(step.holidayName));
+      break;
+    case 'resolve_weekday_anchor':
+      parts.push(...optionalPlanText([step.weekdayAnchor, step.weekday].filter((value) => value !== null).join(' ')));
+      break;
+    case 'set_clock_time':
+    case 'combine_date_time':
+      if (step.time !== null) {
+        parts.push(formatPlanTimeForValidation(step.time));
+      }
+      break;
+    case 'shift_datetime':
+      break;
+    case 'propose_candidate':
+      if (step.time !== null) {
+        parts.push(formatPlanTimeForValidation(step.time));
+      }
+      break;
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
+function optionalPlanText(value: string | null): string[] {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? [] : [trimmed];
+}
+
+function formatPlanTimeForValidation(time: { hour: number; minute: number }): string {
+  return `${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
+}
+
+function requireRangeStep(value: number | null, plan: TemporalPlan, field: 'startStep' | 'endStep'): number {
+  if (value === null) {
+    throw new Error(`Range plan ${plan.label} requires ${field}.`);
+  }
+  return value;
+}
+
+function pairRangeCandidateOutputs(
+  starts: PlanCandidateOutput[],
+  ends: PlanCandidateOutput[],
+): Array<{ start: PlanCandidateOutput; end: PlanCandidateOutput; label?: string | undefined }> {
+  if (starts.length === 0 || ends.length === 0) {
+    return [];
+  }
+  if (starts.length === ends.length) {
+    return starts.map((start, index) => ({ start, end: ends[index]!, label: start.label ?? ends[index]?.label }));
+  }
+  if (starts.length === 1) {
+    return ends.map((end) => ({ start: starts[0]!, end, label: end.label ?? starts[0]!.label }));
+  }
+  if (ends.length === 1) {
+    return starts.map((start) => ({ start, end: ends[0]!, label: start.label ?? ends[0]!.label }));
+  }
+  throw new Error(`Cannot pair ${starts.length} range starts with ${ends.length} range ends.`);
+}
+
+function validateRange(start: EnrichedCandidate, end: EnrichedCandidate): TemporalValidation {
+  const warnings: string[] = [];
+  if (!start.finalizable) {
+    warnings.push(...(start.validation?.warnings ?? ['Range start is not finalizable.']).map((warning) => `Range start: ${warning}`));
+  }
+  if (!end.finalizable) {
+    warnings.push(...(end.validation?.warnings ?? ['Range end is not finalizable.']).map((warning) => `Range end: ${warning}`));
+  }
+  const startEpoch = candidateToEpoch(start.candidate);
+  const endEpoch = candidateToEpoch(end.candidate);
+  if (endEpoch <= startEpoch) {
+    warnings.push('Range end must be after range start; overnight ranges must explicitly shift the end date.');
+  }
+  return {
+    passed: warnings.length === 0,
+    warnings,
+    checks: ['range_endpoint_validation', 'range_order_validation'],
+  };
+}
+
 function planStepAssumptions(step: TemporalPlanStep): string[] {
   const assumptions = step.assumptions ?? [];
   return assumptions.length > 0 ? assumptions : ['Plan IR proposed an explicit candidate.'];
@@ -1531,11 +1966,14 @@ function planStepAssumptions(step: TemporalPlanStep): string[] {
 
 function normalizeTemporalPlan(plan: RawTemporalPlan): TemporalPlan {
   const normalized: TemporalPlan = {
+    kind: plan.kind ?? 'instant',
     label: plan.label,
     rationale: plan.rationale,
     assumptions: plan.assumptions ?? [],
     confidence: plan.confidence ?? 0.7,
     finalStep: plan.finalStep ?? null,
+    startStep: plan.startStep ?? null,
+    endStep: plan.endStep ?? null,
     steps: plan.steps.map(normalizeTemporalPlanStep),
   };
   return normalized;
@@ -1576,10 +2014,10 @@ function requirePlanPrecision(value: Candidate['precision'] | null, step: Tempor
   return value;
 }
 
-function resolveWeekdayAnchor(step: TemporalPlanStep, request: TemporalParseRequest): PlanCandidateOutput[] {
+function resolveWeekdayAnchor(step: TemporalPlanStep, calendarContext: CalendarContext): PlanCandidateOutput[] {
   const weekday = requirePlanWeekday(step.weekday, step);
   const anchor = step.weekdayAnchor ?? 'upcoming';
-  const reference = Temporal.Instant.from(request.calendarContext.referenceInstant).toZonedDateTimeISO(request.calendarContext.timeZone);
+  const reference = Temporal.Instant.from(calendarContext.referenceInstant).toZonedDateTimeISO(calendarContext.timeZone);
   const targetDay = PLAN_WEEKDAY_INDEX[weekday];
   const rawDaysUntilUpcoming = (targetDay - reference.dayOfWeek + 7) % 7;
   const daysUntilUpcoming = anchor === 'after_next_ambiguous' && rawDaysUntilUpcoming === 0
@@ -1589,7 +2027,7 @@ function resolveWeekdayAnchor(step: TemporalPlanStep, request: TemporalParseRequ
   const candidates = weekdayAnchorOffsets(anchor).map((weeksAfterUpcoming) => {
     const targetDate = upcomingDate.add({ weeks: weeksAfterUpcoming });
     const zonedDateTime = targetDate.toZonedDateTime({
-      timeZone: request.calendarContext.timeZone,
+      timeZone: calendarContext.timeZone,
       plainTime: Temporal.PlainTime.from('12:00'),
     });
     const label = weekdayAnchorLabel(weekday, anchor, weeksAfterUpcoming, targetDate);
@@ -1597,7 +2035,7 @@ function resolveWeekdayAnchor(step: TemporalPlanStep, request: TemporalParseRequ
       label,
       candidate: candidateFromProposal({
         isoInstant: zonedDateTime.toInstant().toString(),
-        timeZone: request.calendarContext.timeZone,
+        timeZone: calendarContext.timeZone,
         precision: 'date',
         assumptions: [`Resolved ${label} with explicit weekday-anchor calendar arithmetic.`],
       }),
@@ -1696,6 +2134,65 @@ function responseFromPlanClarification(
   return response;
 }
 
+function responseFromRangePlanClarification(
+  question: string,
+  executions: Array<{ plan: TemporalPlan; range: PlanRangeResult }>,
+  trace: TemporalAgentTraceStep[],
+  candidateCount: number,
+  toolPasses: number,
+  agentAttempts: number,
+  langfuseTraceId: string | undefined,
+  originalText: string,
+): TemporalParseResponse {
+  const alternatives = uniqueAlternativesByEpoch(executions
+    .map((execution) => alternativeFromEnrichedRange(execution.range.label ?? execution.plan.label, execution.range, 'agent+plan', 0.75, originalText))
+  ).sort((a, b) => rangeAlternativeSortKey(a) - rangeAlternativeSortKey(b));
+  const debug: NonNullable<TemporalParseResponse['debug']> = { candidateCount, agentAttempts, toolPasses, trace };
+  if (langfuseTraceId !== undefined) {
+    debug.langfuseTraceId = langfuseTraceId;
+  }
+  const response: TemporalParseResponse = {
+    status: alternatives.length > 1 ? 'needs_clarification' : 'failed',
+    confidence: 0,
+    method: 'agent+plan',
+    assumptions: [],
+    ambiguity: alternatives.length > 1 ? [question] : ['Plan IR produced multiple ranges but not enough usable clarification alternatives.'],
+    validation: {
+      passed: false,
+      warnings: alternatives.length > 1 ? [question] : ['Plan IR range clarification failed.'],
+      checks: ['plan_ir_range_clarification'],
+    },
+    debug,
+  };
+  if (alternatives.length > 1) {
+    response.clarificationQuestion = question;
+    response.clarificationAlternatives = alternatives;
+  }
+  return response;
+}
+
+function responseFromQuestionOnlyPlanClarification(
+  question: string,
+  reason: string,
+  trace: TemporalAgentTraceStep[],
+  method: TemporalMethod,
+): TemporalParseResponse {
+  return {
+    status: 'needs_clarification',
+    confidence: 0,
+    method,
+    assumptions: [],
+    ambiguity: [reason],
+    validation: {
+      passed: false,
+      warnings: [reason],
+      checks: ['plan_ir_clarification'],
+    },
+    clarificationQuestion: question,
+    debug: { candidateCount: 0, agentAttempts: 0, toolPasses: 0, trace },
+  };
+}
+
 function responseFromFailedPlanIr(
   reason: string,
   trace: TemporalAgentTraceStep[],
@@ -1729,6 +2226,13 @@ async function deterministicParse(
   features?: TemporalFeatureFlags,
 ): Promise<TemporalParseResponse> {
   const startedAt = nowMs();
+  const explicitRange = await deterministicExplicitRangeParse(request, implementations, features);
+  if (explicitRange !== null) {
+    explicitRange.debug = explicitRange.debug ?? {};
+    explicitRange.debug.deterministicDurationMs = elapsedMs(startedAt);
+    return explicitRange;
+  }
+
   const parsed = await implementations.parseExpression({
     text: request.text,
     calendarContext: request.calendarContext,
@@ -1736,9 +2240,11 @@ async function deterministicParse(
   });
   const candidate = parsed.candidates[0];
   if (!candidate) {
-    const needsClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
+    const needsTimeClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
+    const needsTimeZoneClarification = parsed.parserNotes.some((note) => note.toLowerCase().includes('ambiguous timezone') || note.startsWith('Which timezone'));
+    const needsClarification = needsTimeClarification || needsTimeZoneClarification;
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
-    const clarificationAlternatives = needsClarification ? await bareHourAlternatives(request, implementations, features) : [];
+    const clarificationAlternatives = needsTimeClarification ? await bareHourAlternatives(request, implementations, features) : [];
     const response: TemporalParseResponse = {
       status: needsClarification ? 'needs_clarification' : 'failed',
       confidence: 0,
@@ -1749,7 +2255,9 @@ async function deterministicParse(
       debug: { candidateCount: 0, deterministicDurationMs: elapsedMs(startedAt) },
     };
     if (needsClarification) {
-      response.clarificationQuestion = clarificationAlternatives.length > 0
+      response.clarificationQuestion = needsTimeZoneClarification
+        ? warning
+        : clarificationAlternatives.length > 0
         ? 'Which time did you mean?'
         : 'Please include AM or PM, or use 24-hour time like 13:00.';
       if (clarificationAlternatives.length > 0) {
@@ -1778,11 +2286,310 @@ async function deterministicParse(
   return response;
 }
 
+async function deterministicExplicitRangeParse(
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
+): Promise<TemporalParseResponse | null> {
+  const discordParts = parseExplicitDiscordTimestampRangeParts(request.text);
+  if (discordParts !== null) {
+    return deterministicDiscordTimestampRangeParse(discordParts, request, implementations);
+  }
+
+  const parts = parseExplicitDatedTimeRangeParts(request.text);
+  if (parts !== null) {
+    return deterministicDatedTimeRangeParse(parts, request, implementations, features);
+  }
+
+  const bareParts = parseExplicitBareTimeRangeParts(request.text);
+  if (bareParts !== null) {
+    return deterministicBareTimeRangeParse(bareParts, request, implementations, features);
+  }
+
+  return null;
+}
+
+async function deterministicDiscordTimestampRangeParse(
+  parts: ExplicitDiscordTimestampRangeParts,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+): Promise<TemporalParseResponse | null> {
+  const startCandidate = candidateFromDiscordTimestampRangePart(parts.startEpochSeconds, request, 'Used explicit Discord timestamp range start from input.');
+  const endCandidate = candidateFromDiscordTimestampRangePart(parts.endEpochSeconds, request, 'Used explicit Discord timestamp range end from input.');
+  if (startCandidate === null || endCandidate === null) {
+    return null;
+  }
+
+  const [start, end] = await Promise.all([
+    enrichCandidate(startCandidate, request, implementations, `<t:${parts.startEpochSeconds}${parts.startFormatCode}>`),
+    enrichCandidate(endCandidate, request, implementations, `<t:${parts.endEpochSeconds}${parts.endFormatCode}>`),
+  ]);
+  const range: PlanRangeResult = {
+    start: { enriched: start, label: 'Start' },
+    end: { enriched: end, label: 'End' },
+    label: 'Discord timestamp range',
+    validation: validateRange(start, end),
+    finalizable: false,
+  };
+  range.finalizable = range.validation.passed;
+
+  const startFormatIndex = discordTimestampFormatIndex(parts.startFormatCode);
+  const endFormatIndex = discordTimestampFormatIndex(parts.endFormatCode);
+  const response = responseFromEnrichedRange(
+    range,
+    'deterministic',
+    0.95,
+    'Deterministic Discord timestamp range parse.',
+    2,
+    0,
+    0,
+    undefined,
+    undefined,
+    request.text,
+  );
+  if (response.range !== undefined) {
+    response.suggestedFormatIndex = startFormatIndex;
+    response.range.start.suggestedFormatIndex = startFormatIndex;
+    response.range.end.suggestedFormatIndex = endFormatIndex;
+    response.range.discord = `${discordTimestamp(response.range.start.epoch, startFormatIndex)} - ${discordTimestamp(response.range.end.epoch, endFormatIndex)}`;
+  }
+  return response;
+}
+
+function parseExplicitDiscordTimestampRangeParts(text: string): ExplicitDiscordTimestampRangeParts | null {
+  const match = DISCORD_TIMESTAMP_RANGE_PATTERN.exec(text);
+  if (!match?.[1] || !match[3]) {
+    return null;
+  }
+  return {
+    startEpochSeconds: match[1],
+    startFormatCode: match[2] ?? ':f',
+    endEpochSeconds: match[3],
+    endFormatCode: match[4] ?? ':f',
+  };
+}
+
+function candidateFromDiscordTimestampRangePart(epochSeconds: string, request: TemporalParseRequest, assumption: string): Candidate | null {
+  try {
+    const instant = Temporal.Instant.fromEpochNanoseconds(BigInt(epochSeconds) * 1_000_000_000n);
+    return candidateFromProposal({
+      isoInstant: instant.toString(),
+      timeZone: request.calendarContext.timeZone,
+      precision: 'datetime',
+      assumptions: [assumption],
+    });
+  } catch {
+    return null;
+  }
+}
+
+function discordTimestampFormatIndex(formatCode: string): number {
+  const normalized = formatCode === ':r' ? ':R' : formatCode;
+  const formatIndex = DISCORD_TIMESTAMP_FORMAT_CODES.findIndex((code) => code === normalized);
+  return formatIndex >= 0 ? formatIndex : 4;
+}
+
+async function deterministicDatedTimeRangeParse(
+  parts: ExplicitDatedTimeRangeParts,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
+): Promise<TemporalParseResponse | null> {
+
+  const timeZoneResolution = await implementations.resolveTimeZone({ text: request.text, calendarContext: request.calendarContext });
+  if (timeZoneResolution.status === 'ambiguous') {
+    return null;
+  }
+  const resolvedTimeZone = timeZoneResolution.status === 'resolved' ? timeZoneResolution.candidates[0] : undefined;
+  if (parts.suffixText.length > 0 && resolvedTimeZone === undefined) {
+    return null;
+  }
+
+  const calendarContext: CalendarContext = {
+    ...request.calendarContext,
+    timeZone: resolvedTimeZone?.timeZone ?? request.calendarContext.timeZone,
+  };
+  const dateResolved = await implementations.resolveCalendarQuery({
+    query: parts.dateText,
+    calendarContext,
+    ...(features === undefined ? {} : { features }),
+  });
+  const dateCandidate = dateResolved.candidates[0];
+  if (dateCandidate === undefined) {
+    return null;
+  }
+
+  const [startClockResolved, endClockResolved] = await Promise.all([
+    implementations.resolveClockTime({ text: parts.startText, calendarContext }),
+    implementations.resolveClockTime({ text: parts.endText, calendarContext }),
+  ]);
+  const startClock = startClockResolved.candidates[0];
+  const endClock = endClockResolved.candidates[0];
+  if (startClock === undefined || endClock === undefined) {
+    return null;
+  }
+
+  const date = Temporal.ZonedDateTime.from(dateCandidate.zonedDateTime)
+    .withTimeZone(calendarContext.timeZone)
+    .toPlainDate()
+    .toString();
+  const [startCandidate, endCandidate] = await Promise.all([
+    implementations.setClockTime({ base: { plainDate: date, timeZone: calendarContext.timeZone }, time: { hour: startClock.hour, minute: startClock.minute }, calendarContext }),
+    implementations.setClockTime({ base: { plainDate: date, timeZone: calendarContext.timeZone }, time: { hour: endClock.hour, minute: endClock.minute }, calendarContext }),
+  ]);
+  const timeZoneText = resolvedTimeZone?.matchedText ?? '';
+  const [start, end] = await Promise.all([
+    enrichCandidate(startCandidate, request, implementations, explicitRangeEndpointValidationText(parts, parts.startText, timeZoneText)),
+    enrichCandidate(endCandidate, request, implementations, explicitRangeEndpointValidationText(parts, parts.endText, timeZoneText)),
+  ]);
+  const range: PlanRangeResult = {
+    start: { enriched: start, label: parts.startText },
+    end: { enriched: end, label: parts.endText },
+    label: `${parts.dateText} ${parts.startText}-${parts.endText}`,
+    validation: validateRange(start, end),
+    finalizable: false,
+  };
+  range.finalizable = range.validation.passed;
+  return responseFromEnrichedRange(
+    range,
+    'deterministic',
+    0.82,
+    'Deterministic explicit time range parse.',
+    2,
+    0,
+    0,
+    undefined,
+    undefined,
+    request.text,
+  );
+}
+
+async function deterministicBareTimeRangeParse(
+  parts: ExplicitBareTimeRangeParts,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
+): Promise<TemporalParseResponse | null> {
+  const timeZoneResolution = await implementations.resolveTimeZone({ text: request.text, calendarContext: request.calendarContext });
+  if (timeZoneResolution.status === 'ambiguous') {
+    return null;
+  }
+  const resolvedTimeZone = timeZoneResolution.status === 'resolved' ? timeZoneResolution.candidates[0] : undefined;
+  if (parts.suffixText.length > 0 && resolvedTimeZone === undefined) {
+    return null;
+  }
+
+  const calendarContext: CalendarContext = {
+    ...request.calendarContext,
+    timeZone: resolvedTimeZone?.timeZone ?? request.calendarContext.timeZone,
+  };
+  const startResolved = await implementations.parseExpression({
+    text: parts.startText,
+    calendarContext,
+    ...(features === undefined ? {} : { features }),
+  });
+  const startCandidate = startResolved.candidates[0];
+  if (startCandidate === undefined) {
+    return null;
+  }
+
+  const endClockResolved = await implementations.resolveClockTime({ text: parts.endText, calendarContext });
+  const endClock = endClockResolved.candidates[0];
+  if (endClock === undefined) {
+    return null;
+  }
+
+  const startDate = Temporal.ZonedDateTime.from(startCandidate.zonedDateTime)
+    .withTimeZone(calendarContext.timeZone)
+    .toPlainDate()
+    .toString();
+  let endCandidate = await implementations.setClockTime({
+    base: { plainDate: startDate, timeZone: calendarContext.timeZone },
+    time: { hour: endClock.hour, minute: endClock.minute },
+    calendarContext,
+  });
+  if (candidateToEpoch(endCandidate) <= candidateToEpoch(startCandidate)) {
+    endCandidate = await implementations.shiftDateTime({
+      base: { zonedDateTime: endCandidate.zonedDateTime },
+      delta: { days: 1 },
+      calendarContext,
+    });
+  }
+
+  const timeZoneText = resolvedTimeZone?.matchedText ?? '';
+  const [start, end] = await Promise.all([
+    enrichCandidate(startCandidate, request, implementations, explicitBareRangeEndpointValidationText(parts.startText, timeZoneText)),
+    enrichCandidate(endCandidate, request, implementations, explicitBareRangeEndpointValidationText(parts.endText, timeZoneText)),
+  ]);
+  const range: PlanRangeResult = {
+    start: { enriched: start, label: parts.startText },
+    end: { enriched: end, label: parts.endText },
+    label: `${parts.startText}-${parts.endText}`,
+    validation: validateRange(start, end),
+    finalizable: false,
+  };
+  range.finalizable = range.validation.passed;
+  return responseFromEnrichedRange(
+    range,
+    'deterministic',
+    0.82,
+    'Deterministic explicit time range parse.',
+    2,
+    0,
+    0,
+    undefined,
+    undefined,
+    request.text,
+  );
+}
+
+function parseExplicitDatedTimeRangeParts(text: string): ExplicitDatedTimeRangeParts | null {
+  const match = EXPLICIT_DATED_TIME_RANGE_PATTERN.exec(text);
+  const groups = match?.groups as Partial<ExplicitDatedTimeRangeParts> | undefined;
+  if (groups?.dateText === undefined || groups.startText === undefined || groups.endText === undefined) {
+    return null;
+  }
+  const dateText = groups.dateText.trim();
+  if (!EXPLICIT_RANGE_DATE_SIGNAL_PATTERN.test(dateText)) {
+    return null;
+  }
+  return {
+    dateText,
+    startText: groups.startText.trim(),
+    endText: groups.endText.trim(),
+    suffixText: groups.suffixText?.trim() ?? '',
+  };
+}
+
+function parseExplicitBareTimeRangeParts(text: string): ExplicitBareTimeRangeParts | null {
+  const match = EXPLICIT_BARE_TIME_RANGE_PATTERN.exec(text);
+  const groups = match?.groups as Partial<ExplicitBareTimeRangeParts> | undefined;
+  if (groups?.startText === undefined || groups.endText === undefined) {
+    return null;
+  }
+  return {
+    startText: groups.startText.trim(),
+    endText: groups.endText.trim(),
+    suffixText: groups.suffixText?.trim() ?? '',
+  };
+}
+
+function explicitRangeEndpointValidationText(parts: ExplicitDatedTimeRangeParts, clockText: string, timeZoneText: string): string {
+  return [parts.dateText, clockText, timeZoneText].filter((part) => part.length > 0).join(' ');
+}
+
+function explicitBareRangeEndpointValidationText(clockText: string, timeZoneText: string): string {
+  return [clockText, timeZoneText].filter((part) => part.length > 0).join(' ');
+}
+
 async function validateDeterministicResolvedResponse(
   request: TemporalParseRequest,
   response: TemporalParseResponse,
   options: TemporalGraphOptions,
 ): Promise<TemporalParseResponse> {
+  if (response.kind === 'time_range') {
+    return response;
+  }
   if (response.status !== 'resolved' || response.canonical === undefined || response.epoch === undefined || options.openaiApiKey === undefined) {
     return response;
   }
@@ -1925,6 +2732,10 @@ async function multiClockDateAmbiguityPolicy(
   implementations: TemporalToolImplementations,
   features?: TemporalFeatureFlags,
 ): Promise<AmbiguityPolicyResult | null> {
+  if (parseExplicitDatedTimeRangeParts(request.text) !== null) {
+    return null;
+  }
+
   const dateText = MONTH_DATE_QUERY_PATTERN.exec(request.text)?.[0];
   if (dateText === undefined) {
     return null;
@@ -1932,6 +2743,9 @@ async function multiClockDateAmbiguityPolicy(
 
   const clocks = explicitAmPmClockMentions(request.text);
   if (clocks.length < 2) {
+    return null;
+  }
+  if (hasExplicitRangeConnectorBetweenClocks(request.text, clocks)) {
     return null;
   }
 
@@ -1960,6 +2774,18 @@ async function multiClockDateAmbiguityPolicy(
     question: 'Which event time should the Discord timestamp use?',
     alternatives: alternatives.sort((a, b) => a.epoch - b.epoch),
   };
+}
+
+function hasExplicitRangeConnectorBetweenClocks(text: string, clocks: ExplicitClockMention[]): boolean {
+  for (let index = 0; index < clocks.length - 1; index += 1) {
+    const left = clocks[index]!;
+    const right = clocks[index + 1]!;
+    const connector = text.slice(left.index + left.text.length, right.index);
+    if (/^\s*(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*$/i.test(connector)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function bareMeridiemClockAmbiguityPolicy(
@@ -2070,7 +2896,7 @@ function distinctEpochAlternatives(alternatives: TemporalClarificationAlternativ
   return distinct;
 }
 
-function explicitAmPmClockMentions(text: string): Array<{ text: string; label: string; time: { hour: number; minute: number } }> {
+function explicitAmPmClockMentions(text: string): ExplicitClockMention[] {
   return [...text.matchAll(AM_PM_CLOCK_MENTION_PATTERN)].map((match) => {
     const hourText = match[1]!;
     const suffix = match[3]!.toLowerCase();
@@ -2081,6 +2907,7 @@ function explicitAmPmClockMentions(text: string): Array<{ text: string; label: s
     const minute = Number(match[2] ?? 0);
     return {
       text: match[0],
+      index: match.index ?? 0,
       label: formatClockMentionLabel(hour, minute),
       time: { hour, minute },
     };
@@ -2164,6 +2991,74 @@ function alternativeFromEnrichedCandidate(
   };
 }
 
+function alternativeFromEnrichedRange(
+  label: string,
+  range: PlanRangeResult,
+  method: TemporalClarificationAlternative['method'],
+  confidence: number,
+  originalText: string,
+): TemporalClarificationAlternative {
+  const rangeResult = temporalRangeResultFromPlanRange(range, originalText);
+  return {
+    label,
+    kind: 'time_range',
+    epoch: rangeResult.start.epoch,
+    suggestedFormatIndex: rangeResult.start.suggestedFormatIndex,
+    range: rangeResult,
+    confidence,
+    method,
+    canonical: rangeResult.start.canonical,
+    assumptions: rangeAssumptions(range),
+  };
+}
+
+function temporalRangeResultFromPlanRange(range: PlanRangeResult, originalText: string): TemporalRangeResult {
+  const formats = rangeDisplayFormatIndexes(range.start.enriched, range.end.enriched, originalText);
+  const start = temporalRangeEndpointFromEnriched(range.start.enriched, formats.startFormatIndex);
+  const end = temporalRangeEndpointFromEnriched(range.end.enriched, formats.endFormatIndex);
+  return {
+    start,
+    end,
+    discord: `${discordTimestamp(start.epoch, start.suggestedFormatIndex)} - ${discordTimestamp(end.epoch, end.suggestedFormatIndex)}`,
+  };
+}
+
+function temporalRangeEndpointFromEnriched(enriched: EnrichedCandidate, suggestedFormatIndexValue: number): TemporalRangeEndpoint {
+  const canonical: TemporalRangeEndpoint['canonical'] = {
+    isoInstant: enriched.candidate.isoInstant,
+    zonedDateTime: enriched.candidate.zonedDateTime,
+    timeZone: enriched.candidate.timeZone,
+    precision: enriched.candidate.precision,
+  };
+  if (enriched.facts !== undefined) {
+    canonical.weekday = enriched.facts.weekday;
+  }
+  return {
+    epoch: candidateToEpoch(enriched.candidate),
+    suggestedFormatIndex: suggestedFormatIndexValue,
+    canonical,
+  };
+}
+
+function rangeDisplayFormatIndexes(start: EnrichedCandidate, end: EnrichedCandidate, originalText: string): { startFormatIndex: number; endFormatIndex: number } {
+  const startFormatIndex = suggestedFormatIndex(originalText, start.candidate.precision);
+  const startZdt = Temporal.ZonedDateTime.from(start.candidate.zonedDateTime).withTimeZone(start.candidate.timeZone);
+  const endZdt = Temporal.ZonedDateTime.from(end.candidate.zonedDateTime).withTimeZone(end.candidate.timeZone);
+  const sameDate = start.candidate.timeZone === end.candidate.timeZone && Temporal.PlainDate.compare(startZdt.toPlainDate(), endZdt.toPlainDate()) === 0;
+  const endFormatIndex = sameDate && start.candidate.precision !== 'date' && end.candidate.precision !== 'date'
+    ? 2
+    : suggestedFormatIndex(originalText, end.candidate.precision);
+  return { startFormatIndex, endFormatIndex };
+}
+
+function discordTimestamp(epoch: number, formatIndex: number): string {
+  return `<t:${epoch}${DISCORD_TIMESTAMP_FORMAT_CODES[formatIndex] ?? ':f'}>`;
+}
+
+function rangeAssumptions(range: PlanRangeResult): string[] {
+  return [...range.start.enriched.candidate.assumptions, ...range.end.enriched.candidate.assumptions];
+}
+
 function canUseForClarification(enriched: EnrichedCandidate): boolean {
   if (enriched.finalizable) {
     return true;
@@ -2217,6 +3112,7 @@ async function enrichCandidate(
   candidate: Candidate,
   request: TemporalParseRequest,
   implementations: TemporalToolImplementations,
+  validationText = request.text,
 ): Promise<EnrichedCandidate> {
   const [facts, shortFormat, fullFormat, weekdayFormat, discordFormat, validation] = await Promise.all([
     implementations.candidateFacts({ candidate, calendarContext: request.calendarContext }),
@@ -2224,7 +3120,7 @@ async function enrichCandidate(
     implementations.formatCandidate({ candidate, calendarContext: request.calendarContext, style: 'full' }),
     implementations.formatCandidate({ candidate, calendarContext: request.calendarContext, style: 'weekday-check' }),
     implementations.formatCandidate({ candidate, calendarContext: request.calendarContext, style: 'discord-preview' }),
-    implementations.validateCandidate({ originalText: request.text, candidate, calendarContext: request.calendarContext }),
+    implementations.validateCandidate({ originalText: validationText, candidate, calendarContext: request.calendarContext }),
   ]);
 
   return {
@@ -2294,6 +3190,42 @@ function responseFromEnrichedCandidate(
   return response;
 }
 
+function responseFromEnrichedRange(
+  range: PlanRangeResult,
+  method: TemporalParseResponse['method'],
+  confidence: number,
+  rationale: string,
+  candidateCount: number,
+  toolPasses: number,
+  agentAttempts: number,
+  trace: TemporalAgentTraceStep[] | undefined,
+  langfuseTraceId: string | undefined,
+  originalText: string,
+): TemporalParseResponse {
+  const rangeResult = temporalRangeResultFromPlanRange(range, originalText);
+  const debug: NonNullable<TemporalParseResponse['debug']> = { chosenCandidateId: `${range.start.enriched.candidate.id}:${range.end.enriched.candidate.id}`, candidateCount, agentAttempts, toolPasses };
+  if (trace !== undefined) {
+    debug.trace = trace;
+  }
+  if (langfuseTraceId !== undefined) {
+    debug.langfuseTraceId = langfuseTraceId;
+  }
+  return {
+    kind: 'time_range',
+    status: range.validation.passed ? 'resolved' : 'ambiguous',
+    epoch: rangeResult.start.epoch,
+    suggestedFormatIndex: rangeResult.start.suggestedFormatIndex,
+    range: rangeResult,
+    confidence: range.validation.passed ? confidence : Math.min(confidence, 0.4),
+    method,
+    canonical: rangeResult.start.canonical,
+    assumptions: rationale ? [...rangeAssumptions(range), rationale] : rangeAssumptions(range),
+    ambiguity: range.validation.passed ? [] : range.validation.warnings,
+    validation: range.validation,
+    debug,
+  };
+}
+
 function compactEnrichedCandidate(enriched: EnrichedCandidate): Record<string, unknown> {
   return cleanUndefined({
     candidate: {
@@ -2309,6 +3241,16 @@ function compactEnrichedCandidate(enriched: EnrichedCandidate): Record<string, u
     validation: enriched.validation,
     finalizable: enriched.finalizable,
   });
+}
+
+function compactRangeResult(range: PlanRangeResult, originalText: string): Record<string, unknown> {
+  return {
+    start: compactEnrichedCandidate(range.start.enriched),
+    end: compactEnrichedCandidate(range.end.enriched),
+    validation: range.validation,
+    finalizable: range.finalizable,
+    display: temporalRangeResultFromPlanRange(range, originalText),
+  };
 }
 
 function compactCandidateFacts(facts: EnrichedCandidate['facts']): Record<string, unknown> | undefined {
@@ -2330,21 +3272,39 @@ function compactCandidateFacts(facts: EnrichedCandidate['facts']): Record<string
 function compactClarificationAlternative(alternative: TemporalClarificationAlternative): Record<string, unknown> {
   return {
     label: alternative.label,
+    kind: alternative.kind,
     epoch: alternative.epoch,
     suggestedFormatIndex: alternative.suggestedFormatIndex,
+    range: alternative.range,
     confidence: alternative.confidence,
     method: alternative.method,
   };
 }
 
 function uniqueAlternativesByEpoch(alternatives: TemporalClarificationAlternative[]): TemporalClarificationAlternative[] {
-  const seen = new Map<number, TemporalClarificationAlternative>();
+  const seen = new Map<string, TemporalClarificationAlternative>();
   for (const alternative of alternatives) {
-    if (!seen.has(alternative.epoch)) {
-      seen.set(alternative.epoch, alternative);
+    const key = alternativeKey(alternative);
+    if (!seen.has(key)) {
+      seen.set(key, alternative);
     }
   }
   return [...seen.values()];
+}
+
+function alternativeKey(alternative: TemporalClarificationAlternative): string {
+  if (alternative.range !== undefined) {
+    return `${alternative.range.start.epoch}:${alternative.range.end.epoch}`;
+  }
+  return String(alternative.epoch);
+}
+
+function rangeAlternativeSortKey(alternative: TemporalClarificationAlternative): number {
+  return alternative.range?.start.epoch ?? alternative.epoch;
+}
+
+function rangeKey(range: PlanRangeResult): string {
+  return `${candidateToEpoch(range.start.enriched.candidate)}:${candidateToEpoch(range.end.enriched.candidate)}`;
 }
 
 function onlyFinalizableCandidate(enrichedCandidates: Map<string, EnrichedCandidate>): EnrichedCandidate | null {
@@ -2666,7 +3626,7 @@ function responseFromSemanticConsistencyGateRejection(
 ): TemporalParseResponse {
   const warning = `Semantic Consistency Gate ${gate.decision}: ${gate.explanation}`;
   const warnings = uniqueStrings([warning, ...gate.reasonCodes, ...response.validation.warnings]);
-  const { epoch: _epoch, suggestedFormatIndex: _suggestedFormatIndex, canonical: _canonical, ...safeResponse } = response;
+  const { epoch: _epoch, suggestedFormatIndex: _suggestedFormatIndex, canonical: _canonical, range: _range, kind: _kind, ...safeResponse } = response;
   return {
     ...safeResponse,
     status: response.clarificationAlternatives !== undefined && response.clarificationAlternatives.length > 1 ? 'needs_clarification' : 'failed',
@@ -2697,6 +3657,8 @@ Rules:
 - If the input has an obvious typo in a temporal word, interpret the intended temporal word yourself, state it as an assumption, and call candidate-producing tools directly. Do not spend a tool call asking deterministic parsers to parse the misspelled raw text.
 - For relative compositions, resolve or choose an anchor, then apply shift_datetime. If the intended normalized clock time is already known, pass time to shift_datetime instead of calling set_clock_time afterward.
 - Use resolve_clock_time only for conventional explicit clock syntax. For fuzzy clock wording, you may infer the intended normalized 24-hour time yourself, pass it to shift_datetime or set_clock_time, and state that assumption.
+- Use resolve_timezone for explicit timezone text. Prefer regional/IANA timezone intent for names like Eastern time, UK time, and Japan time; use fixed offsets only for explicit UTC/GMT offset text.
+- If a timezone abbreviation is ambiguous, such as CST, IST, or BST, ask for clarification rather than choosing silently.
 - When inferring a fuzzy clock token, first decide whether the token is wordplay, slang, or a cultural time phrase rather than a literal clock string.
 - Preserve all available signal. Do not silently discard trailing characters or default minutes to :00 when the token appears to include minute information.
 - For obfuscated cultural clock phrases, preserve the intended phrase meaning. For example, leetspeak references to "leet time" mean 13:37, not a literal parse of the visible digits.
@@ -2738,6 +3700,7 @@ Available plan operations:
 - resolve_weekday_anchor: use for weekday-only anchoring when wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
 - resolve_holiday: use for holiday names; include year and normalized time when the user specified them.
 - resolve_clock_time: use for conventional explicit clock text like "13:37", "1pm", "noon", or "one hour past noon and 10 minutes".
+- resolve_timezone: use for explicit timezone text. Reference it from date/time operations with timeZoneStep, or put exact IANA/fixed-offset text directly in timeZone.
 - interpret_clock_phrase: use when the clock phrase is semantic/fuzzy rather than conventional syntax, such as "leet time" or "133t time". You must set time to the interpreted 24-hour clock.
 - shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Use time or timeStep when the final clock is known.
 - set_clock_time: apply a normalized clock time to a prior candidate step.
@@ -2747,10 +3710,14 @@ Available plan operations:
 Planning rules:
 - Emit up to four independent plans. The executor evaluates plans in parallel and also runs independent step dependencies in parallel.
 - Prefer one clear plan when the input has one intended meaning.
+- For a time range like "tomorrow 3pm-5pm", emit one plan with kind="time_range", startStep pointing to the start candidate, and endStep pointing to the end candidate. The start and end candidates should both preserve date, clock, and timezone evidence.
+- For same-day ranges, resolve the shared date once, resolve each endpoint clock separately, then combine both clocks with the same date. For overnight ranges like "Friday 11pm-1am", explicitly shift the end candidate by one day so the final end is after the start.
+- For date-span or schedule-block wording like "Tuesday through Thursday" or "Tuesday through Thursday 3-5pm", use outcome "no_plan" unless the request clearly means one continuous event range with exact start and end timestamps.
 - Use outcome "clarification" with alternative plans when AM/PM, "next weekday", or shorthand ambiguity materially changes the timestamp.
 - For a top-level request that begins "next <weekday>", including bare dates, conventional clocks, and fuzzy clocks such as "next saturday", "next saturday at 5pm", or "next saturday at l33t time", treat the weekday convention as materially ambiguous unless surrounding wording explicitly says "upcoming", "this", or "the week after". Use resolve_weekday_anchor with weekdayAnchor=next_ambiguous, combine any clock separately, and return clarification.
 - If "next <weekday>" is only an internal anchor inside a larger offset expression such as "day after next saturday", prefer resolve_calendar_query and the deterministic parser's calendar convention.
 - For fuzzy cultural clock cases, resolve the semantic clock, but keep any independent date ambiguity as clarification alternatives.
+- For explicit timezone names or abbreviations, preserve timezone intent. Use IANA/regional timezones for named regions so DST is date-specific. Use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, use outcome "clarification" rather than choosing.
 - Phrases like "sunday after next" are ambiguous. Do not choose one silently; use resolve_weekday_anchor with weekdayAnchor=after_next_ambiguous and outcome "clarification".
 - For dependent compositions, resolve the anchor and clock independently when possible, then combine with shift_datetime or set_clock_time.
 - For typos in temporal words, correct the phrase in resolve_calendar_query and include the correction in the plan rationale.
@@ -2758,7 +3725,7 @@ Planning rules:
 - For negative or unsupported-length bare epoch-like numbers, use outcome "no_plan" rather than guessing.
 - For bounded repeated "day after ... tomorrow" chains up to five repetitions, resolve "tomorrow" and emit one shift_datetime step whose days delta equals the repetition count. If the chain is longer or uncertain, use outcome "no_plan" rather than guessing.
 - Preserve every date, time, holiday, weekday, offset, and timezone signal. If you cannot express the full meaning with the operations, use outcome "no_plan".
-- finalStep should be a zero-based index pointing to the candidate-producing step that represents the final answer. Use null to let the executor use the last candidate step.
+- finalStep should be a zero-based index pointing to the candidate-producing step that represents an instant answer. For time_range plans, set finalStep to null and set startStep/endStep to the candidate-producing endpoint steps.
 
 Calendar context:
 ${JSON.stringify(request.calendarContext)}
@@ -3022,6 +3989,7 @@ function summarizeCandidateRecord(record: Record<string, unknown>): Record<strin
     id: record['id'],
     isoInstant: record['isoInstant'],
     zonedDateTime: record['zonedDateTime'],
+    timeZone: record['timeZone'],
     precision: record['precision'],
     provenance: record['provenance'],
     assumptions: record['assumptions'],

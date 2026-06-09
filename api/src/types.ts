@@ -19,8 +19,10 @@ export interface ParseFeatureOverrides {
 
 export interface ParseResponse {
   generationId: string;
+  kind?: 'instant' | 'time_range';
   epoch: number;
   suggestedFormatIndex: number;
+  range?: ParseRangeResult;
   confidence: number;
   method: string;
   canonical?: ParseCanonical;
@@ -36,10 +38,24 @@ export interface ParseCanonical {
 
 export interface ParseAlternative {
   label: string;
+  kind?: 'instant' | 'time_range';
   epoch: number;
   suggestedFormatIndex: number;
+  range?: ParseRangeResult;
   confidence: number;
   method: string;
+}
+
+export interface ParseRangeEndpoint {
+  epoch: number;
+  suggestedFormatIndex: number;
+  canonical: ParseCanonical;
+}
+
+export interface ParseRangeResult {
+  start: ParseRangeEndpoint;
+  end: ParseRangeEndpoint;
+  discord: string;
 }
 
 // Error response interface

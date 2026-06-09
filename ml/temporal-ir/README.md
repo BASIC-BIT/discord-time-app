@@ -251,7 +251,7 @@ Enable the API sidecar with ignored local env values in `api/.env`:
 ```text
 TEMPORAL_FEATURE_PLAN_IR=true
 TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-time-range-2687
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -262,15 +262,16 @@ TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000
 For the local desktop app, persist the env-file and source-sidecar paths at the Windows user-env level so release/autostart launches do not depend on the current working directory:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_API_ENV", "D:\bench\discord-time-app-src\api\.env", "User")
-[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_API_ENTRYPOINT", "D:\bench\discord-time-app-src\api\dist\index.js", "User")
+$repoRoot = (Resolve-Path .).Path
+[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_API_ENV", (Join-Path $repoRoot "api\.env"), "User")
+[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_API_ENTRYPOINT", (Join-Path $repoRoot "api\dist\index.js"), "User")
 [Environment]::SetEnvironmentVariable("HAMMEROVERLAY_NODE", "C:\ProgramData\nvm\v24.15.0\node.exe", "User")
 ```
 
 To keep the local SLM server available after login, use `scripts/start-temporal-peft-server.ps1`. If Windows Scheduled Tasks cannot be registered without elevation, place a shortcut in the user Startup folder that runs:
 
 ```powershell
-powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "D:\bench\discord-time-app-src\scripts\start-temporal-peft-server.ps1"
+powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "E:\altbench\discord-time-app\scripts\start-temporal-peft-server.ps1"
 ```
 
 After rebuilding the API sidecar, restart the parser service or HammerOverlay so the running sidecar picks up the new `dist` files and environment. Confirm with `/health`: `TEMPORAL_FEATURE_PLAN_IR` should be `true`, `TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL` should point at `127.0.0.1:8765/v1`, `TEMPORAL_PLAN_IR_ENDPOINT_API` and `TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT` should both be `chat`, and `OPENAI_API_KEY` can be `not configured` for a local-only test.
@@ -280,7 +281,7 @@ Then evaluate it as an OpenAI-compatible chat endpoint:
 ```powershell
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8765/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-noisy-input-2586"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"

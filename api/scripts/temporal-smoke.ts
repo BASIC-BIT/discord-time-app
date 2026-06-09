@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { parseTemporalExpression } from '../src/temporal';
-import { collectTemporalAgentContext } from '../src/temporal/deterministic';
+import { collectTemporalAgentContext, parseCalendarContext } from '../src/temporal/deterministic';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
 
 const referenceInstant = '2026-05-15T16:00:00Z'; // Friday noon in America/New_York.
@@ -12,6 +12,9 @@ async function parse(text: string) {
 }
 
 async function main() {
+  const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
+  assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
+
   const bareSaturday = await parse('Saturday');
   assert.equal(bareSaturday.status, 'resolved');
   assert.match(bareSaturday.generationId ?? '', /^tp_[0-9a-f-]+$/);
@@ -123,6 +126,66 @@ async function main() {
   });
   assert.equal(dateOnlyNoon.status, 'resolved');
   assert.equal(dateOnlyNoon.canonical?.zonedDateTime.startsWith('2026-05-16T12:00:00'), true);
+
+  const explicitDatedRange = await parseTemporalExpression({
+    text: 'June 10 2026 3pm-5pm America/Los_Angeles',
+    timeZone,
+    referenceInstant: '2026-06-08T06:50:00Z',
+  });
+  assert.equal(explicitDatedRange.status, 'resolved');
+  assert.equal(explicitDatedRange.kind, 'time_range');
+  assert.equal(explicitDatedRange.method, 'deterministic');
+  assert.equal(explicitDatedRange.range?.start.epoch, 1781128800);
+  assert.equal(explicitDatedRange.range?.end.epoch, 1781136000);
+
+  const explicitDatedRangeWithConfiguredOpenAi = await parseTemporalExpression({
+    text: 'June 10 2026 3pm-5pm America/Los_Angeles',
+    timeZone,
+    referenceInstant: '2026-06-08T06:50:00Z',
+    openaiApiKey: 'sk-test',
+    features: { deterministicPreflight: true },
+  });
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.status, 'resolved');
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.kind, 'time_range');
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.method, 'deterministic');
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.debug?.finalValidation, undefined);
+
+  const explicitDiscordTimestampRange = await parseTemporalExpression({
+    text: '<t:1781038800:f> - <t:1781046000:t>',
+    timeZone,
+    referenceInstant,
+  });
+  assert.equal(explicitDiscordTimestampRange.status, 'resolved');
+  assert.equal(explicitDiscordTimestampRange.kind, 'time_range');
+  assert.equal(explicitDiscordTimestampRange.method, 'deterministic');
+  assert.equal(explicitDiscordTimestampRange.range?.start.epoch, 1781038800);
+  assert.equal(explicitDiscordTimestampRange.range?.start.suggestedFormatIndex, 4);
+  assert.equal(explicitDiscordTimestampRange.range?.end.epoch, 1781046000);
+  assert.equal(explicitDiscordTimestampRange.range?.end.suggestedFormatIndex, 2);
+  assert.equal(explicitDiscordTimestampRange.range?.discord, '<t:1781038800:f> - <t:1781046000:t>');
+
+  const bareTimeRange = await parseTemporalExpression({
+    text: '5pm-7pm',
+    timeZone,
+    referenceInstant,
+  });
+  assert.equal(bareTimeRange.status, 'resolved');
+  assert.equal(bareTimeRange.kind, 'time_range');
+  assert.equal(bareTimeRange.method, 'deterministic');
+  assert.equal(bareTimeRange.range?.start.canonical.zonedDateTime.startsWith('2026-05-15T17:00'), true);
+  assert.equal(bareTimeRange.range?.end.canonical.zonedDateTime.startsWith('2026-05-15T19:00'), true);
+
+  const bareTimeRangeWithConfiguredOpenAi = await parseTemporalExpression({
+    text: '5pm-7pm',
+    timeZone,
+    referenceInstant,
+    openaiApiKey: 'sk-test',
+    features: { deterministicPreflight: true },
+  });
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.status, 'resolved');
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.kind, 'time_range');
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.method, 'deterministic');
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.debug?.finalValidation, undefined);
 
   const deterministicEaster = await parse('easter');
   assert.equal(deterministicEaster.status, 'failed');
