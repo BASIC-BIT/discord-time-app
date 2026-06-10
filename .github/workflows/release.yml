@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
@@ -120,12 +120,13 @@ jobs:
       - name: Build Tauri application
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npm run tauri build
 
       - name: Code sign (Windows)
+        id: code_sign
         if: matrix.platform == 'windows-latest'
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -135,6 +136,7 @@ jobs:
           # Only sign if certificate is available
           if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
             Write-Host "No signing certificate provided - skipping code signing"
+            "did_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
           
@@ -142,34 +144,54 @@ jobs:
           $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
           [IO.File]::WriteAllBytes("certificate.p12", $bytes)
           
-          # Sign the MSI
-          $msiPath = Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Name "*.msi" | Select-Object -First 1
-          if ($msiPath) {
-            $fullPath = "src-tauri/target/release/bundle/msi/$msiPath"
-            signtool sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $fullPath
-            Write-Host "Signed: $fullPath"
-          } else {
-            Write-Host "No MSI file found to sign"
+          # Sign the MSI before regenerating its Tauri updater signature.
+          $installers = @(Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Filter "*.msi" -ErrorAction SilentlyContinue)
+
+          foreach ($installer in $installers) {
+            signtool sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $installer.FullName
+            Write-Host "Signed: $($installer.FullName)"
           }
+
+          "did_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           
           # Clean up certificate
           Remove-Item certificate.p12
 
+      - name: Regenerate updater signatures
+        if: steps.code_sign.outputs.did_sign == 'true'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
+
+          if [ ! -f "$MSI_PATH" ]; then
+            echo "Missing MSI artifact."
+            exit 1
+          fi
+
+          npx tauri signer sign "$MSI_PATH"
+
       - name: Generate update manifest
         shell: bash
         run: |
-          # Find the MSI file
           MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-          MSI_NAME=$(basename "$MSI_PATH")
-          
-          # Generate signature if we have the private key
-          if [ -n "${{ secrets.TAURI_PRIVATE_KEY }}" ]; then
-            SIGNATURE=$(cat "$MSI_PATH" | openssl dgst -sha256 -sign <(echo "${{ secrets.TAURI_PRIVATE_KEY }}") | openssl base64 -A)
-          else
-            SIGNATURE=""
+          MSI_SIG_PATH="$MSI_PATH.sig"
+
+          if [ ! -f "$MSI_PATH" ]; then
+            echo "No MSI file found"
+            exit 1
           fi
-          
-          # Create update manifest
+
+          if [ ! -f "$MSI_SIG_PATH" ]; then
+            echo "Missing updater signature files. Check TAURI_SIGNING_PRIVATE_KEY and createUpdaterArtifacts."
+            exit 1
+          fi
+
+          MSI_NAME=$(basename "$MSI_PATH")
+          SIGNATURE=$(tr -d '\r\n' < "$MSI_SIG_PATH")
+
           cat > updater/latest.json << EOF
           {
             "version": "${{ env.VERSION_NUMBER }}",
@@ -183,74 +205,45 @@ jobs:
             }
           }
           EOF
-          
-          echo "Generated update manifest:"
-          cat updater/latest.json
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.VERSION }}
-          release_name: HammerOverlay ${{ env.VERSION }}
-          body: |
-            ## HammerOverlay ${{ env.VERSION }}
-            
-            ### Download
-            - **Windows:** Download the `.msi` installer below
-            
-            ### What's New
-            - System tray integration with professional menu
-            - Comprehensive settings management
-            - Auto-updater system with user control
-            - Auto-start functionality for Windows boot
-            - Production-grade logging and error handling
-            - Single instance prevention
-            
-            ### Installation
-            1. Download `HammerOverlay_${{ env.VERSION_NUMBER }}_x64_en-US.msi`
-            2. Run the installer (you may see a Windows SmartScreen warning - click "More info" then "Run anyway")
-            3. The app will start in your system tray
-            4. Use `Ctrl+Shift+H` to open the overlay
-            
-            ### System Requirements
-            - Windows 10 or later (x64)
-            - .NET Framework 4.8 or later (usually pre-installed)
-            
-            ---
-            
-            **Full Changelog**: https://github.com/BASIC-BIT/discord-time-app/compare/v0.0.1...${{ env.VERSION }}
-          draft: false
-          prerelease: false
+          echo "MSI_PATH=$MSI_PATH" >> $GITHUB_ENV
+          echo "MSI_SIG_PATH=$MSI_SIG_PATH" >> $GITHUB_ENV
 
-      - name: Upload Release Assets
+      - name: Create release notes
+        shell: bash
+        run: |
+          cat > release-notes.md << EOF
+          ## HammerOverlay ${{ env.VERSION }}
+
+          ### What's New
+          - Supervised local parser sidecar for desktop builds.
+          - Timezone-aware deterministic Temporal parsing with first-class time ranges.
+          - Range-aware overlay copy options for Discord timestamp pairs.
+          - Local Temporal SLM training, serving, and evaluation tooling.
+
+          ### Installation
+          1. Download the MSI installer below.
+          2. Run the installer. Unsigned builds may show a Windows SmartScreen warning.
+          3. Launch HammerOverlay and use Ctrl+Shift+H to open the overlay.
+
+          ### Update Metadata
+          This release includes Tauri v2 updater metadata in latest.json.
+          EOF
+
+      - name: Create GitHub release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find and upload MSI
-          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-          if [ -f "$MSI_PATH" ]; then
-            MSI_NAME=$(basename "$MSI_PATH")
-            echo "Uploading MSI: $MSI_NAME"
-            
-            gh release upload ${{ env.VERSION }} "$MSI_PATH" --clobber
-          fi
-          
-          # Upload update manifest
-          echo "Uploading update manifest"
-          gh release upload ${{ env.VERSION }} updater/latest.json --clobber
-
-      - name: Update latest release
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Copy the update manifest to latest.json for the updater
-          cp updater/latest.json latest.json
-          gh release upload ${{ env.VERSION }} latest.json --clobber
+          gh release create "${{ env.VERSION }}" \
+            "$MSI_PATH" \
+            "$MSI_SIG_PATH" \
+            updater/latest.json \
+            --repo BASIC-BIT/discord-time-app \
+            --target "$GITHUB_SHA" \
+            --title "HammerOverlay ${{ env.VERSION }}" \
+            --notes-file release-notes.md \
+            --latest
 
       - name: Print build summary
         shell: bash
@@ -269,4 +262,5 @@ jobs:
           echo ""
           echo "📁 Uploaded files:"
           find src-tauri/target/release/bundle/ -name "*.msi" -exec basename {} \;
-          echo "latest.json (update manifest)"
+          find src-tauri/target/release/bundle/ -name "*.sig" -exec basename {} \;
+          echo "latest.json"
