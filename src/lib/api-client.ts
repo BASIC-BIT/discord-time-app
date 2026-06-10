@@ -392,6 +392,10 @@ export async function createAPIClient(): Promise<TimeParserAPIClient | null> {
   }
 
   const runtimeConfig = await getTauriTimeParserConfig();
+  if (runtimeConfig && !runtimeConfig.available) {
+    console.log(runtimeConfig.message);
+    return null;
+  }
   if (runtimeConfig?.apiKey) {
     return new TimeParserAPIClient(runtimeConfig.baseUrl || baseUrl, runtimeConfig.apiKey, runtimeConfig.message);
   }
