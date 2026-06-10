@@ -120,11 +120,13 @@ export class TimeParserAPIClient {
   private apiKey: string;
   private apiVersion: string = '1';
   private unavailableMessage: string;
+  private useNativeBridge: boolean;
 
-  constructor(baseUrl: string, apiKey: string, unavailableMessage = DEFAULT_UNAVAILABLE_MESSAGE) {
+  constructor(baseUrl: string, apiKey: string, unavailableMessage = DEFAULT_UNAVAILABLE_MESSAGE, useNativeBridge = true) {
     this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.apiKey = apiKey;
     this.unavailableMessage = unavailableMessage;
+    this.useNativeBridge = useNativeBridge;
   }
 
   /**
@@ -143,7 +145,9 @@ export class TimeParserAPIClient {
       ...(options?.semanticConsistencyGate === undefined ? {} : { semanticConsistencyGate: options.semanticConsistencyGate }),
     };
 
-    const nativeResult = await this.parseTimeWithNativeBridge(text, timezone, featureOverrides, abortSignal);
+    const nativeResult = this.useNativeBridge
+      ? await this.parseTimeWithNativeBridge(text, timezone, featureOverrides, abortSignal)
+      : null;
     if (nativeResult !== null) {
       return nativeResult;
     }
@@ -388,7 +392,7 @@ export async function createAPIClient(): Promise<TimeParserAPIClient | null> {
   const apiKey = import.meta.env.VITE_API_KEY;
 
   if (apiKey) {
-    return new TimeParserAPIClient(baseUrl, apiKey);
+    return new TimeParserAPIClient(baseUrl, apiKey, DEFAULT_UNAVAILABLE_MESSAGE, false);
   }
 
   const runtimeConfig = await getTauriTimeParserConfig();
