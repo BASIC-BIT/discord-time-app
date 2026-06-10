@@ -1,0 +1,11 @@
+unsloth
+transformers
+trl
+peft
+accelerate
+bitsandbytes
+datasets
+torch==2.9.1
+torchvision==0.24.1
+wandb
+matplotlib

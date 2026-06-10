@@ -1,0 +1,17 @@
+**/.env
+**/.env.*
+!**/.env.example
+.git
+node_modules
+dist
+dist-ssr
+reports
+.cache
+api/reports
+ml/temporal-ir/outputs
+ml/temporal-ir/.venv*
+.venv
+.venv-temporal-ir
+__pycache__
+*.py[cod]
+unsloth_compiled_cache

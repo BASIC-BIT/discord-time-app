@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
-import { UsageRecord } from './types';
+import { GenerationOutcomeRecord, GenerationRecord, UsageRecord } from './types';
 
 /**
  * Database manager for usage logging
@@ -18,6 +18,7 @@ export class DatabaseManager {
     }
     
     this.db = new Database(dbPath);
+    this.db.pragma('foreign_keys = ON');
     this.init();
   }
 
@@ -46,6 +47,44 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_usage_ip ON usage(ip);
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS temporal_generations (
+        generation_id TEXT PRIMARY KEY,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        surface TEXT NOT NULL,
+        flow_version TEXT NOT NULL,
+        request_time_zone TEXT NOT NULL,
+        reference_instant TEXT NOT NULL,
+        input_text_hash TEXT NOT NULL,
+        input_text_retained INTEGER NOT NULL DEFAULT 0,
+        input_text TEXT,
+        final_status TEXT NOT NULL,
+        final_method TEXT NOT NULL,
+        final_epoch INTEGER,
+        candidate_count INTEGER,
+        clarification_alternative_count INTEGER,
+        total_duration_ms INTEGER,
+        error_class TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_temporal_generations_created_at ON temporal_generations(created_at);
+      CREATE INDEX IF NOT EXISTS idx_temporal_generations_status ON temporal_generations(final_status);
+      CREATE INDEX IF NOT EXISTS idx_temporal_generations_hash ON temporal_generations(input_text_hash);
+
+      CREATE TABLE IF NOT EXISTS temporal_generation_outcomes (
+        outcome_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        generation_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        action TEXT NOT NULL,
+        selected_format_index INTEGER,
+        feedback_category TEXT,
+        FOREIGN KEY (generation_id) REFERENCES temporal_generations(generation_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_temporal_generation_outcomes_generation_id ON temporal_generation_outcomes(generation_id);
+      CREATE INDEX IF NOT EXISTS idx_temporal_generation_outcomes_action ON temporal_generation_outcomes(action);
+    `);
+
     console.log('Database initialized successfully');
   }
 
@@ -70,6 +109,76 @@ export class DatabaseManager {
     } catch (error) {
       console.error('Error logging usage:', error);
       // Don't throw - logging failures shouldn't break the API
+    }
+  }
+
+  public logGeneration(record: GenerationRecord): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO temporal_generations (
+        generation_id,
+        surface,
+        flow_version,
+        request_time_zone,
+        reference_instant,
+        input_text_hash,
+        input_text_retained,
+        input_text,
+        final_status,
+        final_method,
+        final_epoch,
+        candidate_count,
+        clarification_alternative_count,
+        total_duration_ms,
+        error_class
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(generation_id) DO UPDATE SET
+        final_status = excluded.final_status,
+        final_method = excluded.final_method,
+        final_epoch = excluded.final_epoch,
+        candidate_count = excluded.candidate_count,
+        clarification_alternative_count = excluded.clarification_alternative_count,
+        total_duration_ms = excluded.total_duration_ms,
+        error_class = excluded.error_class
+    `);
+
+    try {
+      stmt.run(
+        record.generationId,
+        record.surface,
+        record.flowVersion,
+        record.requestTimeZone,
+        record.referenceInstant,
+        record.inputTextHash,
+        record.inputTextRetained ? 1 : 0,
+        record.inputText ?? null,
+        record.finalStatus,
+        record.finalMethod,
+        record.finalEpoch ?? null,
+        record.candidateCount ?? null,
+        record.clarificationAlternativeCount ?? null,
+        record.totalDurationMs ?? null,
+        record.errorClass ?? null,
+      );
+    } catch (error) {
+      console.error('Error logging generation:', error);
+    }
+  }
+
+  public logGenerationOutcome(record: GenerationOutcomeRecord): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO temporal_generation_outcomes (generation_id, action, selected_format_index, feedback_category)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    try {
+      stmt.run(
+        record.generationId,
+        record.action,
+        record.selectedFormatIndex ?? null,
+        record.feedbackCategory ?? null,
+      );
+    } catch (error) {
+      console.error('Error logging generation outcome:', error);
     }
   }
 
@@ -177,8 +286,10 @@ export function getDatabase(dbPath?: string): DatabaseManager {
 // Export as db for backward compatibility
 export const db = {
   logUsage: (record: Omit<UsageRecord, 'id' | 'ts'>) => getDatabase().logUsage(record),
+  logGeneration: (record: GenerationRecord) => getDatabase().logGeneration(record),
+  logGenerationOutcome: (record: GenerationOutcomeRecord) => getDatabase().logGenerationOutcome(record),
   getUsageStats: () => getDatabase().getUsageStats(),
   getRecentUsage: (limit?: number) => getDatabase().getRecentUsage(limit),
   getInfo: () => getDatabase().getInfo(),
   close: () => _dbInstance?.close()
-}; 
+};

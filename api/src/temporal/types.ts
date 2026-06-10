@@ -13,12 +13,15 @@ export type TemporalPrecision = "date" | "time" | "datetime" | "relative";
 
 export type TemporalMethod =
   | "deterministic"
+  | "agent+plan"
   | "agent+tools"
   | "agent+tools+sandbox"
   | "agent+tools+web"
   | "fallback";
 
 export type TemporalParseStatus = "resolved" | "ambiguous" | "needs_clarification" | "failed";
+
+export type TemporalParseKind = "instant" | "time_range";
 
 export interface CalendarContext {
   referenceInstant: string;
@@ -36,6 +39,27 @@ export interface Candidate {
   precision: TemporalPrecision;
   assumptions: string[];
   provenance: "chrono" | "holiday_library" | "shift_math" | "sandbox" | "explicit";
+}
+
+export type TimeZoneResolutionStatus = "resolved" | "ambiguous" | "not_found" | "invalid";
+
+export type TimeZoneResolutionKind = "iana" | "fixed_offset";
+
+export interface TimeZoneResolutionCandidate {
+  timeZone: string;
+  label: string;
+  kind: TimeZoneResolutionKind;
+  matchedText: string;
+  confidence: number;
+  assumptions: string[];
+  offsetMinutes?: number;
+}
+
+export interface TimeZoneResolutionOutput {
+  status: TimeZoneResolutionStatus;
+  candidates: TimeZoneResolutionCandidate[];
+  notes: string[];
+  clarificationQuestion?: string;
 }
 
 export interface CandidateFacts {
@@ -130,15 +154,47 @@ export interface TemporalFinalValidation {
   missingOrContradictedSignals: string[];
 }
 
+export interface TemporalSemanticConsistencyGateResult {
+  decision: "accept" | "reject" | "uncertain";
+  confidence: number;
+  reasonCodes: string[];
+  explanation: string;
+}
+
+export interface TemporalFeatureFlags {
+  deterministicPreflight?: boolean;
+  ordinalWeekdayGrammar?: boolean;
+  planIr?: boolean;
+  semanticConsistencyGate?: boolean;
+}
+
+export type TemporalPlanIrInstructionPreset = 'detailed' | 'minimal';
+export type TemporalPlanIrEndpointApi = 'completions' | 'chat';
+export type TemporalPlanIrEndpointPromptFormat = 'custom' | 'chat';
+
+export interface TemporalPlanIrEndpointConfig {
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  instructionPreset: TemporalPlanIrInstructionPreset;
+  api: TemporalPlanIrEndpointApi;
+  promptFormat: TemporalPlanIrEndpointPromptFormat;
+  maxTokens: number;
+  timeoutMs: number;
+}
+
 export interface TemporalParseRequest {
   text: string;
   calendarContext: CalendarContext;
 }
 
 export interface TemporalParseResponse {
+  generationId?: string;
+  kind?: TemporalParseKind;
   status: TemporalParseStatus;
   epoch?: number;
   suggestedFormatIndex?: number;
+  range?: TemporalRangeResult;
   confidence: number;
   method: TemporalMethod;
   canonical?: {
@@ -159,6 +215,7 @@ export interface TemporalParseResponse {
     agentAttempts?: number;
     toolPasses?: number;
     deterministicDurationMs?: number;
+    ambiguityPolicyDurationMs?: number;
     agentDurationMs?: number;
     totalDurationMs?: number;
     firstLlmResponseMs?: number;
@@ -167,16 +224,40 @@ export interface TemporalParseResponse {
     shortCircuitReason?: string;
     model?: string;
     reasoningEffort?: string;
+    instructionPreset?: string;
+    promptFormat?: string;
+    featureFlags?: TemporalFeatureFlags;
     trace?: TemporalAgentTraceStep[];
     finalValidation?: TemporalFinalValidation;
+    semanticConsistencyGate?: TemporalSemanticConsistencyGateResult;
     langfuseTraceId?: string;
   };
 }
 
-export interface TemporalClarificationAlternative {
-  label: string;
+export interface TemporalRangeEndpoint {
   epoch: number;
   suggestedFormatIndex: number;
+  canonical: {
+    isoInstant: string;
+    zonedDateTime: string;
+    timeZone: string;
+    precision: TemporalPrecision;
+    weekday?: Weekday;
+  };
+}
+
+export interface TemporalRangeResult {
+  start: TemporalRangeEndpoint;
+  end: TemporalRangeEndpoint;
+  discord: string;
+}
+
+export interface TemporalClarificationAlternative {
+  label: string;
+  kind?: TemporalParseKind;
+  epoch: number;
+  suggestedFormatIndex: number;
+  range?: TemporalRangeResult;
   confidence: number;
   method: TemporalMethod;
   canonical: {
@@ -194,6 +275,7 @@ export type AgentToolName =
   | "resolve_calendar_query"
   | "resolve_holiday"
   | "resolve_clock_time"
+  | "resolve_timezone"
   | "shift_datetime"
   | "set_clock_time"
   | "propose_candidate"

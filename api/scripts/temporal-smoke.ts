@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { parseTemporalExpression } from '../src/temporal';
-import { collectTemporalAgentContext } from '../src/temporal/deterministic';
+import { collectTemporalAgentContext, parseCalendarContext } from '../src/temporal/deterministic';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
 
 const referenceInstant = '2026-05-15T16:00:00Z'; // Friday noon in America/New_York.
@@ -12,8 +12,12 @@ async function parse(text: string) {
 }
 
 async function main() {
+  const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
+  assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
+
   const bareSaturday = await parse('Saturday');
   assert.equal(bareSaturday.status, 'resolved');
+  assert.match(bareSaturday.generationId ?? '', /^tp_[0-9a-f-]+$/);
   assert.equal(bareSaturday.canonical?.weekday, 'saturday');
   assert.equal(bareSaturday.canonical?.zonedDateTime.startsWith('2026-05-16'), true);
 
@@ -22,6 +26,10 @@ async function main() {
   assert.equal(nextSaturday.canonical?.weekday, 'saturday');
   assert.equal(nextSaturday.canonical?.zonedDateTime.startsWith('2026-05-23'), true);
 
+  const nextSaturdayAtTwentyFourHour = await parse('next Saturday at 13:37');
+  assert.equal(nextSaturdayAtTwentyFourHour.status, 'resolved');
+  assert.equal(nextSaturdayAtTwentyFourHour.canonical?.zonedDateTime.startsWith('2026-05-23T13:37'), true);
+
   const ambiguousBareTime = await parse('next Saturday 1');
   assert.equal(ambiguousBareTime.status, 'needs_clarification');
   assert.equal(ambiguousBareTime.clarificationQuestion, 'Which time did you mean?');
@@ -29,10 +37,22 @@ async function main() {
   assert.equal(ambiguousBareTime.clarificationAlternatives?.[0]?.label, '1 AM');
   assert.equal(ambiguousBareTime.clarificationAlternatives?.[1]?.label, '1 PM');
 
+  const ambiguousBareMinuteTime = await parse('day after tomorrow 11:34');
+  assert.equal(ambiguousBareMinuteTime.status, 'needs_clarification');
+  assert.equal(ambiguousBareMinuteTime.clarificationQuestion, 'Did you mean AM or PM?');
+  assert.deepEqual(
+    ambiguousBareMinuteTime.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['11:34 AM', '11:34 PM'],
+  );
+
   const nextWednesday = await parse('next Wednesday');
   assert.equal(nextWednesday.status, 'resolved');
   assert.equal(nextWednesday.canonical?.weekday, 'wednesday');
   assert.equal(nextWednesday.canonical?.zonedDateTime.startsWith('2026-05-20'), true);
+
+  const sundayAfterNext = await parse('sunday after next');
+  assert.equal(sundayAfterNext.status, 'failed');
+  assert.equal(sundayAfterNext.validation.warnings.includes('Input contains ambiguous weekday-after-next phrase.'), true);
 
   const explicitDiscord = await parse('<t:1776221807:f>');
   assert.equal(explicitDiscord.status, 'resolved');
@@ -46,13 +66,58 @@ async function main() {
   assert.equal(tomorrowAtFive.status, 'resolved');
   assert.equal(tomorrowAtFive.canonical?.zonedDateTime.startsWith('2026-05-16T17:00'), true);
 
+  const tuesdayCompactPm = await parse('tuesday 5p');
+  assert.equal(tuesdayCompactPm.status, 'resolved');
+  assert.equal(tuesdayCompactPm.suggestedFormatIndex, 5);
+  assert.equal(tuesdayCompactPm.canonical?.zonedDateTime.startsWith('2026-05-19T17:00'), true);
+
   const weekdayDateTimeFormat = await parse('4:30 Tuesday');
-  assert.equal(weekdayDateTimeFormat.status, 'resolved');
-  assert.equal(weekdayDateTimeFormat.suggestedFormatIndex, 5);
+  assert.equal(weekdayDateTimeFormat.status, 'needs_clarification');
+  assert.deepEqual(
+    weekdayDateTimeFormat.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['4:30 AM', '4:30 PM'],
+  );
+
+  const eventWithMultipleTimes = await parseTemporalExpression({
+    text: 'Club night: Friday May 29, doors 8pm, main set 10:30pm',
+    timeZone,
+    referenceInstant: '2026-05-24T12:00:00Z',
+  });
+  assert.equal(eventWithMultipleTimes.status, 'needs_clarification');
+  assert.deepEqual(
+    [...(eventWithMultipleTimes.clarificationAlternatives ?? [])].map((alternative) => alternative.epoch).sort((a, b) => a - b),
+    [1780099200, 1780108200],
+  );
 
   const relativeFormat = await parse('in 3 days');
   assert.equal(relativeFormat.status, 'resolved');
   assert.equal(relativeFormat.suggestedFormatIndex, 6);
+
+  const relativeFromNowFormat = await parse('60 days from now');
+  assert.equal(relativeFromNowFormat.status, 'resolved');
+  assert.equal(relativeFromNowFormat.suggestedFormatIndex, 6);
+
+  const bareTwentyFourHour = await parse('19');
+  assert.equal(bareTwentyFourHour.status, 'resolved');
+  assert.equal(bareTwentyFourHour.epoch, 1778886000);
+
+  const bareTwentyFourHourRollover = await parseTemporalExpression({
+    text: '19',
+    timeZone,
+    referenceInstant: '2026-05-16T01:00:00Z',
+  });
+  assert.equal(bareTwentyFourHourRollover.status, 'resolved');
+  assert.equal(bareTwentyFourHourRollover.epoch, 1778972400);
+
+  const firstSundayNextMonth = await parse('first sunday of next month at 1pm');
+  assert.equal(firstSundayNextMonth.status, 'resolved');
+  assert.equal(firstSundayNextMonth.method, 'deterministic');
+  assert.equal(firstSundayNextMonth.canonical?.zonedDateTime.startsWith('2026-06-07T13:00'), true);
+
+  const dayAfterFirstSunday = await parse('the day after the first sunday of next month at one hour past noon and 10 minutes');
+  assert.equal(dayAfterFirstSunday.status, 'resolved');
+  assert.equal(dayAfterFirstSunday.method, 'deterministic');
+  assert.equal(dayAfterFirstSunday.canonical?.zonedDateTime.startsWith('2026-06-08T13:10'), true);
 
   const dateOnlyNoon = await parseTemporalExpression({
     text: 'tomorrow',
@@ -62,8 +127,69 @@ async function main() {
   assert.equal(dateOnlyNoon.status, 'resolved');
   assert.equal(dateOnlyNoon.canonical?.zonedDateTime.startsWith('2026-05-16T12:00:00'), true);
 
+  const explicitDatedRange = await parseTemporalExpression({
+    text: 'June 10 2026 3pm-5pm America/Los_Angeles',
+    timeZone,
+    referenceInstant: '2026-06-08T06:50:00Z',
+  });
+  assert.equal(explicitDatedRange.status, 'resolved');
+  assert.equal(explicitDatedRange.kind, 'time_range');
+  assert.equal(explicitDatedRange.method, 'deterministic');
+  assert.equal(explicitDatedRange.range?.start.epoch, 1781128800);
+  assert.equal(explicitDatedRange.range?.end.epoch, 1781136000);
+
+  const explicitDatedRangeWithConfiguredOpenAi = await parseTemporalExpression({
+    text: 'June 10 2026 3pm-5pm America/Los_Angeles',
+    timeZone,
+    referenceInstant: '2026-06-08T06:50:00Z',
+    openaiApiKey: 'sk-test',
+    features: { deterministicPreflight: true },
+  });
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.status, 'resolved');
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.kind, 'time_range');
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.method, 'deterministic');
+  assert.equal(explicitDatedRangeWithConfiguredOpenAi.debug?.finalValidation, undefined);
+
+  const explicitDiscordTimestampRange = await parseTemporalExpression({
+    text: '<t:1781038800:f> - <t:1781046000:t>',
+    timeZone,
+    referenceInstant,
+  });
+  assert.equal(explicitDiscordTimestampRange.status, 'resolved');
+  assert.equal(explicitDiscordTimestampRange.kind, 'time_range');
+  assert.equal(explicitDiscordTimestampRange.method, 'deterministic');
+  assert.equal(explicitDiscordTimestampRange.range?.start.epoch, 1781038800);
+  assert.equal(explicitDiscordTimestampRange.range?.start.suggestedFormatIndex, 4);
+  assert.equal(explicitDiscordTimestampRange.range?.end.epoch, 1781046000);
+  assert.equal(explicitDiscordTimestampRange.range?.end.suggestedFormatIndex, 2);
+  assert.equal(explicitDiscordTimestampRange.range?.discord, '<t:1781038800:f> - <t:1781046000:t>');
+
+  const bareTimeRange = await parseTemporalExpression({
+    text: '5pm-7pm',
+    timeZone,
+    referenceInstant,
+  });
+  assert.equal(bareTimeRange.status, 'resolved');
+  assert.equal(bareTimeRange.kind, 'time_range');
+  assert.equal(bareTimeRange.method, 'deterministic');
+  assert.equal(bareTimeRange.range?.start.canonical.zonedDateTime.startsWith('2026-05-15T17:00'), true);
+  assert.equal(bareTimeRange.range?.end.canonical.zonedDateTime.startsWith('2026-05-15T19:00'), true);
+
+  const bareTimeRangeWithConfiguredOpenAi = await parseTemporalExpression({
+    text: '5pm-7pm',
+    timeZone,
+    referenceInstant,
+    openaiApiKey: 'sk-test',
+    features: { deterministicPreflight: true },
+  });
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.status, 'resolved');
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.kind, 'time_range');
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.method, 'deterministic');
+  assert.equal(bareTimeRangeWithConfiguredOpenAi.debug?.finalValidation, undefined);
+
   const deterministicEaster = await parse('easter');
   assert.equal(deterministicEaster.status, 'failed');
+  assert.match(deterministicEaster.generationId ?? '', /^tp_[0-9a-f-]+$/);
 
   const tools = createDeterministicTemporalToolImplementations();
   const agentContext = collectTemporalAgentContext({ text: 'easter 2026 noon', calendarContext });
@@ -80,6 +206,13 @@ async function main() {
   const easter2026 = await tools.resolveHoliday({ holidayName: 'easter', year: 2026, calendarContext });
   assert.equal(easter2026.candidates[0]?.zonedDateTime.startsWith('2026-04-05T12:00'), true);
 
+  const easterIndianapolis = await tools.resolveHoliday({
+    holidayName: 'easter',
+    year: 2056,
+    calendarContext: { ...calendarContext, timeZone: 'America/Indianapolis' },
+  });
+  assert.equal(easterIndianapolis.candidates[0]?.zonedDateTime.startsWith('2056-04-02T12:00'), true);
+
   const noUsFallbackHoliday = await tools.resolveHoliday({
     holidayName: 'thanksgiving',
     calendarContext: { ...calendarContext, timeZone: 'Europe/Paris' },
@@ -95,6 +228,10 @@ async function main() {
   const clock = await tools.resolveClockTime({ text: '13:37', calendarContext });
   assert.equal(clock.candidates[0]?.hour, 13);
   assert.equal(clock.candidates[0]?.minute, 37);
+
+  const compactClock = await tools.resolveClockTime({ text: '5p', calendarContext });
+  assert.equal(compactClock.candidates[0]?.hour, 17);
+  assert.equal(compactClock.candidates[0]?.minute, 0);
 
   const shifted = await tools.shiftDateTime({ base: { isoInstant: referenceInstant }, delta: { weeks: 1, days: 2 }, calendarContext });
   const combined = await tools.setClockTime({

@@ -11,7 +11,13 @@
     "test:temporal": "tsx scripts/temporal-smoke.ts",
     "test:temporal:live": "tsx scripts/temporal-live-smoke.ts",
     "eval:temporal": "tsx scripts/temporal-model-eval.ts",
-    "eval:temporal:report": "tsx scripts/temporal-eval-report.ts"
+    "eval:temporal:report": "tsx scripts/temporal-eval-report.ts",
+    "eval:temporal:autoresearch": "tsx scripts/temporal-autoresearch.ts",
+    "eval:temporal:cascade": "tsx scripts/temporal-cascade-eval.ts",
+    "ml:temporal:synthetic": "tsx scripts/temporal-ir-synthetic.ts",
+    "ml:temporal:paraphrase": "tsx scripts/temporal-ir-paraphrase.ts",
+    "ml:temporal:router": "tsx scripts/temporal-router-ir-dataset.ts",
+    "ml:temporal:openai-export": "tsx scripts/temporal-openai-finetune-export.ts"
   },
   "keywords": [
     "api",
