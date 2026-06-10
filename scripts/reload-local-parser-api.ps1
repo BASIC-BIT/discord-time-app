@@ -10,6 +10,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$tauriConfigPath = Join-Path $repoRoot 'src-tauri\tauri.conf.json'
+$tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json
+$appIdentifier = $tauriConfig.identifier
+if ([string]::IsNullOrWhiteSpace($appIdentifier)) {
+    throw "Tauri identifier is missing from $tauriConfigPath."
+}
+
 $node24 = 'C:\ProgramData\nvm\v24.15.0'
 if (Test-Path -LiteralPath $node24) {
     $env:PATH = "$node24;$env:PATH"
@@ -88,7 +95,7 @@ if ($SkipCanary) {
     exit 0
 }
 
-$keyPath = Join-Path $env:APPDATA 'com.basicbit.hammeroverlay\time-parser-api-key'
+$keyPath = Join-Path (Join-Path $env:APPDATA $appIdentifier) 'time-parser-api-key'
 Wait-KeyFile -KeyPath $keyPath
 $apiKey = (Get-Content -LiteralPath $keyPath -Raw).Trim()
 $body = @{ text = $CanaryText; tz = $TimeZone } | ConvertTo-Json -Compress
