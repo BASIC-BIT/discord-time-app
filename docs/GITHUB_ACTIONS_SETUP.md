@@ -26,8 +26,8 @@ Set these in your repository settings under **Settings > Secrets and variables >
 
 | Secret Name | Description | Required |
 |-------------|-------------|----------|
-| `TAURI_PRIVATE_KEY` | Private key for update signing | ✅ Yes |
-| `TAURI_KEY_PASSWORD` | Password for the private key | ✅ Yes |
+| `TAURI_SIGNING_PRIVATE_KEY` | Private key for Tauri updater signing | ✅ Yes |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the private key | ✅ Yes |
 
 ### Code Signing Secrets (Optional but Recommended)
 
@@ -42,17 +42,16 @@ Set these in your repository settings under **Settings > Secrets and variables >
 
 ```bash
 # Generate a new private key
-npm install -g @tauri-apps/cli
-tauri signer generate -w ~/.tauri/
+npm run tauri -- signer generate --write-keys ~/.tauri/hammeroverlay-updater.key
 
 # This creates:
-# - Private key: ~/.tauri/myapp.key
-# - Public key: ~/.tauri/myapp.pub
+# - Private key: ~/.tauri/hammeroverlay-updater.key
+# - Public key: ~/.tauri/hammeroverlay-updater.key.pub
 ```
 
 **Set GitHub Secrets:**
-- `TAURI_PRIVATE_KEY`: Content of the `.key` file
-- `TAURI_KEY_PASSWORD`: Password you set during generation
+- `TAURI_SIGNING_PRIVATE_KEY`: Content of the `.key` file
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: Password you set during generation
 
 ### 2. Code Signing Certificate (Optional)
 
@@ -107,7 +106,7 @@ Export-PfxCertificate -cert $cert -FilePath "certificate.p12" -Password $passwor
    - Signs the MSI (if certificate available)
    - Creates GitHub release with changelog
    - Uploads MSI installer
-   - Generates and uploads update manifest
+   - Generates updater signatures and uploads update manifest
 
 ### Manual Release
 
@@ -242,4 +241,4 @@ The workflow automatically generates `latest.json` with this format:
 ---
 
 **Status**: ✅ **CI/CD Implementation Complete**
-**Next**: Configure repository secrets and create your first release! 
+**Next**: Configure repository secrets and create your first release!
