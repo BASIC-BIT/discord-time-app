@@ -102,7 +102,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run tauri build -- --debug --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'
+          npm run tauri build -- --debug --config src-tauri/tauri.ci.conf.json
 
       - name: Verify build artifacts
         shell: bash
