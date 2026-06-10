@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Overlay } from "./components/Overlay";
@@ -10,8 +11,16 @@ function App() {
   const [showOverlay, setShowOverlay] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateChecker, setShowUpdateChecker] = useState(false);
+  const [overlayOpenToken, setOverlayOpenToken] = useState(0);
   const appWindow = getCurrentWindow();
   const windowLabel = appWindow.label;
+
+  const showMainOverlay = () => {
+    setShowSettings(false);
+    setShowUpdateChecker(false);
+    setShowOverlay(true);
+    setOverlayOpenToken((current) => current + 1);
+  };
 
   const handleClose = async () => {
     try {
@@ -30,6 +39,7 @@ function App() {
       // For main window, switch back to overlay
       setShowSettings(false);
       setShowOverlay(true);
+      setOverlayOpenToken((current) => current + 1);
       await appWindow.setAlwaysOnTop(true);
     }
   };
@@ -47,6 +57,7 @@ function App() {
       // For main window, switch back to overlay
       setShowUpdateChecker(false);
       setShowOverlay(true);
+      setOverlayOpenToken((current) => current + 1);
     }
   };
 
@@ -110,12 +121,17 @@ function App() {
       });
 
       // Listen for update checker events from system tray
+      const unlistenOverlayView = listen('show-overlay-view', () => {
+        showMainOverlay();
+      });
+
       const unlistenUpdateChecker = listen('show-update-checker', () => {
         handleShowUpdateChecker();
       });
 
       return () => {
         unlistenFocus.then(fn => fn());
+        unlistenOverlayView.then(fn => fn());
         unlistenUpdateChecker.then(fn => fn());
       };
     }
@@ -123,7 +139,7 @@ function App() {
 
   return (
     <div className="app">
-      {showOverlay && <Overlay onClose={handleClose} />}
+      {showOverlay && <Overlay onClose={handleClose} openToken={overlayOpenToken} />}
       {showSettings && <Settings onClose={handleSettingsClose} />}
       {showUpdateChecker && <UpdateChecker onClose={handleUpdateCheckerClose} />}
     </div>

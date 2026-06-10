@@ -116,9 +116,10 @@ function parseExistingTimestampRange(text: string): ParseRangeResult | null {
 
 interface OverlayProps {
   onClose: () => void;
+  openToken: number;
 }
 
-export function Overlay({ onClose }: OverlayProps) {
+export function Overlay({ onClose, openToken }: OverlayProps) {
   const [inputText, setInputText] = useState('');
   const [epoch, setEpoch] = useState<number | null>(null);
   const [range, setRange] = useState<ParseRangeResult | null>(null);
@@ -159,7 +160,7 @@ export function Overlay({ onClose }: OverlayProps) {
     ];
   };
 
-  // Initialize and load clipboard content
+  // Initialize and load clipboard content. Re-run when Rust reports a fresh overlay open.
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -232,7 +233,7 @@ export function Overlay({ onClose }: OverlayProps) {
     };
     
     initialize();
-  }, []);
+  }, [openToken]);
 
   // Parse input text when it changes (with debounce)
   useEffect(() => {

@@ -1018,6 +1018,7 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.set_focus();
         let _ = window.set_always_on_top(true);
         let _ = window.center();
+        let _ = window.emit("show-overlay-view", ());
     }
 }
 
