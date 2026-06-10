@@ -38,7 +38,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi"],
     "createUpdaterArtifacts": true,
     "resources": {
       "sidecars/hammer-overlay-api/": "api"

@@ -126,6 +126,7 @@ jobs:
           npm run tauri build
 
       - name: Code sign (Windows)
+        id: code_sign
         if: matrix.platform == 'windows-latest'
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -135,6 +136,7 @@ jobs:
           # Only sign if certificate is available
           if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
             Write-Host "No signing certificate provided - skipping code signing"
+            "did_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
           
@@ -142,56 +144,47 @@ jobs:
           $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
           [IO.File]::WriteAllBytes("certificate.p12", $bytes)
           
-          # Sign installers before regenerating Tauri updater signatures.
-          $installers = @(
-            Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Filter "*.msi" -ErrorAction SilentlyContinue,
-            Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/" -Filter "*.exe" -ErrorAction SilentlyContinue
-          ) | Where-Object { $_ }
+          # Sign the MSI before regenerating its Tauri updater signature.
+          $installers = @(Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Filter "*.msi" -ErrorAction SilentlyContinue)
 
           foreach ($installer in $installers) {
             signtool sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $installer.FullName
             Write-Host "Signed: $($installer.FullName)"
           }
+
+          "did_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           
           # Clean up certificate
           Remove-Item certificate.p12
 
       - name: Regenerate updater signatures
+        if: steps.code_sign.outputs.did_sign == 'true'
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-          NSIS_PATH=$(find src-tauri/target/release/bundle/nsis/ -name "*.exe" | head -1)
 
-          if [ ! -f "$MSI_PATH" ] || [ ! -f "$NSIS_PATH" ]; then
-            echo "Missing installer artifacts."
+          if [ ! -f "$MSI_PATH" ]; then
+            echo "Missing MSI artifact."
             exit 1
           fi
 
           npx tauri signer sign "$MSI_PATH"
-          npx tauri signer sign "$NSIS_PATH"
 
       - name: Generate update manifest
         shell: bash
         run: |
           MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-          NSIS_PATH=$(find src-tauri/target/release/bundle/nsis/ -name "*.exe" | head -1)
           MSI_SIG_PATH="$MSI_PATH.sig"
-          NSIS_SIG_PATH="$NSIS_PATH.sig"
 
           if [ ! -f "$MSI_PATH" ]; then
             echo "No MSI file found"
             exit 1
           fi
 
-          if [ ! -f "$NSIS_PATH" ]; then
-            echo "No NSIS installer found"
-            exit 1
-          fi
-
-          if [ ! -f "$MSI_SIG_PATH" ] || [ ! -f "$NSIS_SIG_PATH" ]; then
+          if [ ! -f "$MSI_SIG_PATH" ]; then
             echo "Missing updater signature files. Check TAURI_SIGNING_PRIVATE_KEY and createUpdaterArtifacts."
             exit 1
           fi
@@ -214,9 +207,7 @@ jobs:
           EOF
 
           echo "MSI_PATH=$MSI_PATH" >> $GITHUB_ENV
-          echo "NSIS_PATH=$NSIS_PATH" >> $GITHUB_ENV
           echo "MSI_SIG_PATH=$MSI_SIG_PATH" >> $GITHUB_ENV
-          echo "NSIS_SIG_PATH=$NSIS_SIG_PATH" >> $GITHUB_ENV
 
       - name: Create release notes
         shell: bash
@@ -231,7 +222,7 @@ jobs:
           - Local Temporal SLM training, serving, and evaluation tooling.
 
           ### Installation
-          1. Download the MSI or NSIS installer below.
+          1. Download the MSI installer below.
           2. Run the installer. Unsigned builds may show a Windows SmartScreen warning.
           3. Launch HammerOverlay and use Ctrl+Shift+H to open the overlay.
 
@@ -246,9 +237,7 @@ jobs:
         run: |
           gh release create "${{ env.VERSION }}" \
             "$MSI_PATH" \
-            "$NSIS_PATH" \
             "$MSI_SIG_PATH" \
-            "$NSIS_SIG_PATH" \
             updater/latest.json \
             --repo BASIC-BIT/discord-time-app \
             --target "$GITHUB_SHA" \
@@ -273,6 +262,5 @@ jobs:
           echo ""
           echo "📁 Uploaded files:"
           find src-tauri/target/release/bundle/ -name "*.msi" -exec basename {} \;
-          find src-tauri/target/release/bundle/ -name "*.exe" -exec basename {} \;
           find src-tauri/target/release/bundle/ -name "*.sig" -exec basename {} \;
           echo "latest.json"
