@@ -228,7 +228,10 @@ fn read_api_env_var(name: &str) -> Option<String> {
             }
 
             let value = trimmed.strip_prefix(&prefix)?.trim();
-            let value = value.trim_matches('"').trim_matches('\'').trim();
+            let value = strip_inline_env_comment(value)
+                .trim_matches('"')
+                .trim_matches('\'')
+                .trim();
             if value.is_empty() {
                 None
             } else {
@@ -312,6 +315,32 @@ fn wait_for_time_parser_service(timeout: Duration) -> bool {
     false
 }
 
+async fn time_parser_health_check_blocking() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(time_parser_health_check)
+        .await
+        .map_err(|e| format!("Failed to join parser health check: {e}"))
+}
+
+async fn wait_for_time_parser_service_blocking(timeout: Duration) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || wait_for_time_parser_service(timeout))
+        .await
+        .map_err(|e| format!("Failed to join parser startup wait: {e}"))
+}
+
+async fn local_time_parser_request_blocking(
+    method: String,
+    path: String,
+    api_key: String,
+    body: Option<String>,
+    timeout: Duration,
+) -> Result<NativeTimeParserResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        local_time_parser_request(&method, &path, &api_key, body.as_deref(), timeout)
+    })
+    .await
+    .map_err(|e| format!("Failed to join parser request: {e}"))?
+}
+
 fn local_time_parser_request(
     method: &str,
     path: &str,
@@ -365,6 +394,13 @@ fn parse_local_http_json_response(response: &str) -> Result<NativeTimeParserResp
         status,
         body,
     })
+}
+
+fn strip_inline_env_comment(value: &str) -> &str {
+    value
+        .split_once(" #")
+        .map(|(value, _comment)| value.trim_end())
+        .unwrap_or(value)
 }
 
 fn supervised_time_parser_disabled() -> bool {
@@ -628,12 +664,12 @@ fn start_time_parser_service(app: &AppHandle) {
 async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfig, String> {
     let state = app.state::<TimeParserServiceState>();
     let mut supervised = parser_child_is_running(&state)?;
-    let mut available = time_parser_health_check();
+    let mut available = time_parser_health_check_blocking().await?;
 
     if !available && !supervised && !supervised_time_parser_disabled() {
         start_time_parser_service(&app);
         supervised = parser_child_is_running(&state)?;
-        available = time_parser_health_check();
+        available = time_parser_health_check_blocking().await?;
     }
 
     let api_key = time_parser_api_key(&app, false)?;
@@ -660,9 +696,9 @@ async fn parse_time_with_local_service(
     app: AppHandle,
     request: NativeTimeParserRequest,
 ) -> Result<NativeTimeParserResponse, String> {
-    if !time_parser_health_check() && !supervised_time_parser_disabled() {
+    if !time_parser_health_check_blocking().await? && !supervised_time_parser_disabled() {
         start_time_parser_service(&app);
-        if !wait_for_time_parser_service(Duration::from_secs(8)) {
+        if !wait_for_time_parser_service_blocking(Duration::from_secs(8)).await? {
             return Err("The local time parser service is still starting.".to_string());
         }
     }
@@ -682,13 +718,14 @@ async fn parse_time_with_local_service(
 
     let mut last_response = None;
     for api_key in api_keys {
-        let response = local_time_parser_request(
-            "POST",
-            "/parse",
-            &api_key,
-            Some(&body_text),
+        let response = local_time_parser_request_blocking(
+            "POST".to_string(),
+            "/parse".to_string(),
+            api_key,
+            Some(body_text.clone()),
             Duration::from_secs(60),
-        )?;
+        )
+        .await?;
         if response.status != 401 {
             return Ok(response);
         }

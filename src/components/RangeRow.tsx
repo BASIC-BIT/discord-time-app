@@ -7,7 +7,7 @@ interface RangeRowProps {
   formatIndex: number;
   isSelected: boolean;
   isTentative?: boolean;
-  onCopyAndClose: () => void;
+  onCopyAndClose: () => Promise<void> | void;
   onMouseEnter: () => void;
 }
 

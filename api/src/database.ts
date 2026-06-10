@@ -18,6 +18,7 @@ export class DatabaseManager {
     }
     
     this.db = new Database(dbPath);
+    this.db.pragma('foreign_keys = ON');
     this.init();
   }
 
