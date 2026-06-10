@@ -25,7 +25,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
@@ -101,6 +101,8 @@ jobs:
       - name: Build Tauri application (Debug)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npm run tauri build -- --debug
 
@@ -135,6 +137,7 @@ jobs:
           name: build-artifacts-${{ matrix.platform }}
           path: |
             src-tauri/target/debug/bundle/msi/*.msi
+            src-tauri/target/debug/bundle/msi/*.sig
             src-tauri/target/debug/*.exe
           retention-days: 7
 
