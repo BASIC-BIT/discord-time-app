@@ -143,12 +143,27 @@ jobs:
           # Decode certificate
           $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
           [IO.File]::WriteAllBytes("certificate.p12", $bytes)
-          
+
+          $signTool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\signtool.exe" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+          if ($null -eq $signTool) {
+            throw "signtool.exe was not found in the Windows SDK."
+          }
+
+          $signToolPath = $signTool.FullName
+
           # Sign the MSI before regenerating its Tauri updater signature.
           $installers = @(Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Filter "*.msi" -ErrorAction SilentlyContinue)
 
+          if ($installers.Count -eq 0) {
+            throw "No MSI installers were found to sign."
+          }
+
           foreach ($installer in $installers) {
-            signtool sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $installer.FullName
+            & $signToolPath sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $installer.FullName
             Write-Host "Signed: $($installer.FullName)"
           }
 
