@@ -165,8 +165,12 @@ fn log_ignored_dev_api_overrides() {
         "HAMMEROVERLAY_NODE",
     ]
     .iter()
-    .any(|name| std::env::var_os(name).is_some())
-    {
+    .any(|name| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+    }) {
         log::warn!(
             "Development API overrides are set but ignored by this release build. Set HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES=1 to opt in."
         );
@@ -476,30 +480,32 @@ fn find_time_parser_entrypoint(app: &AppHandle) -> Option<PathBuf> {
         }
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(
-            current_dir
-                .join("src-tauri")
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("dist")
-                .join("index.js"),
-        );
-        candidates.push(
-            current_dir
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("dist")
-                .join("index.js"),
-        );
-        candidates.push(current_dir.join("api").join("dist").join("index.js"));
-        candidates.push(
-            current_dir
-                .join("..")
-                .join("api")
-                .join("dist")
-                .join("index.js"),
-        );
+    if dev_api_overrides_allowed() {
+        if let Ok(current_dir) = std::env::current_dir() {
+            candidates.push(
+                current_dir
+                    .join("src-tauri")
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("dist")
+                    .join("index.js"),
+            );
+            candidates.push(
+                current_dir
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("dist")
+                    .join("index.js"),
+            );
+            candidates.push(current_dir.join("api").join("dist").join("index.js"));
+            candidates.push(
+                current_dir
+                    .join("..")
+                    .join("api")
+                    .join("dist")
+                    .join("index.js"),
+            );
+        }
     }
 
     candidates.into_iter().find(|path| path.is_file())
@@ -524,22 +530,24 @@ fn find_time_parser_node(app: &AppHandle) -> PathBuf {
         }
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(
-            current_dir
-                .join("src-tauri")
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("bin")
-                .join(node_exe),
-        );
-        candidates.push(
-            current_dir
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("bin")
-                .join(node_exe),
-        );
+    if dev_api_overrides_allowed() {
+        if let Ok(current_dir) = std::env::current_dir() {
+            candidates.push(
+                current_dir
+                    .join("src-tauri")
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("bin")
+                    .join(node_exe),
+            );
+            candidates.push(
+                current_dir
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("bin")
+                    .join(node_exe),
+            );
+        }
     }
 
     candidates
