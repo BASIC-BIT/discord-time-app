@@ -24,6 +24,11 @@ use tauri_plugin_updater::UpdaterExt;
 use std::os::windows::process::CommandExt;
 
 const TIME_PARSER_PORT: u16 = 8857;
+const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8765/v1";
+const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687";
+const LOCAL_SLM_DEFAULT_ADAPTER_PATH: &str =
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora";
+const LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS: u64 = 360;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -53,6 +58,20 @@ pub struct TimeParserServiceConfig {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSlmStatus {
+    pub enabled: bool,
+    pub auto_start: bool,
+    pub ready: bool,
+    pub state: String,
+    pub message: String,
+    pub endpoint_base_url: String,
+    pub model: String,
+    pub launcher_path: Option<String>,
+    pub last_output: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeTimeParserRequest {
@@ -73,6 +92,10 @@ pub struct NativeTimeParserResponse {
 pub struct TimeParserServiceState {
     child: Mutex<Option<Child>>,
     base_url: String,
+}
+
+pub struct LocalSlmServiceState {
+    starting: Mutex<bool>,
 }
 
 impl TimeParserServiceState {
@@ -105,6 +128,14 @@ pub struct AppSettings {
     pub use_llm_parsing: bool,
     pub deterministic_preflight: bool,
     pub theme: String, // "dark", "light", "system"
+    pub local_slm_enabled: bool,
+    pub local_slm_auto_start: bool,
+    pub local_slm_prewarm: bool,
+    pub local_slm_endpoint_base_url: String,
+    pub local_slm_model: String,
+    pub local_slm_launcher_path: String,
+    pub local_slm_adapter_path: String,
+    pub local_slm_startup_timeout_seconds: u64,
 }
 
 impl Default for AppSettings {
@@ -117,6 +148,22 @@ impl Default for AppSettings {
             use_llm_parsing: true,
             deterministic_preflight: false,
             theme: "dark".to_string(),
+            local_slm_enabled: false,
+            local_slm_auto_start: false,
+            local_slm_prewarm: true,
+            local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
+            local_slm_model: LOCAL_SLM_DEFAULT_MODEL.to_string(),
+            local_slm_launcher_path: String::new(),
+            local_slm_adapter_path: LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string(),
+            local_slm_startup_timeout_seconds: LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS,
+        }
+    }
+}
+
+impl LocalSlmServiceState {
+    fn new() -> Self {
+        Self {
+            starting: Mutex::new(false),
         }
     }
 }
@@ -325,6 +372,535 @@ fn apply_optional_api_env(command: &mut Command) {
             }
         }
     }
+}
+
+fn normalized_local_slm_endpoint(settings: &AppSettings) -> String {
+    let trimmed = settings.local_slm_endpoint_base_url.trim();
+    if trimmed.is_empty() {
+        LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string()
+    } else {
+        trimmed.trim_end_matches('/').to_string()
+    }
+}
+
+fn local_slm_model(settings: &AppSettings) -> String {
+    let trimmed = settings.local_slm_model.trim();
+    if trimmed.is_empty() {
+        LOCAL_SLM_DEFAULT_MODEL.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn local_slm_adapter_path(settings: &AppSettings) -> String {
+    let trimmed = settings.local_slm_adapter_path.trim();
+    if trimmed.is_empty() {
+        LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn local_slm_startup_timeout(settings: &AppSettings) -> u64 {
+    let timeout = settings.local_slm_startup_timeout_seconds;
+    if timeout == 0 {
+        LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS
+    } else {
+        timeout.clamp(30, 900)
+    }
+}
+
+fn apply_local_slm_api_env(command: &mut Command, settings: &AppSettings) {
+    if !settings.local_slm_enabled {
+        return;
+    }
+
+    command
+        .env("TEMPORAL_FEATURE_PLAN_IR", "true")
+        .env(
+            "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL",
+            normalized_local_slm_endpoint(settings),
+        )
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_MODEL", local_slm_model(settings))
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET", "minimal")
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_API", "chat")
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT", "chat")
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS", "512")
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS", "15000");
+}
+
+fn parse_local_http_url(url: &str) -> Option<(String, u16, String)> {
+    let rest = url.strip_prefix("http://")?;
+    let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let (host, port_text) = host_port.rsplit_once(':')?;
+    if host != "127.0.0.1" && host != "localhost" {
+        return None;
+    }
+    let port = port_text.parse::<u16>().ok()?;
+    Some((host.to_string(), port, format!("/{path}")))
+}
+
+fn local_http_get_text(url: &str, timeout: Duration) -> Result<String, String> {
+    let (host, port, path) = parse_local_http_url(url)
+        .ok_or_else(|| format!("Only local http://127.0.0.1:<port> URLs are supported: {url}"))?;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .map_err(|e| format!("Failed to connect to {url}: {e}"))?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Failed to write request to {url}: {e}"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| format!("Failed to read response from {url}: {e}"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| format!("Invalid HTTP response from {url}"))?;
+    let status_ok = headers
+        .lines()
+        .next()
+        .map(|line| line.starts_with("HTTP/1.1 200") || line.starts_with("HTTP/1.0 200"))
+        .unwrap_or(false);
+    if !status_ok {
+        return Err(format!("{url} did not return HTTP 200"));
+    }
+    Ok(body.to_string())
+}
+
+fn local_slm_models_url(settings: &AppSettings) -> String {
+    format!("{}/models", normalized_local_slm_endpoint(settings))
+}
+
+fn local_slm_endpoint_ready(settings: &AppSettings) -> bool {
+    let Ok(body) = local_http_get_text(&local_slm_models_url(settings), Duration::from_secs(2))
+    else {
+        return false;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return false;
+    };
+    let model = local_slm_model(settings);
+    json.get("data")
+        .and_then(|value| value.as_array())
+        .map(|models| {
+            models.iter().any(|entry| {
+                entry
+                    .get("id")
+                    .and_then(|id| id.as_str())
+                    .map(|id| id == model)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn local_slm_port(settings: &AppSettings) -> Option<u16> {
+    parse_local_http_url(&normalized_local_slm_endpoint(settings)).map(|(_host, port, _path)| port)
+}
+
+fn path_candidate_from_text(app: &AppHandle, path_text: &str) -> Vec<PathBuf> {
+    let path = PathBuf::from(path_text);
+    if path.is_absolute() {
+        return vec![path];
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join(&path));
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join(&path));
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join(&path));
+        }
+    }
+    candidates
+}
+
+fn resolve_local_slm_launcher(app: &AppHandle, settings: &AppSettings) -> Option<PathBuf> {
+    let configured = settings.local_slm_launcher_path.trim();
+    if !configured.is_empty() {
+        if let Some(path) = path_candidate_from_text(app, configured)
+            .into_iter()
+            .find(|path| path.is_file())
+        {
+            return Some(path);
+        }
+    }
+
+    let default_path = PathBuf::from("scripts").join("start-temporal-peft-server.ps1");
+    path_candidate_from_text(app, &default_path.to_string_lossy())
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn slm_state_is_starting(app: &AppHandle) -> bool {
+    app.state::<LocalSlmServiceState>()
+        .starting
+        .lock()
+        .map(|starting| *starting)
+        .unwrap_or(false)
+}
+
+fn set_slm_state_starting(app: &AppHandle, value: bool) -> Result<(), String> {
+    let state = app.state::<LocalSlmServiceState>();
+    let mut starting = state
+        .starting
+        .lock()
+        .map_err(|e| format!("Failed to lock Local SLM state: {e}"))?;
+    *starting = value;
+    Ok(())
+}
+
+struct LocalSlmStartingGuard<'a> {
+    app: &'a AppHandle,
+}
+
+impl Drop for LocalSlmStartingGuard<'_> {
+    fn drop(&mut self) {
+        let _ = set_slm_state_starting(self.app, false);
+    }
+}
+
+fn try_acquire_slm_starting(app: &AppHandle) -> Result<Option<LocalSlmStartingGuard<'_>>, String> {
+    let state = app.state::<LocalSlmServiceState>();
+    let mut starting = state
+        .starting
+        .lock()
+        .map_err(|e| format!("Failed to lock Local SLM state: {e}"))?;
+    if *starting {
+        return Ok(None);
+    }
+    *starting = true;
+    Ok(Some(LocalSlmStartingGuard { app }))
+}
+
+fn truncate_process_output(output: String) -> String {
+    const MAX_CHARS: usize = 4000;
+    let mut chars = output.chars().collect::<Vec<_>>();
+    if chars.len() <= MAX_CHARS {
+        return output;
+    }
+    let keep_from = chars.len().saturating_sub(MAX_CHARS);
+    chars.drain(0..keep_from);
+    format!("...{}", chars.into_iter().collect::<String>())
+}
+
+fn collect_exited_child_output(child: &mut Child) -> Result<String, String> {
+    let mut stdout_text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        stdout
+            .read_to_string(&mut stdout_text)
+            .map_err(|e| format!("Failed to read Local SLM launcher stdout: {e}"))?;
+    }
+
+    let mut stderr_text = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        stderr
+            .read_to_string(&mut stderr_text)
+            .map_err(|e| format!("Failed to read Local SLM launcher stderr: {e}"))?;
+    }
+
+    Ok(truncate_process_output(format!(
+        "{stdout_text}{stderr_text}"
+    )))
+}
+
+fn run_command_with_timeout(mut command: Command, timeout: Duration) -> Result<String, String> {
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start Local SLM launcher: {e}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let combined = collect_exited_child_output(&mut child)?;
+                if status.success() {
+                    return Ok(combined);
+                }
+                return Err(if combined.trim().is_empty() {
+                    format!("Local SLM launcher exited with {status}")
+                } else {
+                    combined
+                });
+            }
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let output = child.wait_with_output().ok();
+                    let combined = output
+                        .map(|output| {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            truncate_process_output(format!("{stdout}{stderr}"))
+                        })
+                        .unwrap_or_default();
+                    return Err(if combined.trim().is_empty() {
+                        format!(
+                            "Timed out after {}s waiting for Local SLM launcher",
+                            timeout.as_secs()
+                        )
+                    } else {
+                        format!(
+                            "Timed out after {}s waiting for Local SLM launcher.\n{}",
+                            timeout.as_secs(),
+                            combined
+                        )
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(e) => return Err(format!("Failed to inspect Local SLM launcher: {e}")),
+        }
+    }
+}
+
+fn local_slm_launcher_command(launcher: &Path) -> Command {
+    let mut command = Command::new("powershell.exe");
+    command
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(child_process_path(launcher));
+    command
+}
+
+fn configure_local_slm_launcher_args(
+    command: &mut Command,
+    settings: &AppSettings,
+) -> Result<(), String> {
+    let port = local_slm_port(settings).ok_or_else(|| {
+        format!(
+            "Local SLM endpoint must be a local HTTP URL like {}.",
+            LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
+        )
+    })?;
+    command
+        .arg("-Port")
+        .arg(port.to_string())
+        .arg("-ModelName")
+        .arg(local_slm_model(settings))
+        .arg("-AdapterPath")
+        .arg(local_slm_adapter_path(settings))
+        .arg("-StartupTimeoutSeconds")
+        .arg(local_slm_startup_timeout(settings).to_string())
+        .arg("-PrewarmTimeoutSeconds")
+        .arg("180")
+        .arg("-Tail")
+        .arg("80");
+    if !settings.local_slm_prewarm {
+        command.arg("-SkipPrewarm");
+    }
+    Ok(())
+}
+
+fn local_slm_status_for_settings(
+    app: &AppHandle,
+    settings: &AppSettings,
+    last_output: Option<String>,
+    failure: Option<String>,
+) -> LocalSlmStatus {
+    let endpoint_base_url = normalized_local_slm_endpoint(settings);
+    let model = local_slm_model(settings);
+    let launcher = resolve_local_slm_launcher(app, settings);
+    let launcher_path = launcher
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
+
+    if !settings.local_slm_enabled {
+        return LocalSlmStatus {
+            enabled: false,
+            auto_start: settings.local_slm_auto_start,
+            ready: false,
+            state: "disabled".to_string(),
+            message: "Local SLM is disabled. Deterministic parsing remains available.".to_string(),
+            endpoint_base_url,
+            model,
+            launcher_path,
+            last_output,
+        };
+    }
+
+    if local_slm_endpoint_ready(settings) {
+        return LocalSlmStatus {
+            enabled: true,
+            auto_start: settings.local_slm_auto_start,
+            ready: true,
+            state: "ready".to_string(),
+            message: "Local SLM endpoint is ready.".to_string(),
+            endpoint_base_url,
+            model,
+            launcher_path,
+            last_output,
+        };
+    }
+
+    if slm_state_is_starting(app) {
+        return LocalSlmStatus {
+            enabled: true,
+            auto_start: settings.local_slm_auto_start,
+            ready: false,
+            state: "starting".to_string(),
+            message: "Local SLM is starting or prewarming.".to_string(),
+            endpoint_base_url,
+            model,
+            launcher_path,
+            last_output,
+        };
+    }
+
+    if let Some(failure) = failure {
+        return LocalSlmStatus {
+            enabled: true,
+            auto_start: settings.local_slm_auto_start,
+            ready: false,
+            state: "failed".to_string(),
+            message: failure,
+            endpoint_base_url,
+            model,
+            launcher_path,
+            last_output,
+        };
+    }
+
+    if launcher.is_none() {
+        return LocalSlmStatus {
+            enabled: true,
+            auto_start: settings.local_slm_auto_start,
+            ready: false,
+            state: "not_configured".to_string(),
+            message: "Local SLM launcher was not found. Configure a launcher path or install the local model runtime.".to_string(),
+            endpoint_base_url,
+            model,
+            launcher_path,
+            last_output,
+        };
+    }
+
+    LocalSlmStatus {
+        enabled: true,
+        auto_start: settings.local_slm_auto_start,
+        ready: false,
+        state: "not_running".to_string(),
+        message: "Local SLM endpoint is not running.".to_string(),
+        endpoint_base_url,
+        model,
+        launcher_path,
+        last_output,
+    }
+}
+
+fn get_local_slm_status_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
+    let settings = load_app_settings(app)?;
+    Ok(local_slm_status_for_settings(app, &settings, None, None))
+}
+
+fn start_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
+    let settings = load_app_settings(app)?;
+    if !settings.local_slm_enabled
+        || local_slm_endpoint_ready(&settings)
+        || slm_state_is_starting(app)
+    {
+        return Ok(local_slm_status_for_settings(app, &settings, None, None));
+    }
+
+    let Some(launcher) = resolve_local_slm_launcher(app, &settings) else {
+        return Ok(local_slm_status_for_settings(app, &settings, None, None));
+    };
+
+    let mut command = local_slm_launcher_command(&launcher);
+    if let Err(error) = configure_local_slm_launcher_args(&mut command, &settings) {
+        return Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(error),
+        ));
+    }
+    let Some(_starting_guard) = try_acquire_slm_starting(app)? else {
+        return Ok(local_slm_status_for_settings(app, &settings, None, None));
+    };
+    let timeout = Duration::from_secs(local_slm_startup_timeout(&settings) + 240);
+    let result = run_command_with_timeout(command, timeout);
+
+    match result {
+        Ok(output) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            Some(output),
+            None,
+        )),
+        Err(error) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(error),
+        )),
+    }
+}
+
+fn stop_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
+    let settings = load_app_settings(app)?;
+    let Some(launcher) = resolve_local_slm_launcher(app, &settings) else {
+        return Ok(local_slm_status_for_settings(app, &settings, None, None));
+    };
+
+    let mut command = local_slm_launcher_command(&launcher);
+    if let Err(error) = configure_local_slm_launcher_args(&mut command, &settings) {
+        return Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(error),
+        ));
+    }
+    command.arg("-Stop");
+    let result = run_command_with_timeout(command, Duration::from_secs(60));
+    let _ = set_slm_state_starting(app, false);
+
+    match result {
+        Ok(output) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            Some(output),
+            None,
+        )),
+        Err(error) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(error),
+        )),
+    }
+}
+
+async fn start_local_slm_runtime(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || start_local_slm_sync(&app))
+        .await
+        .map_err(|e| format!("Failed to join Local SLM startup task: {e}"))?
+}
+
+fn trigger_local_slm_start(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match start_local_slm_runtime(app).await {
+            Ok(status) => log::info!("Local SLM startup check completed: {}", status.state),
+            Err(e) => log::warn!("Local SLM startup check failed: {e}"),
+        }
+    });
 }
 
 fn time_parser_health_check() -> bool {
@@ -671,6 +1247,10 @@ fn start_time_parser_service(app: &AppHandle) {
             return;
         }
     };
+    let settings = load_app_settings(app).unwrap_or_else(|e| {
+        log::warn!("Failed to load settings for parser API env: {e}");
+        AppSettings::default()
+    });
     let node_command = find_time_parser_node(app);
     let (stdout, stderr) = time_parser_log_stdio(app);
     let mut command = Command::new(child_process_path(&node_command));
@@ -685,6 +1265,7 @@ fn start_time_parser_service(app: &AppHandle) {
         .stderr(stderr);
 
     apply_optional_api_env(&mut command);
+    apply_local_slm_api_env(&mut command, &settings);
 
     if let Some(db_path) = time_parser_db_path(app) {
         command.env("DB_PATH", db_path);
@@ -815,6 +1396,47 @@ fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, Strin
     }
 }
 
+fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<TimeParserServiceState>();
+    let mut child_slot = state
+        .child
+        .lock()
+        .map_err(|e| format!("Failed to lock parser service state: {e}"))?;
+    if let Some(child) = child_slot.as_mut() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    *child_slot = None;
+    Ok(())
+}
+
+#[tauri::command]
+async fn restart_time_parser_service(app: AppHandle) -> Result<TimeParserServiceConfig, String> {
+    stop_time_parser_service(&app)?;
+    start_time_parser_service(&app);
+    let _ = wait_for_time_parser_service_blocking(Duration::from_secs(8)).await?;
+    get_time_parser_config(app).await
+}
+
+#[tauri::command]
+async fn get_local_slm_status(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || get_local_slm_status_sync(&app))
+        .await
+        .map_err(|e| format!("Failed to join Local SLM status task: {e}"))?
+}
+
+#[tauri::command]
+async fn start_local_slm(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    start_local_slm_runtime(app).await
+}
+
+#[tauri::command]
+async fn stop_local_slm(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || stop_local_slm_sync(&app))
+        .await
+        .map_err(|e| format!("Failed to join Local SLM stop task: {e}"))?
+}
+
 #[tauri::command]
 async fn init_stats_db(_app: AppHandle) -> Result<(), String> {
     Ok(())
@@ -839,12 +1461,11 @@ async fn increment_format_usage(_app: AppHandle, format: String) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
-async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
+fn load_app_settings(app: &AppHandle) -> Result<AppSettings, String> {
     log::debug!("Loading app settings");
 
     // Create store with manager and path
-    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+    let store = tauri_plugin_store::StoreBuilder::new(app, "settings.json")
         .build()
         .map_err(|e| {
             log::error!("Failed to build settings store: {e}");
@@ -879,12 +1500,11 @@ async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     Ok(settings)
 }
 
-#[tauri::command]
-async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
+fn save_app_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     log::info!("Saving app settings");
 
     // Create store with manager and path
-    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+    let store = tauri_plugin_store::StoreBuilder::new(app, "settings.json")
         .build()
         .map_err(|e| {
             log::error!("Failed to build settings store: {e}");
@@ -907,6 +1527,16 @@ async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), Stri
 
     log::info!("Settings saved successfully");
     Ok(())
+}
+
+#[tauri::command]
+async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
+    load_app_settings(&app)
+}
+
+#[tauri::command]
+async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
+    save_app_settings(&app, &settings)
 }
 
 #[tauri::command]
@@ -1108,6 +1738,8 @@ fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::W
 }
 
 fn show_main_window(app: &AppHandle) {
+    maybe_trigger_local_slm_for_overlay(app);
+
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -1115,6 +1747,19 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.center();
         let _ = window.emit("show-overlay-view", ());
     }
+}
+
+fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
+    let Ok(settings) = load_app_settings(app) else {
+        return;
+    };
+    if !settings.local_slm_enabled || !settings.local_slm_prewarm {
+        return;
+    }
+    if slm_state_is_starting(app) {
+        return;
+    }
+    trigger_local_slm_start(app);
 }
 
 fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -1296,6 +1941,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(TimeParserServiceState::new())
+        .manage(LocalSlmServiceState::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
@@ -1320,6 +1966,10 @@ pub fn run() {
             debug_store_location,
             get_time_parser_config,
             parse_time_with_local_service,
+            restart_time_parser_service,
+            get_local_slm_status,
+            start_local_slm,
+            stop_local_slm,
         ])
         .setup(|app| {
             // Initialize logging
@@ -1336,6 +1986,12 @@ pub fn run() {
             if let Err(e) = setup_global_shortcuts(app.handle()) {
                 log::error!("Failed to setup global shortcuts: {e}");
                 eprintln!("Failed to setup global shortcuts: {e}");
+            }
+
+            if let Ok(settings) = load_app_settings(app.handle()) {
+                if settings.local_slm_enabled && settings.local_slm_auto_start {
+                    trigger_local_slm_start(app.handle());
+                }
             }
 
             start_time_parser_service(app.handle());
