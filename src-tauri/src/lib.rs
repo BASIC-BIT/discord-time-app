@@ -559,17 +559,27 @@ fn set_slm_state_starting(app: &AppHandle, value: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn try_set_slm_state_starting(app: &AppHandle) -> Result<bool, String> {
+struct LocalSlmStartingGuard<'a> {
+    app: &'a AppHandle,
+}
+
+impl Drop for LocalSlmStartingGuard<'_> {
+    fn drop(&mut self) {
+        let _ = set_slm_state_starting(self.app, false);
+    }
+}
+
+fn try_acquire_slm_starting(app: &AppHandle) -> Result<Option<LocalSlmStartingGuard<'_>>, String> {
     let state = app.state::<LocalSlmServiceState>();
     let mut starting = state
         .starting
         .lock()
         .map_err(|e| format!("Failed to lock Local SLM state: {e}"))?;
     if *starting {
-        return Ok(false);
+        return Ok(None);
     }
     *starting = true;
-    Ok(true)
+    Ok(Some(LocalSlmStartingGuard { app }))
 }
 
 fn truncate_process_output(output: String) -> String {
@@ -581,6 +591,26 @@ fn truncate_process_output(output: String) -> String {
     let keep_from = chars.len().saturating_sub(MAX_CHARS);
     chars.drain(0..keep_from);
     format!("...{}", chars.into_iter().collect::<String>())
+}
+
+fn collect_exited_child_output(child: &mut Child) -> Result<String, String> {
+    let mut stdout_text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        stdout
+            .read_to_string(&mut stdout_text)
+            .map_err(|e| format!("Failed to read Local SLM launcher stdout: {e}"))?;
+    }
+
+    let mut stderr_text = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        stderr
+            .read_to_string(&mut stderr_text)
+            .map_err(|e| format!("Failed to read Local SLM launcher stderr: {e}"))?;
+    }
+
+    Ok(truncate_process_output(format!(
+        "{stdout_text}{stderr_text}"
+    )))
 }
 
 fn run_command_with_timeout(mut command: Command, timeout: Duration) -> Result<String, String> {
@@ -595,18 +625,13 @@ fn run_command_with_timeout(mut command: Command, timeout: Duration) -> Result<S
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_status)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| format!("Failed to read Local SLM launcher output: {e}"))?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let combined = truncate_process_output(format!("{stdout}{stderr}"));
-                if output.status.success() {
+            Ok(Some(status)) => {
+                let combined = collect_exited_child_output(&mut child)?;
+                if status.success() {
                     return Ok(combined);
                 }
                 return Err(if combined.trim().is_empty() {
-                    format!("Local SLM launcher exited with {}", output.status)
+                    format!("Local SLM launcher exited with {status}")
                 } else {
                     combined
                 });
@@ -805,12 +830,11 @@ fn start_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
             Some(error),
         ));
     }
-    if !try_set_slm_state_starting(app)? {
+    let Some(_starting_guard) = try_acquire_slm_starting(app)? else {
         return Ok(local_slm_status_for_settings(app, &settings, None, None));
-    }
+    };
     let timeout = Duration::from_secs(local_slm_startup_timeout(&settings) + 240);
     let result = run_command_with_timeout(command, timeout);
-    let _ = set_slm_state_starting(app, false);
 
     match result {
         Ok(output) => Ok(local_slm_status_for_settings(
@@ -1732,7 +1756,7 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
     if !settings.local_slm_enabled || !settings.local_slm_prewarm {
         return;
     }
-    if local_slm_endpoint_ready(&settings) || slm_state_is_starting(app) {
+    if slm_state_is_starting(app) {
         return;
     }
     trigger_local_slm_start(app);
