@@ -47,6 +47,19 @@ The desktop build stages a bundled Node runtime, `api/dist`, and production API 
 
 OpenAI and Langfuse secrets are not bundled. For local development, the launcher forwards values from `api/.env` when present. Installed builds need those values supplied through environment/config until a Settings UI for parser credentials exists.
 
+### Local SLM Runtime
+
+The Settings window has a **Local SLM Runtime** section for the fine-tuned Temporal Plan-IR model. It is disabled by default. When enabled, HammerOverlay injects the local Plan-IR endpoint configuration into the bundled parser sidecar before startup, so saving Local SLM settings restarts the local parser service.
+
+Default runtime values:
+
+- Endpoint: `http://127.0.0.1:8765/v1`
+- Model: `qwen-temporal-ir-qwen35-bf16-chat-time-range-2687`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`
+- Launcher: auto-detected `scripts/start-temporal-peft-server.ps1` when running from a source checkout
+
+The launcher must already be available on disk and is currently an operator/developer runtime wrapper around the local PEFT server. The SLM only proposes Temporal Plan-IR; schema validation, calendar arithmetic, and final timestamp rendering stay deterministic.
+
 ## How It Works
 
 1. **Frontend** sends time parsing requests to the backend API
@@ -75,6 +88,7 @@ For production, deploy the backend API separately:
 ## Troubleshooting
 
 - For Tauri, check `time-parser-api.out.log` and `time-parser-api.err.log` under the app data directory
+- For Local SLM startup, verify Docker/WSL GPU prerequisites and check that `GET http://127.0.0.1:8765/v1/models` returns the configured model
 - For development overrides, check that `api/dist/index.js` exists and `node` is on PATH, or set `HAMMEROVERLAY_API_ENTRYPOINT` / `HAMMEROVERLAY_NODE`. In release builds, also set `HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES=1` if you intentionally want to bypass the bundled sidecar.
 - For browser-only development, ensure backend is running before starting frontend
 - Check API key matches in both `.env` files when not using Tauri runtime credentials

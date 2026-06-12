@@ -215,11 +215,11 @@ For production-shaped local serving tests, run a vLLM/SGLang/hosted OpenAI-compa
 
 ```bash
 TEMPORAL_EVAL_BASELINES=endpoint-plan \
-TEMPORAL_EVAL_ENDPOINT_BASE_URL=http://localhost:8000/v1 \
-TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir-lora \
+TEMPORAL_EVAL_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1 \
+TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-time-range-2687 \
 TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET=minimal \
-TEMPORAL_EVAL_ENDPOINT_API=completions \
-TEMPORAL_EVAL_ENDPOINT_RESPONSE_FORMAT=none \
+TEMPORAL_EVAL_ENDPOINT_API=chat \
+TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT=chat \
 npm --prefix api run eval:temporal
 ```
 
@@ -230,7 +230,7 @@ source .venv-temporal-ir/bin/activate
 python ml/temporal-ir/serve_peft_openai.py \
   --adapter /mnt/c/Users/steve/AppData/Local/Temp/opencode/hf-temporal-qwen-lora \
   --host 0.0.0.0 \
-  --port 8000 \
+  --port 8765 \
   --model-name qwen-temporal-ir
 ```
 
@@ -240,13 +240,22 @@ For hosted containers, `--adapter` may be a Hugging Face repo ID such as `sjknei
 
 The HammerOverlay API sidecar can call the local PEFT server for Plan-IR generation while keeping deterministic parsing as the first pass. Simple deterministic parses still return immediately; the SLM is used only when the graph does not safely short-circuit.
 
-Start the canonical local PEFT server from Windows PowerShell:
+The productized desktop flow is Settings -> Local SLM Runtime. The runtime is disabled by default. When enabled, HammerOverlay configures the parser sidecar with the local Plan-IR endpoint and can start the PEFT server on app startup or when the overlay opens.
+
+Default desktop runtime values:
+
+- Endpoint: `http://127.0.0.1:8765/v1`
+- Model: `qwen-temporal-ir-qwen35-bf16-chat-time-range-2687`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`
+- Launcher: `scripts/start-temporal-peft-server.ps1` when auto-detected from a source checkout
+
+Manual operator startup still uses the same launcher from Windows PowerShell:
 
 ```powershell
 .\scripts\start-temporal-peft-server.ps1
 ```
 
-Enable the API sidecar with ignored local env values in `api/.env`:
+For source-checkout development, the API sidecar can still be enabled with ignored local env values in `api/.env`. Installed builds should prefer the Settings-owned Local SLM Runtime path instead of persistent Windows user environment variables:
 
 ```text
 TEMPORAL_FEATURE_PLAN_IR=true
@@ -274,7 +283,7 @@ Release builds ignore those development sidecar overrides unless you explicitly 
 $env:HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES = "1"
 ```
 
-To keep the local SLM server available after login, use `scripts/start-temporal-peft-server.ps1`. If Windows Scheduled Tasks cannot be registered without elevation, place a shortcut in the user Startup folder that runs:
+To keep the local SLM server available after login outside the app-managed path, use `scripts/start-temporal-peft-server.ps1`. If Windows Scheduled Tasks cannot be registered without elevation, place a shortcut in the user Startup folder that runs:
 
 ```powershell
 powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "E:\altbench\discord-time-app\scripts\start-temporal-peft-server.ps1"
