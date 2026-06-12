@@ -259,13 +259,19 @@ TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS=512
 TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000
 ```
 
-For the local desktop app, persist the env-file and source-sidecar paths at the Windows user-env level so release/autostart launches do not depend on the current working directory:
+Debug desktop builds can point at a source checkout sidecar with process-scoped overrides. Do not persist these at the Windows user-env level on a machine that also runs the installed MSI, because release builds should use the bundled sidecar by default:
 
 ```powershell
 $repoRoot = (Resolve-Path .).Path
-[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_API_ENV", (Join-Path $repoRoot "api\.env"), "User")
-[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_API_ENTRYPOINT", (Join-Path $repoRoot "api\dist\index.js"), "User")
-[Environment]::SetEnvironmentVariable("HAMMEROVERLAY_NODE", "C:\ProgramData\nvm\v24.15.0\node.exe", "User")
+$env:HAMMEROVERLAY_API_ENV = Join-Path $repoRoot "api\.env"
+$env:HAMMEROVERLAY_API_ENTRYPOINT = Join-Path $repoRoot "api\dist\index.js"
+$env:HAMMEROVERLAY_NODE = "C:\ProgramData\nvm\v24.15.0\node.exe"
+```
+
+Release builds ignore those development sidecar overrides unless you explicitly opt in:
+
+```powershell
+$env:HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES = "1"
 ```
 
 To keep the local SLM server available after login, use `scripts/start-temporal-peft-server.ps1`. If Windows Scheduled Tasks cannot be registered without elevation, place a shortcut in the user Startup folder that runs:
