@@ -128,6 +128,55 @@ fn explicit_time_parser_api_key() -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn dev_api_overrides_allowed() -> bool {
+    cfg!(debug_assertions) || env_flag_enabled("HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES")
+}
+
+fn dev_api_override_var(name: &str) -> Option<String> {
+    if !dev_api_overrides_allowed() {
+        return None;
+    }
+
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn log_ignored_dev_api_overrides() {
+    if dev_api_overrides_allowed() {
+        return;
+    }
+
+    if [
+        "HAMMEROVERLAY_API_ENV",
+        "HAMMEROVERLAY_API_ENTRYPOINT",
+        "HAMMEROVERLAY_NODE",
+    ]
+    .iter()
+    .any(|name| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+    }) {
+        log::warn!(
+            "Development API overrides are set but ignored by this release build. Set HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES=1 to opt in."
+        );
+    }
+}
+
 fn time_parser_api_key(app: &AppHandle, allow_api_env: bool) -> Result<String, String> {
     if let Some(api_key) = explicit_time_parser_api_key() {
         return Ok(api_key);
@@ -201,21 +250,23 @@ fn read_static_api_key_from_api_env() -> Option<String> {
 fn read_api_env_var(name: &str) -> Option<String> {
     let mut candidates = Vec::new();
 
-    if let Ok(env_path) = std::env::var("HAMMEROVERLAY_API_ENV") {
+    if let Some(env_path) = dev_api_override_var("HAMMEROVERLAY_API_ENV") {
         candidates.push(PathBuf::from(env_path));
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(current_dir.join("api").join(".env"));
-        candidates.push(current_dir.join("..").join("api").join(".env"));
-        candidates.push(
-            current_dir
-                .join("..")
-                .join("..")
-                .join("..")
-                .join("api")
-                .join(".env"),
-        );
+    if dev_api_overrides_allowed() {
+        if let Ok(current_dir) = std::env::current_dir() {
+            candidates.push(current_dir.join("api").join(".env"));
+            candidates.push(current_dir.join("..").join("api").join(".env"));
+            candidates.push(
+                current_dir
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("api")
+                    .join(".env"),
+            );
+        }
     }
 
     let prefix = format!("{name}=");
@@ -404,19 +455,11 @@ fn strip_inline_env_comment(value: &str) -> &str {
 }
 
 fn supervised_time_parser_disabled() -> bool {
-    std::env::var("HAMMEROVERLAY_DISABLE_SUPERVISED_API")
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    env_flag_enabled("HAMMEROVERLAY_DISABLE_SUPERVISED_API")
 }
 
 fn find_time_parser_entrypoint(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(entrypoint) = std::env::var("HAMMEROVERLAY_API_ENTRYPOINT") {
+    if let Some(entrypoint) = dev_api_override_var("HAMMEROVERLAY_API_ENTRYPOINT") {
         let path = PathBuf::from(entrypoint);
         if path.is_file() {
             return Some(path);
@@ -430,32 +473,6 @@ fn find_time_parser_entrypoint(app: &AppHandle) -> Option<PathBuf> {
         candidates.push(resource_dir.join("api").join("dist").join("index.js"));
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(
-            current_dir
-                .join("src-tauri")
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("dist")
-                .join("index.js"),
-        );
-        candidates.push(
-            current_dir
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("dist")
-                .join("index.js"),
-        );
-        candidates.push(current_dir.join("api").join("dist").join("index.js"));
-        candidates.push(
-            current_dir
-                .join("..")
-                .join("api")
-                .join("dist")
-                .join("index.js"),
-        );
-    }
-
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             candidates.push(exe_dir.join("api").join("dist").join("index.js"));
@@ -463,11 +480,39 @@ fn find_time_parser_entrypoint(app: &AppHandle) -> Option<PathBuf> {
         }
     }
 
+    if dev_api_overrides_allowed() {
+        if let Ok(current_dir) = std::env::current_dir() {
+            candidates.push(
+                current_dir
+                    .join("src-tauri")
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("dist")
+                    .join("index.js"),
+            );
+            candidates.push(
+                current_dir
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("dist")
+                    .join("index.js"),
+            );
+            candidates.push(current_dir.join("api").join("dist").join("index.js"));
+            candidates.push(
+                current_dir
+                    .join("..")
+                    .join("api")
+                    .join("dist")
+                    .join("index.js"),
+            );
+        }
+    }
+
     candidates.into_iter().find(|path| path.is_file())
 }
 
 fn find_time_parser_node(app: &AppHandle) -> PathBuf {
-    if let Ok(node_path) = std::env::var("HAMMEROVERLAY_NODE") {
+    if let Some(node_path) = dev_api_override_var("HAMMEROVERLAY_NODE") {
         return PathBuf::from(node_path);
     }
 
@@ -478,22 +523,31 @@ fn find_time_parser_node(app: &AppHandle) -> PathBuf {
         candidates.push(resource_dir.join("api").join("bin").join(node_exe));
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(
-            current_dir
-                .join("src-tauri")
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("bin")
-                .join(node_exe),
-        );
-        candidates.push(
-            current_dir
-                .join("sidecars")
-                .join("hammer-overlay-api")
-                .join("bin")
-                .join(node_exe),
-        );
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("api").join("bin").join(node_exe));
+            candidates.push(exe_dir.join("..").join("api").join("bin").join(node_exe));
+        }
+    }
+
+    if dev_api_overrides_allowed() {
+        if let Ok(current_dir) = std::env::current_dir() {
+            candidates.push(
+                current_dir
+                    .join("src-tauri")
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("bin")
+                    .join(node_exe),
+            );
+            candidates.push(
+                current_dir
+                    .join("sidecars")
+                    .join("hammer-overlay-api")
+                    .join("bin")
+                    .join(node_exe),
+            );
+        }
     }
 
     candidates
@@ -578,6 +632,8 @@ fn start_time_parser_service(app: &AppHandle) {
         log::info!("Supervised local time parser service is disabled for this session");
         return;
     }
+
+    log_ignored_dev_api_overrides();
 
     if time_parser_health_check() {
         log::info!("Local time parser service is already healthy");

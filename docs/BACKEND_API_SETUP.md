@@ -43,7 +43,7 @@ VITE_API_KEY=STATIC_KEY_123
 npm run start
 ```
 
-The desktop build stages a bundled Node runtime, `api/dist`, and production API dependencies with `npm run prepare:api-sidecar`. At runtime, the app starts the bundled sidecar API when the local parser service is not already healthy. Set `HAMMEROVERLAY_API_ENTRYPOINT` or `HAMMEROVERLAY_NODE` to override the entrypoint or Node executable during development.
+The desktop build stages a bundled Node runtime, `api/dist`, and production API dependencies with `npm run prepare:api-sidecar`. At runtime, the app starts the bundled sidecar API when the local parser service is not already healthy. Debug builds may use `HAMMEROVERLAY_API_ENTRYPOINT` or `HAMMEROVERLAY_NODE` to override the entrypoint or Node executable during development. Release builds ignore those development overrides unless `HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES=1` is set.
 
 OpenAI and Langfuse secrets are not bundled. For local development, the launcher forwards values from `api/.env` when present. Installed builds need those values supplied through environment/config until a Settings UI for parser credentials exists.
 
@@ -75,7 +75,7 @@ For production, deploy the backend API separately:
 ## Troubleshooting
 
 - For Tauri, check `time-parser-api.out.log` and `time-parser-api.err.log` under the app data directory
-- For development overrides, check that `api/dist/index.js` exists and `node` is on PATH, or set `HAMMEROVERLAY_API_ENTRYPOINT` / `HAMMEROVERLAY_NODE`
+- For development overrides, check that `api/dist/index.js` exists and `node` is on PATH, or set `HAMMEROVERLAY_API_ENTRYPOINT` / `HAMMEROVERLAY_NODE`. In release builds, also set `HAMMEROVERLAY_ALLOW_DEV_API_OVERRIDES=1` if you intentionally want to bypass the bundled sidecar.
 - For browser-only development, ensure backend is running before starting frontend
 - Check API key matches in both `.env` files when not using Tauri runtime credentials
 - Verify CORS is properly configured for your domain
