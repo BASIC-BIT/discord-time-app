@@ -854,6 +854,18 @@ fn local_slm_status_for_settings(
         }
     };
 
+    if let Some(failure) = failure {
+        return build_status(
+            settings.local_slm_enabled,
+            false,
+            "failed",
+            failure,
+            last_output,
+            false,
+            false,
+        );
+    }
+
     if !settings.local_slm_enabled {
         return build_status(
             false,
@@ -888,10 +900,6 @@ fn local_slm_status_for_settings(
             false,
             false,
         );
-    }
-
-    if let Some(failure) = failure {
-        return build_status(true, false, "failed", failure, last_output, false, false);
     }
 
     if launcher.is_none() {
