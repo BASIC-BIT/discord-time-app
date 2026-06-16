@@ -1021,10 +1021,7 @@ fn install_local_slm_runtime_files_sync(app: &AppHandle) -> Result<LocalSlmStatu
 }
 
 fn powershell_single_quoted(value: &str) -> Result<String, String> {
-    if value.contains('\'') {
-        return Err("Local SLM installer values must not contain single quotes.".to_string());
-    }
-    Ok(format!("'{value}'"))
+    Ok(format!("'{}'", value.replace('\'', "''")))
 }
 
 fn download_local_slm_model_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
