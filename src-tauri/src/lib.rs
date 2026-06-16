@@ -29,6 +29,12 @@ const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-bf16-chat-time-ra
 const LOCAL_SLM_DEFAULT_ADAPTER_PATH: &str =
     "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora";
 const LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS: u64 = 360;
+const LOCAL_SLM_RUNTIME_DIR: &str = "local-slm-runtime";
+const LOCAL_SLM_DEFAULT_DOCKER_IMAGE: &str =
+    "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8";
+const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-time-range-2687/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora.zip";
+const LOCAL_SLM_ADAPTER_PACKAGE_SHA256: &str =
+    "d933bd524bbf95a4521f243a61cdf3e196fea08133d00fd4a72e0db30160e598";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -68,6 +74,14 @@ pub struct LocalSlmStatus {
     pub message: String,
     pub endpoint_base_url: String,
     pub model: String,
+    pub adapter_path: String,
+    pub install_root: Option<String>,
+    pub runtime_installed: bool,
+    pub adapter_installed: bool,
+    pub docker_available: bool,
+    pub docker_image: String,
+    pub docker_image_installed: bool,
+    pub adapter_package_url: Option<String>,
     pub launcher_path: Option<String>,
     pub last_output: Option<String>,
 }
@@ -135,6 +149,7 @@ pub struct AppSettings {
     pub local_slm_model: String,
     pub local_slm_launcher_path: String,
     pub local_slm_adapter_path: String,
+    pub local_slm_docker_image: String,
     pub local_slm_startup_timeout_seconds: u64,
 }
 
@@ -155,6 +170,7 @@ impl Default for AppSettings {
             local_slm_model: LOCAL_SLM_DEFAULT_MODEL.to_string(),
             local_slm_launcher_path: String::new(),
             local_slm_adapter_path: LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string(),
+            local_slm_docker_image: LOCAL_SLM_DEFAULT_DOCKER_IMAGE.to_string(),
             local_slm_startup_timeout_seconds: LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS,
         }
     }
@@ -401,6 +417,15 @@ fn local_slm_adapter_path(settings: &AppSettings) -> String {
     }
 }
 
+fn local_slm_docker_image(settings: &AppSettings) -> String {
+    let trimmed = settings.local_slm_docker_image.trim();
+    if trimmed.is_empty() {
+        LOCAL_SLM_DEFAULT_DOCKER_IMAGE.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn local_slm_startup_timeout(settings: &AppSettings) -> u64 {
     let timeout = settings.local_slm_startup_timeout_seconds;
     if timeout == 0 {
@@ -408,6 +433,66 @@ fn local_slm_startup_timeout(settings: &AppSettings) -> u64 {
     } else {
         timeout.clamp(30, 900)
     }
+}
+
+fn local_slm_install_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    Ok(app_data.join(LOCAL_SLM_RUNTIME_DIR))
+}
+
+fn local_slm_installed_launcher_path(app: &AppHandle) -> Option<PathBuf> {
+    local_slm_install_root(app)
+        .ok()
+        .map(|root| root.join("scripts").join("start-temporal-peft-server.ps1"))
+        .filter(|path| path.is_file())
+}
+
+fn local_slm_installed_adapter_path(app: &AppHandle, settings: &AppSettings) -> Option<PathBuf> {
+    local_slm_install_root(app)
+        .ok()
+        .map(|root| root.join(local_slm_adapter_path(settings)))
+}
+
+fn local_slm_resource_root(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|path| path.join(LOCAL_SLM_RUNTIME_DIR))
+        .filter(|path| path.is_dir())
+}
+
+fn local_slm_adapter_package_url() -> Option<String> {
+    let trimmed = LOCAL_SLM_ADAPTER_PACKAGE_URL.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn command_success_with_timeout(command: Command, timeout: Duration) -> bool {
+    run_command_with_timeout(command, timeout).is_ok()
+}
+
+fn docker_available() -> bool {
+    let mut command = Command::new("docker");
+    command
+        .arg("version")
+        .arg("--format")
+        .arg("{{.Server.Version}}");
+    command_success_with_timeout(command, Duration::from_secs(3))
+}
+
+fn docker_image_installed(image: &str) -> bool {
+    if image.trim().is_empty() {
+        return false;
+    }
+    let mut command = Command::new("docker");
+    command.arg("image").arg("inspect").arg(image);
+    command_success_with_timeout(command, Duration::from_secs(3))
 }
 
 fn apply_local_slm_api_env(command: &mut Command, settings: &AppSettings) {
@@ -533,6 +618,10 @@ fn resolve_local_slm_launcher(app: &AppHandle, settings: &AppSettings) -> Option
         {
             return Some(path);
         }
+    }
+
+    if let Some(path) = local_slm_installed_launcher_path(app) {
+        return Some(path);
     }
 
     let default_path = PathBuf::from("scripts").join("start-temporal-peft-server.ps1");
@@ -695,6 +784,8 @@ fn configure_local_slm_launcher_args(
         .arg(local_slm_model(settings))
         .arg("-AdapterPath")
         .arg(local_slm_adapter_path(settings))
+        .arg("-Image")
+        .arg(local_slm_docker_image(settings))
         .arg("-StartupTimeoutSeconds")
         .arg(local_slm_startup_timeout(settings).to_string())
         .arg("-PrewarmTimeoutSeconds")
@@ -715,97 +806,321 @@ fn local_slm_status_for_settings(
 ) -> LocalSlmStatus {
     let endpoint_base_url = normalized_local_slm_endpoint(settings);
     let model = local_slm_model(settings);
+    let adapter_path = local_slm_adapter_path(settings);
+    let install_root_path = local_slm_install_root(app).ok();
+    let install_root = install_root_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
+    let runtime_installed = local_slm_installed_launcher_path(app).is_some();
+    let adapter_installed = path_candidate_from_text(app, &adapter_path)
+        .into_iter()
+        .any(|path| path.is_dir())
+        || local_slm_installed_adapter_path(app, settings)
+            .as_ref()
+            .map(|path| path.is_dir())
+            .unwrap_or(false);
+    let docker_image = local_slm_docker_image(settings);
+    let docker_available = docker_available();
+    let has_docker_image = docker_available && docker_image_installed(&docker_image);
+    let adapter_package_url = local_slm_adapter_package_url();
     let launcher = resolve_local_slm_launcher(app, settings);
     let launcher_path = launcher
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
 
-    if !settings.local_slm_enabled {
-        return LocalSlmStatus {
-            enabled: false,
-            auto_start: settings.local_slm_auto_start,
-            ready: false,
-            state: "disabled".to_string(),
-            message: "Local SLM is disabled. Deterministic parsing remains available.".to_string(),
-            endpoint_base_url,
-            model,
-            launcher_path,
-            last_output,
+    let build_status =
+        |enabled: bool, ready: bool, state: &str, message: String, last_output: Option<String>| {
+            LocalSlmStatus {
+                enabled,
+                auto_start: settings.local_slm_auto_start,
+                ready,
+                state: state.to_string(),
+                message,
+                endpoint_base_url: endpoint_base_url.clone(),
+                model: model.clone(),
+                adapter_path: adapter_path.clone(),
+                install_root: install_root.clone(),
+                runtime_installed,
+                adapter_installed,
+                docker_available,
+                docker_image: docker_image.clone(),
+                docker_image_installed: has_docker_image,
+                adapter_package_url: adapter_package_url.clone(),
+                launcher_path: launcher_path.clone(),
+                last_output,
+            }
         };
+
+    if !settings.local_slm_enabled {
+        return build_status(
+            false,
+            false,
+            "disabled",
+            "Local SLM is disabled. Deterministic parsing remains available.".to_string(),
+            last_output,
+        );
     }
 
     if local_slm_endpoint_ready(settings) {
-        return LocalSlmStatus {
-            enabled: true,
-            auto_start: settings.local_slm_auto_start,
-            ready: true,
-            state: "ready".to_string(),
-            message: "Local SLM endpoint is ready.".to_string(),
-            endpoint_base_url,
-            model,
-            launcher_path,
+        return build_status(
+            true,
+            true,
+            "ready",
+            "Local SLM endpoint is ready.".to_string(),
             last_output,
-        };
+        );
     }
 
     if slm_state_is_starting(app) {
-        return LocalSlmStatus {
-            enabled: true,
-            auto_start: settings.local_slm_auto_start,
-            ready: false,
-            state: "starting".to_string(),
-            message: "Local SLM is starting or prewarming.".to_string(),
-            endpoint_base_url,
-            model,
-            launcher_path,
+        return build_status(
+            true,
+            false,
+            "starting",
+            "Local SLM is starting or prewarming.".to_string(),
             last_output,
-        };
+        );
     }
 
     if let Some(failure) = failure {
-        return LocalSlmStatus {
-            enabled: true,
-            auto_start: settings.local_slm_auto_start,
-            ready: false,
-            state: "failed".to_string(),
-            message: failure,
-            endpoint_base_url,
-            model,
-            launcher_path,
-            last_output,
-        };
+        return build_status(true, false, "failed", failure, last_output);
     }
 
     if launcher.is_none() {
-        return LocalSlmStatus {
-            enabled: true,
-            auto_start: settings.local_slm_auto_start,
-            ready: false,
-            state: "not_configured".to_string(),
-            message: "Local SLM launcher was not found. Configure a launcher path or install the local model runtime.".to_string(),
-            endpoint_base_url,
-            model,
-            launcher_path,
-            last_output,
+        let configured_launcher = settings.local_slm_launcher_path.trim();
+        let message = if !runtime_installed {
+            "Local SLM runtime is not installed. Use Install Runtime Files to prepare the app-data runtime before starting the model."
+                .to_string()
+        } else if configured_launcher.is_empty() {
+            "Local SLM launcher was not found. Install Runtime Files again or configure a launcher path."
+                .to_string()
+        } else {
+            format!("Configured Local SLM launcher was not found: {configured_launcher}")
         };
+        return build_status(true, false, "not_configured", message, last_output);
     }
 
-    LocalSlmStatus {
-        enabled: true,
-        auto_start: settings.local_slm_auto_start,
-        ready: false,
-        state: "not_running".to_string(),
-        message: "Local SLM endpoint is not running.".to_string(),
-        endpoint_base_url,
-        model,
-        launcher_path,
-        last_output,
+    if !adapter_installed {
+        return build_status(
+            true,
+            false,
+            "model_missing",
+            "Local SLM model adapter is not installed yet.".to_string(),
+            last_output,
+        );
     }
+
+    if !docker_available {
+        return build_status(
+            true,
+            false,
+            "docker_unavailable",
+            "Docker is not available. Start Docker Desktop with NVIDIA GPU support before installing or starting the Local SLM."
+                .to_string(),
+            last_output,
+        );
+    }
+
+    if !has_docker_image {
+        return build_status(
+            true,
+            false,
+            "image_missing",
+            format!("Local SLM Docker image is not installed: {docker_image}"),
+            last_output,
+        );
+    }
+
+    build_status(
+        true,
+        false,
+        "not_running",
+        "Local SLM endpoint is not running.".to_string(),
+        last_output,
+    )
 }
 
 fn get_local_slm_status_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
     let settings = load_app_settings(app)?;
     Ok(local_slm_status_for_settings(app, &settings, None, None))
+}
+
+fn copy_local_slm_runtime_file(
+    app: &AppHandle,
+    install_root: &Path,
+    relative_path: &Path,
+) -> Result<(), String> {
+    let mut source_candidates = Vec::new();
+    if let Some(resource_root) = local_slm_resource_root(app) {
+        source_candidates.push(resource_root.join(relative_path));
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        source_candidates.push(current_dir.join(relative_path));
+    }
+
+    let source = source_candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            format!(
+                "Missing bundled Local SLM runtime file: {}",
+                relative_path.to_string_lossy()
+            )
+        })?;
+    let target = install_root.join(relative_path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Local SLM runtime directory: {e}"))?;
+    }
+    fs::copy(&source, &target).map_err(|e| {
+        format!(
+            "Failed to copy Local SLM runtime file {}: {e}",
+            relative_path.to_string_lossy()
+        )
+    })?;
+    Ok(())
+}
+
+fn install_local_slm_runtime_files_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
+    let install_root = local_slm_install_root(app)?;
+    fs::create_dir_all(&install_root)
+        .map_err(|e| format!("Failed to create Local SLM runtime directory: {e}"))?;
+
+    for relative_path in [
+        Path::new("scripts/start-temporal-peft-server.ps1"),
+        Path::new("scripts/start-temporal-peft-server-container.ps1"),
+        Path::new("ml/temporal-ir/serve_peft_openai.py"),
+        Path::new("ml/temporal-ir/predict_peft.py"),
+        Path::new("ml/temporal-ir/peft_runtime.py"),
+        Path::new("ml/temporal-ir/temporal_ir_prompts.py"),
+        Path::new("ml/temporal-ir/requirements-peft-server.txt"),
+    ] {
+        copy_local_slm_runtime_file(app, &install_root, relative_path)?;
+    }
+
+    let mut settings = load_app_settings(app)?;
+    settings.local_slm_launcher_path = install_root
+        .join("scripts")
+        .join("start-temporal-peft-server.ps1")
+        .to_string_lossy()
+        .to_string();
+    settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
+    if settings.local_slm_docker_image.trim().is_empty() {
+        settings.local_slm_docker_image = LOCAL_SLM_DEFAULT_DOCKER_IMAGE.to_string();
+    }
+    save_app_settings(app, &settings)?;
+
+    Ok(local_slm_status_for_settings(
+        app,
+        &settings,
+        Some(format!(
+            "Installed Local SLM runtime files to {}",
+            install_root.to_string_lossy()
+        )),
+        None,
+    ))
+}
+
+fn powershell_single_quoted(value: &str) -> Result<String, String> {
+    if value.contains('\'') {
+        return Err("Local SLM installer values must not contain single quotes.".to_string());
+    }
+    Ok(format!("'{value}'"))
+}
+
+fn download_local_slm_model_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
+    let runtime_status = install_local_slm_runtime_files_sync(app)?;
+    let Some(package_url) = local_slm_adapter_package_url() else {
+        let settings = load_app_settings(app)?;
+        return Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            runtime_status.last_output,
+            Some("Local SLM adapter package URL is not configured yet. Publish the adapter package, then wire LOCAL_SLM_ADAPTER_PACKAGE_URL and SHA-256.".to_string()),
+        ));
+    };
+
+    let install_root = local_slm_install_root(app)?;
+    let package_dir = install_root.join("packages");
+    fs::create_dir_all(&package_dir)
+        .map_err(|e| format!("Failed to create Local SLM package cache: {e}"))?;
+    let package_path = package_dir.join("temporal-slm-adapter.zip");
+
+    let mut script = format!(
+        "$ErrorActionPreference = 'Stop'; Invoke-WebRequest -UseBasicParsing -Uri {} -OutFile {}; ",
+        powershell_single_quoted(&package_url)?,
+        powershell_single_quoted(&package_path.to_string_lossy())?
+    );
+    if !LOCAL_SLM_ADAPTER_PACKAGE_SHA256.trim().is_empty() {
+        script.push_str(&format!(
+            "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath {}).Hash.ToLowerInvariant(); if ($actual -ne {}) {{ throw \"Local SLM adapter SHA-256 mismatch: $actual\" }}; ",
+            powershell_single_quoted(&package_path.to_string_lossy())?,
+            powershell_single_quoted(&LOCAL_SLM_ADAPTER_PACKAGE_SHA256.to_ascii_lowercase())?
+        ));
+    }
+    script.push_str(&format!(
+        "Expand-Archive -LiteralPath {} -DestinationPath {} -Force",
+        powershell_single_quoted(&package_path.to_string_lossy())?,
+        powershell_single_quoted(&install_root.to_string_lossy())?
+    ));
+
+    let mut command = Command::new("powershell.exe");
+    command
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(script);
+    let output = run_command_with_timeout(command, Duration::from_secs(1800));
+    let settings = load_app_settings(app)?;
+
+    match output {
+        Ok(output) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            Some(output),
+            None,
+        )),
+        Err(error) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(error),
+        )),
+    }
+}
+
+fn pull_local_slm_docker_image_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
+    let settings = load_app_settings(app)?;
+    let image = local_slm_docker_image(&settings);
+    if !docker_available() {
+        return Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(
+                "Docker is not available. Start Docker Desktop before pulling the Local SLM image."
+                    .to_string(),
+            ),
+        ));
+    }
+
+    let mut command = Command::new("docker");
+    command.arg("pull").arg(&image);
+    let output = run_command_with_timeout(command, Duration::from_secs(7200));
+    match output {
+        Ok(output) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            Some(output),
+            None,
+        )),
+        Err(error) => Ok(local_slm_status_for_settings(
+            app,
+            &settings,
+            None,
+            Some(error),
+        )),
+    }
 }
 
 fn start_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
@@ -815,6 +1130,11 @@ fn start_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
         || slm_state_is_starting(app)
     {
         return Ok(local_slm_status_for_settings(app, &settings, None, None));
+    }
+
+    let preflight_status = local_slm_status_for_settings(app, &settings, None, None);
+    if preflight_status.state != "not_running" {
+        return Ok(preflight_status);
     }
 
     let Some(launcher) = resolve_local_slm_launcher(app, &settings) else {
@@ -1438,6 +1758,27 @@ async fn stop_local_slm(app: AppHandle) -> Result<LocalSlmStatus, String> {
 }
 
 #[tauri::command]
+async fn install_local_slm_runtime_files(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || install_local_slm_runtime_files_sync(&app))
+        .await
+        .map_err(|e| format!("Failed to join Local SLM runtime install task: {e}"))?
+}
+
+#[tauri::command]
+async fn download_local_slm_model(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || download_local_slm_model_sync(&app))
+        .await
+        .map_err(|e| format!("Failed to join Local SLM model download task: {e}"))?
+}
+
+#[tauri::command]
+async fn pull_local_slm_docker_image(app: AppHandle) -> Result<LocalSlmStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || pull_local_slm_docker_image_sync(&app))
+        .await
+        .map_err(|e| format!("Failed to join Local SLM Docker image pull task: {e}"))?
+}
+
+#[tauri::command]
 async fn init_stats_db(_app: AppHandle) -> Result<(), String> {
     Ok(())
 }
@@ -1970,6 +2311,9 @@ pub fn run() {
             get_local_slm_status,
             start_local_slm,
             stop_local_slm,
+            install_local_slm_runtime_files,
+            download_local_slm_model,
+            pull_local_slm_docker_image,
         ])
         .setup(|app| {
             // Initialize logging

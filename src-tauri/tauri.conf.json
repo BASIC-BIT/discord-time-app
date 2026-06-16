@@ -41,7 +41,14 @@
     "targets": ["msi"],
     "createUpdaterArtifacts": true,
     "resources": {
-      "sidecars/hammer-overlay-api/": "api"
+      "sidecars/hammer-overlay-api/": "api",
+      "../scripts/start-temporal-peft-server.ps1": "local-slm-runtime/scripts/start-temporal-peft-server.ps1",
+      "../scripts/start-temporal-peft-server-container.ps1": "local-slm-runtime/scripts/start-temporal-peft-server-container.ps1",
+      "../ml/temporal-ir/serve_peft_openai.py": "local-slm-runtime/ml/temporal-ir/serve_peft_openai.py",
+      "../ml/temporal-ir/predict_peft.py": "local-slm-runtime/ml/temporal-ir/predict_peft.py",
+      "../ml/temporal-ir/peft_runtime.py": "local-slm-runtime/ml/temporal-ir/peft_runtime.py",
+      "../ml/temporal-ir/temporal_ir_prompts.py": "local-slm-runtime/ml/temporal-ir/temporal_ir_prompts.py",
+      "../ml/temporal-ir/requirements-peft-server.txt": "local-slm-runtime/ml/temporal-ir/requirements-peft-server.txt"
     },
     "icon": [
       "icons/32x32.png",

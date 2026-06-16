@@ -565,6 +565,10 @@ body {
   line-height: 1.4;
 }
 
+.setting-help-compact {
+  margin: 0;
+}
+
 .setting-item input[type="checkbox"] {
   margin-right: 8px;
   width: 16px;
@@ -652,13 +656,16 @@ body {
 }
 
 .local-slm-status-starting,
-.local-slm-status-not_running {
+.local-slm-status-not_running,
+.local-slm-status-model_missing,
+.local-slm-status-image_missing {
   border-color: #d97706;
   background: rgba(217, 119, 6, 0.12);
 }
 
 .local-slm-status-failed,
-.local-slm-status-not_configured {
+.local-slm-status-not_configured,
+.local-slm-status-docker_unavailable {
   border-color: #dc2626;
   background: rgba(220, 38, 38, 0.12);
 }
@@ -669,6 +676,29 @@ body {
   font-size: 12px;
   margin-top: 6px;
   overflow-wrap: anywhere;
+}
+
+.local-slm-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.local-slm-checks span {
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 3px 7px;
+}
+
+.local-slm-check-ok {
+  background: rgba(16, 185, 129, 0.16);
+  color: #86efac;
+}
+
+.local-slm-check-missing {
+  background: rgba(217, 119, 6, 0.16);
+  color: #fcd34d;
 }
 
 .local-slm-actions {
