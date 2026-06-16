@@ -1152,7 +1152,7 @@ fn pull_local_slm_docker_image_sync(app: &AppHandle) -> Result<LocalSlmStatus, S
     }
 
     let mut command = Command::new("docker");
-    command.arg("pull").arg(&image);
+    command.arg("pull").arg("--quiet").arg(&image);
     let output = run_command_with_timeout(command, Duration::from_secs(7200));
     match output {
         Ok(output) => Ok(local_slm_status_for_settings(
