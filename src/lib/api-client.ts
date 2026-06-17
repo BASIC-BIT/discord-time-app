@@ -388,20 +388,20 @@ async function getTauriTimeParserConfig(): Promise<TimeParserRuntimeConfig | nul
 
 // Create singleton instance with environment variables or Tauri runtime config.
 export async function createAPIClient(): Promise<TimeParserAPIClient | null> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
-  const apiKey = import.meta.env.VITE_API_KEY;
-
-  if (apiKey) {
-    return new TimeParserAPIClient(baseUrl, apiKey, DEFAULT_UNAVAILABLE_MESSAGE, false);
-  }
-
   const runtimeConfig = await getTauriTimeParserConfig();
   if (runtimeConfig && !runtimeConfig.available) {
     console.log(runtimeConfig.message);
     return null;
   }
   if (runtimeConfig?.apiKey) {
-    return new TimeParserAPIClient(runtimeConfig.baseUrl || baseUrl, runtimeConfig.apiKey, runtimeConfig.message);
+    return new TimeParserAPIClient(runtimeConfig.baseUrl || DEFAULT_API_BASE_URL, runtimeConfig.apiKey, runtimeConfig.message);
+  }
+
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
+  const apiKey = import.meta.env.VITE_API_KEY;
+
+  if (apiKey) {
+    return new TimeParserAPIClient(baseUrl, apiKey, DEFAULT_UNAVAILABLE_MESSAGE, false);
   }
 
   console.log('API client disabled because VITE_API_KEY is not configured and no Tauri runtime config is available.');

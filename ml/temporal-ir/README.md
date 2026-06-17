@@ -168,6 +168,8 @@ If access exists, test `gpt-4.1-nano-2025-04-14` first. If unavailable, compare 
 
 Release-grade packaging, benchmark, demo API, and architecture documentation work is bucketed in `docs/temporal-slm-release-backlog.md` so it can be split into a few GitHub issues when ready.
 
+Installed-app runtime packaging is tracked in `docs/local-slm-runtime-installer.md`. Use `scripts/package-local-slm-runtime.ps1` to build the ignored adapter ZIP and SHA-256 manifest before uploading the runtime release asset.
+
 Optional W&B dashboard:
 
 ```bash
@@ -247,7 +249,9 @@ Default desktop runtime values:
 - Endpoint: `http://127.0.0.1:8765/v1`
 - Model: `qwen-temporal-ir-qwen35-bf16-chat-time-range-2687`
 - Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`
-- Launcher: `scripts/start-temporal-peft-server.ps1` when auto-detected from a source checkout
+- Launcher: `scripts/start-temporal-peft-server.ps1` when auto-detected from a source checkout or copied into the installed app-data runtime.
+
+Installed MSI builds bundle lightweight runtime files, then Settings installs those files into app data, downloads the adapter package, and pulls the Docker serving image. Installed-app smoke tests should verify that full flow before any Local SLM runtime PR or release.
 
 Manual operator startup still uses the same launcher from Windows PowerShell:
 

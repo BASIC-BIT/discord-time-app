@@ -56,9 +56,9 @@ Default runtime values:
 - Endpoint: `http://127.0.0.1:8765/v1`
 - Model: `qwen-temporal-ir-qwen35-bf16-chat-time-range-2687`
 - Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`
-- Launcher: auto-detected `scripts/start-temporal-peft-server.ps1` when running from a source checkout
+- Docker image: `ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8`
 
-The launcher must already be available on disk and is currently an operator/developer runtime wrapper around the local PEFT server. The SLM only proposes Temporal Plan-IR; schema validation, calendar arithmetic, and final timestamp rendering stay deterministic.
+Installed MSI builds use the Settings actions to prepare the local runtime: `Install Runtime Files` copies bundled lightweight launch/server files into app data, `Download Model` retrieves the adapter package, and `Pull Docker Image` installs the serving backend. The model package must be published at the URL configured in `src-tauri/src/lib.rs` before installed-app smoke can pass. The SLM only proposes Temporal Plan-IR; schema validation, calendar arithmetic, and final timestamp rendering stay deterministic.
 
 ## How It Works
 

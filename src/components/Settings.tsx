@@ -17,6 +17,7 @@ interface AppSettings {
   local_slm_model: string;
   local_slm_launcher_path: string;
   local_slm_adapter_path: string;
+  local_slm_docker_image: string;
   local_slm_startup_timeout_seconds: number;
 }
 
@@ -28,6 +29,14 @@ interface LocalSlmStatus {
   message: string;
   endpointBaseUrl: string;
   model: string;
+  adapterPath: string;
+  installRoot?: string;
+  runtimeInstalled: boolean;
+  adapterInstalled: boolean;
+  dockerAvailable: boolean;
+  dockerImage: string;
+  dockerImageInstalled: boolean;
+  adapterPackageUrl?: string;
   launcherPath?: string;
   lastOutput?: string;
 }
@@ -47,6 +56,7 @@ const defaultSettings: AppSettings = {
   local_slm_model: "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687",
   local_slm_launcher_path: "",
   local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora",
+  local_slm_docker_image: "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8",
   local_slm_startup_timeout_seconds: 360,
 };
 
@@ -140,9 +150,49 @@ export function Settings({ onClose }: SettingsProps) {
         message: 'Could not read Local SLM status.',
         endpointBaseUrl: settings.local_slm_endpoint_base_url,
         model: settings.local_slm_model,
+        adapterPath: settings.local_slm_adapter_path,
+        runtimeInstalled: false,
+        adapterInstalled: false,
+        dockerAvailable: false,
+        dockerImage: settings.local_slm_docker_image,
+        dockerImageInstalled: false,
       });
       return null;
     }
+  };
+
+  const runSlmAction = async (command: string, genericError: string) => {
+    try {
+      setSlmBusy(true);
+      setError(null);
+      const status = await invoke<LocalSlmStatus>(command);
+      setSlmStatus(status);
+      const loadedSettings = await invoke<AppSettings>('get_settings');
+      setSettings(loadedSettings);
+      setPersistedSettings(loadedSettings);
+      if (status.state === 'failed') {
+        setError(status.message);
+      }
+      return status;
+    } catch (err) {
+      console.error(`${command} failed:`, err);
+      setError(genericError);
+      return null;
+    } finally {
+      setSlmBusy(false);
+    }
+  };
+
+  const installRuntimeFiles = async () => {
+    await runSlmAction('install_local_slm_runtime_files', 'Failed to install Local SLM runtime files.');
+  };
+
+  const downloadLocalSlmModel = async () => {
+    await runSlmAction('download_local_slm_model', 'Failed to download Local SLM model package.');
+  };
+
+  const pullDockerImage = async () => {
+    await runSlmAction('pull_local_slm_docker_image', 'Failed to pull Local SLM Docker image.');
   };
 
   const startLocalSlm = async () => {
@@ -183,6 +233,9 @@ export function Settings({ onClose }: SettingsProps) {
       persistedSettings.local_slm_model !== nextSettings.local_slm_model
     );
   };
+
+  const settingsDirty = JSON.stringify(settings) !== JSON.stringify(persistedSettings);
+  const slmActionDisabled = slmBusy || settingsDirty;
 
   const saveSettings = async () => {
     try {
@@ -325,7 +378,7 @@ export function Settings({ onClose }: SettingsProps) {
           <div className="setting-group local-slm-group">
             <h3>Local SLM Runtime</h3>
             <p className="setting-help">
-              The local small language model proposes Temporal Plan-IR. HammerOverlay still validates and executes timestamps deterministically.
+              The local small language model proposes Temporal Plan-IR. HammerOverlay still validates and executes timestamps deterministically. Runtime files install into app data; the model package and Docker image are installed separately.
             </p>
             <label className="setting-item">
               <input
@@ -382,8 +435,11 @@ export function Settings({ onClose }: SettingsProps) {
                 value={settings.local_slm_launcher_path}
                 onChange={(e) => handleSettingChange('local_slm_launcher_path', e.target.value)}
                 className="wide-input"
-                placeholder="Auto-detect scripts/start-temporal-peft-server.ps1"
+                placeholder="Path to scripts/start-temporal-peft-server.ps1"
               />
+              <p className="setting-help setting-help-compact">
+                Use Install Runtime Files to prepare an app-data launcher for installed builds.
+              </p>
             </div>
             <div className="setting-item setting-item-column">
               <label htmlFor="local-slm-adapter">Adapter path:</label>
@@ -392,6 +448,16 @@ export function Settings({ onClose }: SettingsProps) {
                 id="local-slm-adapter"
                 value={settings.local_slm_adapter_path}
                 onChange={(e) => handleSettingChange('local_slm_adapter_path', e.target.value)}
+                className="wide-input"
+              />
+            </div>
+            <div className="setting-item setting-item-column">
+              <label htmlFor="local-slm-docker-image">Docker image:</label>
+              <input
+                type="text"
+                id="local-slm-docker-image"
+                value={settings.local_slm_docker_image}
+                onChange={(e) => handleSettingChange('local_slm_docker_image', e.target.value)}
                 className="wide-input"
               />
             </div>
@@ -412,13 +478,36 @@ export function Settings({ onClose }: SettingsProps) {
                 <strong>Status:</strong> {slmStatus?.state ?? 'unknown'}
               </div>
               <div>{slmStatus?.message ?? 'Status has not loaded yet.'}</div>
+              {slmStatus?.installRoot && <div className="local-slm-detail">Install root: {slmStatus.installRoot}</div>}
               {slmStatus?.launcherPath && <div className="local-slm-detail">Launcher: {slmStatus.launcherPath}</div>}
+              {slmStatus?.adapterPath && <div className="local-slm-detail">Adapter: {slmStatus.adapterPath}</div>}
+              {slmStatus?.dockerImage && <div className="local-slm-detail">Docker image: {slmStatus.dockerImage}</div>}
+              {slmStatus && (
+                <div className="local-slm-checks">
+                  <span className={slmStatus.runtimeInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Runtime files: {slmStatus.runtimeInstalled ? 'installed' : 'missing'}</span>
+                  <span className={slmStatus.adapterInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Model: {slmStatus.adapterInstalled ? 'installed' : 'missing'}</span>
+                  <span className={slmStatus.dockerAvailable ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Docker: {slmStatus.dockerAvailable ? 'available' : 'missing'}</span>
+                  <span className={slmStatus.dockerImageInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Image: {slmStatus.dockerImageInstalled ? 'installed' : 'missing'}</span>
+                </div>
+              )}
+              {settingsDirty && (
+                <div className="local-slm-detail">Save settings before installing, pulling, or starting so those actions use the values shown here.</div>
+              )}
             </div>
             <div className="local-slm-actions">
               <button className="secondary-button" onClick={() => void refreshSlmStatus()} disabled={slmBusy}>
                 Refresh
               </button>
-              <button className="secondary-button" onClick={startLocalSlm} disabled={slmBusy || !settings.local_slm_enabled}>
+              <button className="secondary-button" onClick={installRuntimeFiles} disabled={slmActionDisabled}>
+                Install Runtime Files
+              </button>
+              <button className="secondary-button" onClick={downloadLocalSlmModel} disabled={slmActionDisabled || !slmStatus?.adapterPackageUrl}>
+                Download Model
+              </button>
+              <button className="secondary-button" onClick={pullDockerImage} disabled={slmActionDisabled || !settings.local_slm_docker_image}>
+                Pull Docker Image
+              </button>
+              <button className="secondary-button" onClick={startLocalSlm} disabled={slmActionDisabled || !settings.local_slm_enabled}>
                 {slmBusy ? 'Working...' : 'Start Local SLM'}
               </button>
               <button className="secondary-button" onClick={stopLocalSlm} disabled={slmBusy}>

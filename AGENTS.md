@@ -14,8 +14,11 @@ Promotion note: chat-level product targets promoted to repo `AGENTS.md`; current
 
 - Use `scripts/start-temporal-peft-server.ps1` as the canonical local deployment command. It serves the current local adapter at `http://127.0.0.1:8765/v1`, prewarms by default, and uses the Docker bf16/chat Qwen3.5 path; do not use port `8000` for the local Temporal SLM because other local Python/FastAPI tools can occupy it.
 - Keep `api/.env` aligned with `docs/temporal-local-model-deployment.md` when changing the deployed adapter or endpoint port.
+- Do not open, merge, or release desktop/runtime features that depend on installed-app behavior until they have been smoke-tested in the installed MSI app path, not only in dev or CI. Local SLM runtime changes must verify the Settings UI can find or clearly require the launcher/runtime path from an installed build before PR/release.
 
 Promotion note: local deployment convention promoted from chat/session memory to repo guidance on 2026-06-02; reason is repeated local port/WSL ambiguity during model deploys, over-promotion cost is two bullets, demotion path is relying only on `docs/temporal-local-model-deployment.md` if the workflow stabilizes enough, verification signal is future agents using `127.0.0.1:8765` and the launcher without rediscovering WSL IP/port behavior.
+
+Promotion note: installed-app smoke-test gate added on 2026-06-13 after v0.1.2 exposed a Local SLM Runtime UI that was CI-green but untested in the installed MSI path and reported `not_configured` without a bundled launcher/runtime. Current tier was chat-level correction, target tier is repo guidance, reason is preventing repeated desktop packaging misses, over-promotion cost is one extra release gate for desktop/runtime work, demotion path is moving to a release checklist if this becomes noisy, verification signal is future desktop/runtime PRs including installed-app smoke evidence before merge/release.
 
 ## Temporal SLM Training Jobs
 
