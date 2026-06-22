@@ -30,6 +30,11 @@ async function main() {
   assert.equal(nextSaturdayAtTwentyFourHour.status, 'resolved');
   assert.equal(nextSaturdayAtTwentyFourHour.canonical?.zonedDateTime.startsWith('2026-05-23T13:37'), true);
 
+  const sundayAtOne = await parse('sunday at 1 am');
+  assert.equal(sundayAtOne.status, 'resolved');
+  assert.equal(sundayAtOne.canonical?.weekday, 'sunday');
+  assert.equal(sundayAtOne.canonical?.zonedDateTime.startsWith('2026-05-17T01:00'), true);
+
   const ambiguousBareTime = await parse('next Saturday 1');
   assert.equal(ambiguousBareTime.status, 'needs_clarification');
   assert.equal(ambiguousBareTime.clarificationQuestion, 'Which time did you mean?');

@@ -1162,6 +1162,9 @@ function holidayQuery(text: string): string | null {
     .replace(/\b(?:midnight|noon|morning|afternoon|evening|tonight)\b/gi, ' ')
     .replace(/\b(?:at|on|the|a|an|this|next|last|coming|upcoming)\b/gi, ' ');
   const normalized = normalizeHolidayText(withoutTimes);
+  if (isWeekday(normalized)) {
+    return null;
+  }
   return normalized.length >= 3 ? normalized : null;
 }
 
