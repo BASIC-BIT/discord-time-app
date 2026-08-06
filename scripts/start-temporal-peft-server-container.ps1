@@ -9,6 +9,8 @@ param(
     [string]$ContainerName = "",
     [ValidateSet("custom", "chat")]
     [string]$PromptFormat = "custom",
+    [ValidateSet("minimal", "detailed")]
+    [string]$InstructionPreset = "minimal",
     [switch]$EnableThinking,
     [switch]$NoLoadIn4Bit,
     [switch]$SkipPrewarm,
@@ -61,7 +63,11 @@ function Test-TemporalPeftServer {
 
 function Invoke-TemporalPeftPrewarm {
     $inputJson = "{""referenceInstant"": ""2026-05-24T12:00:00Z"", ""text"": ""tomorrow"", ""timeZone"": ""America/New_York""}"
-    $instruction = "Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only."
+    $instructions = @{
+        minimal = "Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only."
+        detailed = "Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; explicitly shift overnight end times. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep. Use fixed offsets only for explicit UTC/GMT offsets. Return clarification for ambiguous timezone abbreviations. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan."
+    }
+    $instruction = $instructions[$InstructionPreset]
 
     if ($PromptFormat -eq "chat") {
         $content = "$instruction`n`nInput:`n$inputJson"

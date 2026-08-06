@@ -67,7 +67,25 @@ PORT=8857
 
 # Database path (optional, defaults to usage.db)
 DB_PATH=usage.db
+
+# Discord timestamp reference routing and rollout telemetry
+TEMPORAL_FEATURE_DISCORD_REFERENCE_ROUTING=true
+TEMPORAL_FEATURE_DISCORD_REFERENCE_SHADOW=false
+TELEMETRY_HMAC_KEY=replace-with-a-random-secret
+TELEMETRY_HMAC_KEY_ID=local-v1
+TELEMETRY_RETENTION_DAYS=30
+
+# Set these to the active provider/model rates before evaluating projected spend
+TEMPORAL_MODEL_INPUT_USD_PER_MILLION=0
+TEMPORAL_MODEL_OUTPUT_USD_PER_MILLION=0
+TEMPORAL_MODEL_FIXED_USD_PER_CALL=0
 ```
+
+For lifecycle-wide local Windows use, set `OPENAI_API_KEY` as a user-scoped
+environment variable instead. Development servers, eval/test processes, and
+newly launched installed builds can inherit that shared credential; `api/.env`
+is then only an optional per-checkout override. Never store the key as an
+unlabeled raw line, in `.env.example`, or in tracked source.
 
 ## API Endpoints
 
@@ -143,7 +161,11 @@ Health check endpoint for monitoring.
 
 ### GET /stats
 
-Usage statistics and recent activity (requires authentication).
+Usage and privacy-safe timestamp-reference route statistics (requires authentication). The
+`referenceRouting.last24h` object includes model calls, token totals, configured-cost
+coverage, observed estimated cost, and a straight-line 30-day cost projection. Route
+rows include counts and latency aggregates. Legacy `recent.text` values are always
+`[redacted]`; raw parse prose is not retained.
 
 **Response (200 OK):**
 ```json

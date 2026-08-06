@@ -52,9 +52,31 @@ export interface ParseError {
 }
 
 export interface ParseOptions {
+  requestId?: string;
   deterministicPreflight?: boolean;
   ordinalWeekdayGrammar?: boolean;
   semanticConsistencyGate?: boolean;
+  discordReferenceRouting?: boolean;
+  discordReferenceShadow?: boolean;
+}
+
+export interface ClientRouteTelemetry {
+  generationId: string;
+  classifierVersion: string;
+  route: string;
+  reason: string;
+  referenceCount: number;
+  malformedCount: number;
+  contextClass: string;
+  inputLengthBucket: string;
+  finalStatus: 'resolved' | 'needs_clarification' | 'failed';
+  finalMethod: string;
+  finalEpoch?: number;
+  totalDurationMs: number;
+  timeZone: string;
+  shadow: boolean;
+  legacyFirstMatchWouldResolve: boolean;
+  legacyFirstMatchWouldDiffer: boolean;
 }
 
 export interface ParseOutcome {
@@ -94,6 +116,13 @@ export class TimeParserUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TimeParserUnavailableError';
+  }
+}
+
+export class TimeParserTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TimeParserTimeoutError';
   }
 }
 
@@ -139,14 +168,17 @@ export class TimeParserAPIClient {
     options?: ParseOptions,
   ): Promise<ParseResponse> {
     const url = `${this.baseUrl}/parse`;
+    const requestId = options?.requestId ?? crypto.randomUUID();
     const featureOverrides = {
       ...(options?.deterministicPreflight === undefined ? {} : { deterministicPreflight: options.deterministicPreflight }),
       ...(options?.ordinalWeekdayGrammar === undefined ? {} : { ordinalWeekdayGrammar: options.ordinalWeekdayGrammar }),
       ...(options?.semanticConsistencyGate === undefined ? {} : { semanticConsistencyGate: options.semanticConsistencyGate }),
+      ...(options?.discordReferenceRouting === undefined ? {} : { discordReferenceRouting: options.discordReferenceRouting }),
+      ...(options?.discordReferenceShadow === undefined ? {} : { discordReferenceShadow: options.discordReferenceShadow }),
     };
 
     const nativeResult = this.useNativeBridge
-      ? await this.parseTimeWithNativeBridge(text, timezone, featureOverrides, abortSignal)
+      ? await this.parseTimeWithNativeBridge(text, timezone, requestId, featureOverrides, abortSignal)
       : null;
     if (nativeResult !== null) {
       return nativeResult;
@@ -161,6 +193,7 @@ export class TimeParserAPIClient {
           'x-api-version': this.apiVersion,
         },
         body: JSON.stringify({
+          requestId,
           text,
           tz: timezone,
           ...(Object.keys(featureOverrides).length === 0 ? {} : { features: featureOverrides }),
@@ -199,6 +232,7 @@ export class TimeParserAPIClient {
   private async parseTimeWithNativeBridge(
     text: string,
     timezone: string,
+    requestId: string,
     featureOverrides: Record<string, boolean>,
     abortSignal?: AbortSignal,
   ): Promise<ParseResponse | null> {
@@ -206,18 +240,33 @@ export class TimeParserAPIClient {
       throw new DOMException('The operation was aborted.', 'AbortError');
     }
 
+    const cancelNativeRequest = () => {
+      void invoke('cancel_time_parse', { requestId }).catch((error) => {
+        console.debug('Native parser cancellation could not be delivered:', error);
+      });
+    };
+    abortSignal?.addEventListener('abort', cancelNativeRequest, { once: true });
     let nativeResponse: NativeTimeParserResponse;
     try {
       nativeResponse = await invoke<NativeTimeParserResponse>('parse_time_with_local_service', {
         request: {
+          requestId,
           text,
           tz: timezone,
           ...(Object.keys(featureOverrides).length === 0 ? {} : { features: featureOverrides }),
         },
       });
     } catch (error) {
+      if (abortSignal?.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }
+      if (/timed?\s*out|timeout/i.test(String(error))) {
+        throw new TimeParserTimeoutError('The time parser timed out before it could return a safe answer. Try again or use a more focused phrase.');
+      }
       console.log('Native parser bridge unavailable, falling back to fetch:', error);
       return null;
+    } finally {
+      abortSignal?.removeEventListener('abort', cancelNativeRequest);
     }
 
     if (abortSignal?.aborted) {
@@ -275,6 +324,23 @@ export class TimeParserAPIClient {
     if (!response.ok) {
       const errorData = await response.json() as ParseError;
       throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId);
+    }
+  }
+
+  async recordClientRoute(telemetry: ClientRouteTelemetry, abortSignal?: AbortSignal): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/parse/client-route`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'x-api-version': this.apiVersion,
+      },
+      body: JSON.stringify(telemetry),
+      signal: abortSignal,
+    });
+    if (!response.ok) {
+      const errorData = await response.json() as ParseError;
+      throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error);
     }
   }
 

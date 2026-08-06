@@ -80,6 +80,31 @@ class ServerState:
         self.prompt_format = prompt_format
         self.enable_thinking = enable_thinking
         self.lock = threading.Lock()
+        self.cancel_events: dict[str, threading.Event] = {}
+        self.cancel_events_lock = threading.Lock()
+
+    def register_request(self, request_id: str) -> threading.Event:
+        event = threading.Event()
+        with self.cancel_events_lock:
+            self.cancel_events[request_id] = event
+        return event
+
+    def cancel_request(self, request_id: str) -> bool:
+        with self.cancel_events_lock:
+            event = self.cancel_events.get(request_id)
+        if event is not None:
+            event.set()
+            return True
+        return False
+
+    def unregister_request(self, request_id: str, event: threading.Event) -> None:
+        with self.cancel_events_lock:
+            if self.cancel_events.get(request_id) is event:
+                self.cancel_events.pop(request_id, None)
+
+
+class GenerationCancelled(Exception):
+    pass
 
 
 def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
@@ -106,17 +131,30 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
                 return
             try:
                 payload = self.read_json()
-                if self.path in {"/v1/completions", "/completions"}:
-                    self.handle_completions(payload)
+                if self.path in {"/v1/cancel", "/cancel"}:
+                    request_id = payload.get("request_id")
+                    if not isinstance(request_id, str) or not request_id:
+                        raise ValueError("request_id must be a non-empty string")
+                    self.write_json({"request_id": request_id, "cancelled": state.cancel_request(request_id)})
                     return
-                if self.path in {"/v1/chat/completions", "/chat/completions"}:
-                    self.handle_chat_completions(payload)
-                    return
+                request_id = self.headers.get("x-request-id") or uuid.uuid4().hex
+                cancel_event = state.register_request(request_id)
+                try:
+                    if self.path in {"/v1/completions", "/completions"}:
+                        self.handle_completions(payload, cancel_event)
+                        return
+                    if self.path in {"/v1/chat/completions", "/chat/completions"}:
+                        self.handle_chat_completions(payload, cancel_event)
+                        return
+                finally:
+                    state.unregister_request(request_id, cancel_event)
                 self.write_error(HTTPStatus.NOT_FOUND, "unknown route")
+            except GenerationCancelled:
+                self.write_error(499, "generation cancelled")
             except Exception as error:  # noqa: BLE001 - HTTP boundary should serialize unexpected failures.
                 self.write_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(error))
 
-        def handle_completions(self, payload: dict[str, Any]) -> None:
+        def handle_completions(self, payload: dict[str, Any], cancel_event: threading.Event) -> None:
             prompts = normalize_prompts(payload.get("prompt"))
             max_tokens = normalize_max_tokens(payload.get("max_tokens"), state.default_max_new_tokens)
             temperature = normalize_temperature(payload.get("temperature"))
@@ -124,7 +162,7 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
             choices = []
             usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             for index, prompt in enumerate(prompts):
-                result = generate_locked(state, prompt, max_new_tokens=max_tokens, temperature=temperature)
+                result = generate_locked(state, prompt, max_new_tokens=max_tokens, temperature=temperature, cancel_event=cancel_event)
                 text = apply_stop(result.text, stop)
                 choices.append({"text": text, "index": index, "logprobs": None, "finish_reason": "stop"})
                 usage["prompt_tokens"] += result.prompt_tokens
@@ -132,7 +170,7 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
             self.write_json(openai_response("text_completion", state.model_name, choices, usage))
 
-        def handle_chat_completions(self, payload: dict[str, Any]) -> None:
+        def handle_chat_completions(self, payload: dict[str, Any], cancel_event: threading.Event) -> None:
             messages = normalize_messages(payload.get("messages"))
             prompt = prompt_from_messages(messages)
             if state.prompt_format == "chat":
@@ -140,7 +178,7 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
             max_tokens = normalize_max_tokens(payload.get("max_tokens"), state.default_max_new_tokens)
             temperature = normalize_temperature(payload.get("temperature"))
             stop = normalize_stop(payload.get("stop"))
-            result = generate_locked(state, prompt, max_new_tokens=max_tokens, temperature=temperature)
+            result = generate_locked(state, prompt, max_new_tokens=max_tokens, temperature=temperature, cancel_event=cancel_event)
             text = apply_stop(result.text, stop)
             choice = {
                 "index": 0,
@@ -172,15 +210,20 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
             self.write_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
             return False
 
-        def write_json(self, body: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+        def write_json(self, body: dict[str, Any], status: int | HTTPStatus = HTTPStatus.OK) -> None:
             encoded = json.dumps(body).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
-            self.wfile.write(encoded)
+            try:
+                self.wfile.write(encoded)
+            except (BrokenPipeError, ConnectionResetError):
+                # The caller commonly closes its socket before the cooperative
+                # cancellation response can be written.
+                return
 
-        def write_error(self, status: HTTPStatus, message: str) -> None:
+        def write_error(self, status: int | HTTPStatus, message: str) -> None:
             self.write_json({"error": {"message": message, "type": "server_error"}}, status=status)
 
         def log_message(self, format: str, *args: object) -> None:
@@ -189,9 +232,33 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def generate_locked(state: ServerState, prompt: str, *, max_new_tokens: int, temperature: float):
-    with state.lock:
-        return state.generator.generate(prompt, max_new_tokens=max_new_tokens, temperature=temperature)
+def generate_locked(
+    state: ServerState,
+    prompt: str,
+    *,
+    max_new_tokens: int,
+    temperature: float,
+    cancel_event: threading.Event,
+):
+    while not cancel_event.is_set():
+        if state.lock.acquire(timeout=0.05):
+            break
+    else:
+        raise GenerationCancelled()
+    try:
+        if cancel_event.is_set():
+            raise GenerationCancelled()
+        result = state.generator.generate(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            cancel_event=cancel_event,
+        )
+        if cancel_event.is_set():
+            raise GenerationCancelled()
+        return result
+    finally:
+        state.lock.release()
 
 
 def normalize_prompts(value: Any) -> list[str]:

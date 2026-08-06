@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -68,6 +69,7 @@ def main() -> None:
         rows = rows[: args.limit]
 
     output_rows = []
+    input_sha256 = sha256_file(args.input)
     for row in rows:
         prompt = format_inference_prompt(row, args.instruction_preset, args.prompt_format, tokenizer, args.enable_thinking)
         inputs = tokenizer(text=[prompt], return_tensors="pt").to("cuda")
@@ -95,6 +97,8 @@ def main() -> None:
             "instructionPreset": args.instruction_preset,
             "promptFormat": args.prompt_format,
             "loadIn4Bit": not args.no_load_in_4bit,
+            "inputSha256": input_sha256,
+            "promptSha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         })
         print(f"{row['id']}: {duration_ms}ms")
 
@@ -110,6 +114,14 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError(f"Input JSONL is empty: {path}")
     return rows
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":

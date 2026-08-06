@@ -85,6 +85,9 @@ function compactPlan(plan: TemporalPlan) {
   if (plan.kind !== undefined && plan.kind !== 'instant') {
     compact.kind = plan.kind;
   }
+  if (plan.presentationFormat !== undefined && plan.presentationFormat !== null) {
+    compact.format = plan.presentationFormat;
+  }
   if (plan.rationale.length > 0 && plan.rationale !== plan.label) {
     compact.rationale = plan.rationale;
   }

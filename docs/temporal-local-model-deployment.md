@@ -6,14 +6,14 @@ Local Temporal SLM deployment uses one stable Windows-local endpoint:
 .\scripts\start-temporal-peft-server.ps1
 ```
 
-The script serves the current local adapter on `http://127.0.0.1:8765/v1`, prewarms by default, and verifies Windows `localhost` reachability before reporting success. It also stops legacy WSL `serve_peft_openai.py` processes on `8765` before starting the Docker server so the promoted container can bind the canonical port.
+The script serves the current local adapter on `http://127.0.0.1:8770/v1`, prewarms by default, and verifies Windows `localhost` reachability before reporting success. Port `8765` is reserved by the local VRChat MCP service on the primary development machine.
 
 The API should use these local settings:
 
 ```env
 TEMPORAL_FEATURE_PLAN_IR=true
-TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-time-range-2687
+TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8770/v1
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -28,8 +28,8 @@ When changing the deployed local adapter, update `scripts/start-temporal-peft-se
 ```powershell
 $env:PATH = "C:\ProgramData\nvm\v24.15.0;$env:PATH"
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
-$env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8765/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687"
+$env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8770/v1"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
@@ -38,13 +38,13 @@ $env:TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS = "60000"
 npm --prefix api run eval:temporal
 ```
 
-Current local adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`.
+Current local adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora`.
 
-Current gate result: `153/153` required and `1/1` diagnostic on the promoted production local endpoint at `http://127.0.0.1:8765/v1`. The latest promoted diagnostic is `first of Febuarysdf 2:30`, which returns AM/PM clarification after SLM typo recovery instead of a wrong singular answer. Current promoted endpoint latency from that gate: first-correct median `1306ms`, p95 `3605ms`; final median `1536ms`, p95 `4466ms`; prewarm `29159ms`. Keep `TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000` until clarification output is shortened.
+Current promotion boundary: V11 passed `190/190` required routed cases and `151/151` model-owned cases with routed p95 `2761ms`. It had zero pass-to-fail regressions across the 184 cases shared with V9 and adds six required composition/presentation cases. V9 remains the immediate packaged rollback. The production local endpoint moved from `8765` to `8770` after an observed VRChat MCP collision. Keep `TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000`; the five-second product target remains an SLO rather than a hard cutoff.
 
 Semantic Consistency Gate validation: local v4h endpoint plus OpenAI-backed gate passed `131/131`. First-correct display median/p95 was `1669ms`/`4851ms`; final verifier median/p95 was `9447ms`/`22329ms`. Keep `TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE=false` for blocking parse mode by default. Product UX should use asynchronous post-display verification through `/parse/verify` so the first correct answer is shown before the verifier finishes.
 
-Current expanded suite: `153` required cases after adding first-class `time_range` coverage for same-day ranges, 24-hour ranges, overnight ranges, timezone ranges, next-weekday range clarification, and unsupported date-span/schedule-block rejection on top of first-class timezone coverage and the earlier bare-hour, month-boundary, ordinal-weekday, noisy-input, and bare-minute ambiguity canaries. The regenerated expanded dataset has `2687` rows with splits `2138/281/268`; the promoted adapter was trained on that dataset after adding range reinforcement for next-weekday ambiguity and unsupported date spans. The previous timezone-step `2642` adapter remains the rollback adapter for non-range behavior; v4h remains the rollback adapter if the Qwen3.5 Docker path is unavailable.
+The current V11 adapter uses the 3,083-row seed dataset with splits `2396/356/331`, minimal instructions, chat formatting, and BF16 LoRA. It adds an explicit compact Plan-IR presentation operand, context-sensitive presentation labels, and typo-plus-ambiguity reinforcement while retaining V9's Discord-reference and time-range behavior. V9 remains the immediate packaged rollback.
 
 Durable adapter/model comparison notes live in `docs/temporal-model-benchmark-log.md`.
 
@@ -65,13 +65,13 @@ npm --prefix api run eval:temporal
 
 Do not switch Qwen3.5 serving to `-NoLoadIn4Bit` based on speed alone. The bf16/non-4-bit endpoint was much faster (`95/131`, median `1397ms`, p95 `2425ms`) but failed required clarification/composition cases. The 4-bit endpoint was slower but passed the full gate (`131/131`, median `2354ms`, p95 `6185ms`) after prewarm with `max_tokens=512`.
 
-For current Qwen3.5 bf16/chat adapters, stage on a non-production port with both chat prompt formatting and bf16 loading before changing the canonical launcher. Latest time-range staged result on `127.0.0.1:8769`: `153/153` required and `1/1` diagnostic, first-correct median `1125ms`, p95 `3087ms`, final median `1311ms`, final p95 `3523ms`, prewarm `28361ms`.
+For current Qwen3.5 bf16/chat adapters, stage on a non-production port with both chat prompt formatting and bf16 loading before changing the canonical launcher. V9 passed the current production-routed boundary at `184/184` required and p95 `2881ms`.
 
 ```powershell
-.\scripts\start-temporal-peft-server-container.ps1 -AdapterPath "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora" -ModelName "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687" -Port 8769 -PromptFormat chat -NoLoadIn4Bit
+.\scripts\start-temporal-peft-server-container.ps1 -AdapterPath "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora" -ModelName "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11" -Port 8769 -PromptFormat chat -NoLoadIn4Bit
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8769/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
@@ -80,7 +80,7 @@ $env:TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS = "60000"
 npm --prefix api run eval:temporal
 ```
 
-The promoted production launcher now wraps the same Docker path on port `8765` with `-PromptFormat chat -NoLoadIn4Bit` and prewarm enabled by default:
+The promoted production launcher wraps the same Docker path on port `8770` with `-PromptFormat chat -NoLoadIn4Bit` and prewarm enabled by default:
 
 ```powershell
 .\scripts\start-temporal-peft-server.ps1

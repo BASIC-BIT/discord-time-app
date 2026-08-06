@@ -23,18 +23,39 @@ use tauri_plugin_updater::UpdaterExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+#[cfg(not(feature = "routing-smoke"))]
 const TIME_PARSER_PORT: u16 = 8857;
-const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8765/v1";
-const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687";
+#[cfg(feature = "routing-smoke")]
+const TIME_PARSER_PORT: u16 = 8858;
+#[cfg(not(feature = "routing-smoke"))]
+const APP_INSTANCE_ID: &str = "hammer-overlay-app";
+#[cfg(feature = "routing-smoke")]
+const APP_INSTANCE_ID: &str = "hammer-overlay-routing-smoke";
+#[cfg(not(feature = "routing-smoke"))]
+const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8770/v1";
+#[cfg(feature = "routing-smoke")]
+const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8771/v1";
+#[cfg(not(feature = "routing-smoke"))]
+const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
+#[cfg(feature = "routing-smoke")]
+const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
 const LOCAL_SLM_DEFAULT_ADAPTER_PATH: &str =
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora";
+const LOCAL_SLM_PREVIOUS_MODEL: &str =
+    "qwen-temporal-ir-qwen35-08b-bf16-chat-discord-reference-v9";
+const LOCAL_SLM_PREVIOUS_ADAPTER_PATH: &str =
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-discord-reference-v9-lora";
+const LOCAL_SLM_LEGACY_MODEL: &str = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687";
+const LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8765/v1";
+const LOCAL_SLM_LEGACY_ADAPTER_PATH: &str =
     "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora";
 const LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS: u64 = 360;
 const LOCAL_SLM_RUNTIME_DIR: &str = "local-slm-runtime";
 const LOCAL_SLM_DEFAULT_DOCKER_IMAGE: &str =
     "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8";
-const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-time-range-2687/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora.zip";
+const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-presentation-v11/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora.zip";
 const LOCAL_SLM_ADAPTER_PACKAGE_SHA256: &str =
-    "d933bd524bbf95a4521f243a61cdf3e196fea08133d00fd4a72e0db30160e598";
+    "557122cd75dc6708369eec575916790379275812b26fbe1ab63056947b3d7665";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -89,6 +110,7 @@ pub struct LocalSlmStatus {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeTimeParserRequest {
+    pub request_id: String,
     pub text: String,
     pub tz: String,
     pub now: Option<String>,
@@ -141,6 +163,8 @@ pub struct AppSettings {
     pub auto_load_clipboard: bool,
     pub use_llm_parsing: bool,
     pub deterministic_preflight: bool,
+    pub discord_reference_routing: bool,
+    pub discord_reference_shadow: bool,
     pub theme: String, // "dark", "light", "system"
     pub local_slm_enabled: bool,
     pub local_slm_auto_start: bool,
@@ -162,8 +186,10 @@ impl Default for AppSettings {
             auto_load_clipboard: true,
             use_llm_parsing: true,
             deterministic_preflight: false,
+            discord_reference_routing: true,
+            discord_reference_shadow: false,
             theme: "dark".to_string(),
-            local_slm_enabled: false,
+            local_slm_enabled: cfg!(feature = "routing-smoke"),
             local_slm_auto_start: false,
             local_slm_prewarm: true,
             local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
@@ -369,6 +395,8 @@ fn apply_optional_api_env(command: &mut Command) {
         "TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR",
         "TEMPORAL_FEATURE_PLAN_IR",
         "TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE",
+        "TEMPORAL_FEATURE_DISCORD_REFERENCE_ROUTING",
+        "TEMPORAL_FEATURE_DISCORD_REFERENCE_SHADOW",
         "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL",
         "TEMPORAL_PLAN_IR_ENDPOINT_MODEL",
         "TEMPORAL_PLAN_IR_ENDPOINT_API_KEY",
@@ -377,6 +405,12 @@ fn apply_optional_api_env(command: &mut Command) {
         "TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT",
         "TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS",
         "TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS",
+        "TELEMETRY_HMAC_KEY",
+        "TELEMETRY_HMAC_KEY_ID",
+        "TELEMETRY_RETENTION_DAYS",
+        "TEMPORAL_MODEL_INPUT_USD_PER_MILLION",
+        "TEMPORAL_MODEL_OUTPUT_USD_PER_MILLION",
+        "TEMPORAL_MODEL_FIXED_USD_PER_CALL",
     ] {
         let parent_has_value = std::env::var(name)
             .ok()
@@ -1632,6 +1666,18 @@ fn start_time_parser_service(app: &AppHandle) {
         .stderr(stderr);
 
     apply_optional_api_env(&mut command);
+    let explicit_telemetry_key = std::env::var("TELEMETRY_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| read_api_env_var("TELEMETRY_HMAC_KEY"));
+    if explicit_telemetry_key.is_none() {
+        command
+            .env(
+                "TELEMETRY_HMAC_KEY",
+                format!("desktop-telemetry-v1:{api_key}"),
+            )
+            .env("TELEMETRY_HMAC_KEY_ID", "desktop-derived-v1");
+    }
     apply_local_slm_api_env(&mut command, &settings);
 
     if let Some(db_path) = time_parser_db_path(app) {
@@ -1709,6 +1755,10 @@ async fn parse_time_with_local_service(
 
     let api_keys = time_parser_api_key_candidates(&app)?;
     let mut body = serde_json::Map::new();
+    body.insert(
+        "requestId".to_string(),
+        serde_json::Value::String(request.request_id),
+    );
     body.insert("text".to_string(), serde_json::Value::String(request.text));
     body.insert("tz".to_string(), serde_json::Value::String(request.tz));
     if let Some(now) = request.now {
@@ -1737,6 +1787,117 @@ async fn parse_time_with_local_service(
     }
 
     last_response.ok_or_else(|| "No parser API key candidates were available.".to_string())
+}
+
+fn migrate_local_slm_defaults(settings: &mut AppSettings) {
+    if settings.local_slm_endpoint_base_url.trim() == LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL {
+        settings.local_slm_endpoint_base_url = LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string();
+    }
+    let configured_model = settings.local_slm_model.trim();
+    if configured_model == LOCAL_SLM_LEGACY_MODEL
+        || configured_model == LOCAL_SLM_PREVIOUS_MODEL
+    {
+        settings.local_slm_model = LOCAL_SLM_DEFAULT_MODEL.to_string();
+    }
+    let configured_adapter = settings.local_slm_adapter_path.trim();
+    if configured_adapter == LOCAL_SLM_LEGACY_ADAPTER_PATH
+        || configured_adapter == LOCAL_SLM_PREVIOUS_ADAPTER_PATH
+    {
+        settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
+    }
+}
+
+#[cfg(test)]
+mod local_slm_default_migration_tests {
+    use super::*;
+
+    #[test]
+    fn migrates_the_previous_packaged_adapter_defaults() {
+        let mut settings = AppSettings {
+            local_slm_endpoint_base_url: LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL.to_string(),
+            local_slm_model: LOCAL_SLM_LEGACY_MODEL.to_string(),
+            local_slm_adapter_path: LOCAL_SLM_LEGACY_ADAPTER_PATH.to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings);
+
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
+        assert_eq!(
+            settings.local_slm_endpoint_base_url,
+            LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
+        );
+        assert_eq!(
+            settings.local_slm_adapter_path,
+            LOCAL_SLM_DEFAULT_ADAPTER_PATH
+        );
+    }
+
+    #[test]
+    fn migrates_the_v9_packaged_adapter_defaults() {
+        let mut settings = AppSettings {
+            local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
+            local_slm_model: LOCAL_SLM_PREVIOUS_MODEL.to_string(),
+            local_slm_adapter_path: LOCAL_SLM_PREVIOUS_ADAPTER_PATH.to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings);
+
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
+        assert_eq!(
+            settings.local_slm_endpoint_base_url,
+            LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
+        );
+        assert_eq!(
+            settings.local_slm_adapter_path,
+            LOCAL_SLM_DEFAULT_ADAPTER_PATH
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_custom_adapter_settings() {
+        let mut settings = AppSettings {
+            local_slm_endpoint_base_url: "http://127.0.0.1:9999/v1".to_string(),
+            local_slm_model: "custom-model".to_string(),
+            local_slm_adapter_path: "custom/adapter".to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings);
+
+        assert_eq!(settings.local_slm_model, "custom-model");
+        assert_eq!(
+            settings.local_slm_endpoint_base_url,
+            "http://127.0.0.1:9999/v1"
+        );
+        assert_eq!(settings.local_slm_adapter_path, "custom/adapter");
+    }
+}
+
+#[tauri::command]
+async fn cancel_time_parse(app: AppHandle, request_id: String) -> Result<bool, String> {
+    let body = serde_json::to_string(&serde_json::json!({ "requestId": request_id }))
+        .map_err(|e| format!("Failed to serialize parser cancellation: {e}"))?;
+    let api_keys = time_parser_api_key_candidates(&app)?;
+    for api_key in api_keys {
+        let response = local_time_parser_request_blocking(
+            "POST".to_string(),
+            "/parse/cancel".to_string(),
+            api_key,
+            Some(body.clone()),
+            Duration::from_secs(5),
+        )
+        .await?;
+        if response.status != 401 {
+            return Ok(response
+                .body
+                .get("cancelled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false));
+        }
+    }
+    Ok(false)
 }
 
 fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, String> {
@@ -1869,7 +2030,7 @@ fn load_app_settings(app: &AppHandle) -> Result<AppSettings, String> {
         })
         .ok();
 
-    let settings = if let Some(settings_value) = store.get("settings") {
+    let mut settings = if let Some(settings_value) = store.get("settings") {
         match serde_json::from_value(settings_value.clone()) {
             Ok(settings) => {
                 log::debug!("Successfully loaded settings from store");
@@ -1884,6 +2045,8 @@ fn load_app_settings(app: &AppHandle) -> Result<AppSettings, String> {
         log::info!("No settings found, using defaults");
         AppSettings::default()
     };
+
+    migrate_local_slm_defaults(&mut settings);
 
     Ok(settings)
 }
@@ -2314,7 +2477,7 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Check for single instance
-    let instance = SingleInstance::new("hammer-overlay-app").unwrap();
+    let instance = SingleInstance::new(APP_INSTANCE_ID).unwrap();
     if !instance.is_single() {
         log::warn!("Another instance of HammerOverlay is already running");
         eprintln!("HammerOverlay is already running!");
@@ -2354,6 +2517,7 @@ pub fn run() {
             debug_store_location,
             get_time_parser_config,
             parse_time_with_local_service,
+            cancel_time_parse,
             restart_time_parser_service,
             get_local_slm_status,
             start_local_slm,

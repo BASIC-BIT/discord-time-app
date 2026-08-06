@@ -2,6 +2,8 @@
 
 Goal: fine-tune a small model that maps user temporal text to HammerOverlay Temporal Plan-IR JSON. The model does not calculate timestamps directly; generated IR must still pass schema validation and deterministic execution.
 
+Instant plans may include the compact optional `format` operand with one Discord presentation code: `d`, `D`, `t`, `T`, `f`, `F`, or `R`. This is semantic model output, not arithmetic: the executor validates the code and renders the already-validated instant accordingly. Standalone timestamp fast paths preserve their exact source style deterministically; model-owned surrounding language may select a different presentation when the transformation makes date, time, or relative context more useful.
+
 ## Hardware
 
 Local preflight has confirmed:
@@ -217,8 +219,8 @@ For production-shaped local serving tests, run a vLLM/SGLang/hosted OpenAI-compa
 
 ```bash
 TEMPORAL_EVAL_BASELINES=endpoint-plan \
-TEMPORAL_EVAL_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1 \
-TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-time-range-2687 \
+TEMPORAL_EVAL_ENDPOINT_BASE_URL=http://127.0.0.1:8770/v1 \
+TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11 \
 TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET=minimal \
 TEMPORAL_EVAL_ENDPOINT_API=chat \
 TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT=chat \
@@ -246,9 +248,9 @@ The productized desktop flow is Settings -> Local SLM Runtime. The runtime is di
 
 Default desktop runtime values:
 
-- Endpoint: `http://127.0.0.1:8765/v1`
-- Model: `qwen-temporal-ir-qwen35-bf16-chat-time-range-2687`
-- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`
+- Endpoint: `http://127.0.0.1:8770/v1`
+- Model: `qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora`
 - Launcher: `scripts/start-temporal-peft-server.ps1` when auto-detected from a source checkout or copied into the installed app-data runtime.
 
 Installed MSI builds bundle lightweight runtime files, then Settings installs those files into app data, downloads the adapter package, and pulls the Docker serving image. Installed-app smoke tests should verify that full flow before any Local SLM runtime PR or release.
@@ -263,8 +265,8 @@ For source-checkout development, the API sidecar can still be enabled with ignor
 
 ```text
 TEMPORAL_FEATURE_PLAN_IR=true
-TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8765/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-bf16-chat-time-range-2687
+TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8770/v1
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -299,8 +301,8 @@ Then evaluate it as an OpenAI-compatible chat endpoint:
 
 ```powershell
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
-$env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8765/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687"
+$env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8770/v1"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"

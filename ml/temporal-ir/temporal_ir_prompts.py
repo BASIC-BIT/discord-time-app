@@ -14,10 +14,12 @@ PROMPT_PRESETS = {
         "For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep. "
         "Use fixed offsets only for explicit UTC/GMT offsets. Return clarification for ambiguous timezone abbreviations. "
         "For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. "
+        "For instant plans, set format to d, D, t, T, f, F, or R when surrounding intent makes a presentation style meaningful. "
         "For negative or unsupported-length bare epoch-like numbers, return no_plan. "
         "For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan."
     ),
     "minimal": "Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only.",
+    "none": "",
 }
 
 PROMPT_FORMATS = {"custom", "chat"}
@@ -33,9 +35,9 @@ def instruction_for_preset(preset: str) -> str:
 
 def format_prompt(row: dict[str, Any], instruction_preset: str) -> str:
     payload = input_payload(row)
-    return (
-        "### Instruction:\n"
-        f"{instruction_for_preset(instruction_preset)}\n\n"
+    instruction = instruction_for_preset(instruction_preset)
+    instruction_block = "" if not instruction else f"### Instruction:\n{instruction}\n\n"
+    return instruction_block + (
         "### Input:\n"
         f"{json.dumps(payload, sort_keys=True)}\n\n"
         "### Response:\n"
@@ -44,8 +46,9 @@ def format_prompt(row: dict[str, Any], instruction_preset: str) -> str:
 
 def format_chat_user_content(row: dict[str, Any], instruction_preset: str) -> str:
     payload = input_payload(row)
-    return (
-        f"{instruction_for_preset(instruction_preset)}\n\n"
+    instruction = instruction_for_preset(instruction_preset)
+    instruction_block = "" if not instruction else f"{instruction}\n\n"
+    return instruction_block + (
         "Input:\n"
         f"{json.dumps(payload, sort_keys=True)}"
     )
@@ -88,11 +91,14 @@ def format_training_chat_text(row: dict[str, Any], tokenizer: Any, instruction_p
 
 def input_payload(row: dict[str, Any]) -> dict[str, Any]:
     input_row = row["input"]
-    return {
+    payload = {
         "text": input_row["text"],
         "referenceInstant": input_row["referenceInstant"],
         "timeZone": input_row["timeZone"],
     }
+    if "discordTimestampRouting" in input_row:
+        payload["discordTimestampRouting"] = input_row["discordTimestampRouting"]
+    return payload
 
 
 def compact_output(output: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +119,8 @@ def compact_plan(plan: dict[str, Any]) -> dict[str, Any]:
     }
     if plan.get("kind") and plan.get("kind") != "instant":
         compact["kind"] = plan["kind"]
+    if plan.get("presentationFormat"):
+        compact["format"] = plan["presentationFormat"]
     if plan.get("rationale") and plan.get("rationale") != plan["label"]:
         compact["rationale"] = plan["rationale"]
     if plan.get("assumptions"):

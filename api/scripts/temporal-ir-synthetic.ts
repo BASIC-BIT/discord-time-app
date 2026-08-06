@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLAN_MONTH_NAMES, TemporalPlanPlannerSchema, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from '../src/temporal/plan-ir';
+import { classifyDiscordTimestampInput } from '@hammer-overlay/discord-timestamp-routing';
+import { PLAN_MONTH_NAMES, TemporalPlanPlannerSchema, type PlanPresentationFormat, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from '../src/temporal/plan-ir';
 
 type Split = 'train' | 'validation' | 'holdout';
 
@@ -13,6 +14,7 @@ type TemporalIrTrainingRow = {
     text: string;
     referenceInstant: string;
     timeZone: string;
+    discordTimestampRouting: ReturnType<typeof classifyDiscordTimestampInput>;
   };
   output: TemporalPlanPlannerOutput;
 };
@@ -97,6 +99,7 @@ function buildRows(): TemporalIrTrainingRow[] {
     ...standardGroundingSeedRows(),
     ...bareTwentyFourHourSeedRows(),
     ...explicitTimestampRows(),
+    ...discordTimestampReferenceRows(),
     row({
       id: 'anchor-offset-fuzzy-clock',
       text: 'day after next saturday at l33t time',
@@ -311,6 +314,12 @@ function timezoneReinforcementSeedRows(): TemporalIrTrainingRow[] {
       abbreviation: abbr,
       split: index < 5 ? 'train' : 'validation',
     })),
+    ...Array.from({ length: 6 }, (_, index) => timezoneAmbiguityRow({
+      id: `timezone-abbreviation-cst-required-reinforcement-${index + 1}`,
+      text: 'tomorrow at 5pm CST',
+      abbreviation: 'CST',
+      split: 'train',
+    })),
   ];
 }
 
@@ -367,7 +376,9 @@ function timeRangeSeedRows(): TemporalIrTrainingRow[] {
     timeRangeRow({ id: 'range-relative-same-day-hyphen', text: 'tomorrow 3pm-5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', label: 'Tomorrow 3 PM to 5 PM', split: 'train' }),
     timeRangeRow({ id: 'range-relative-same-day-from-to', text: 'tomorrow from 3pm to 5pm', query: 'tomorrow', startClock: '3pm', endClock: '5pm', label: 'Tomorrow 3 PM to 5 PM', split: 'train' }),
     timeRangeRow({ id: 'range-weekday-same-day', text: 'Friday 8pm-10:30pm', query: 'Friday', startClock: '8pm', endClock: '10:30pm', label: 'Friday 8 PM to 10:30 PM', split: 'train' }),
-    timeRangeRow({ id: 'range-explicit-date-same-day', text: 'May 29 2026 8pm-10:30pm', query: 'May 29 2026', startClock: '8pm', endClock: '10:30pm', label: 'May 29 8 PM to 10:30 PM', split: 'validation' }),
+    timeRangeRow({ id: 'range-explicit-date-same-day', text: 'May 29 2026 8pm-10:30pm', query: 'May 29 2026', startClock: '8pm', endClock: '10:30pm', label: 'May 29 8 PM to 10:30 PM', split: 'train' }),
+    timeRangeRow({ id: 'range-explicit-date-same-day-validation', text: 'June 3 2026 6:15pm-9pm', query: 'June 3 2026', startClock: '6:15pm', endClock: '9pm', label: 'June 3 6:15 PM to 9 PM', split: 'validation' }),
+    timeRangeRow({ id: 'range-explicit-date-same-day-holdout', text: 'July 18 2027 07:30-11:45', query: 'July 18 2027', startClock: '07:30', endClock: '11:45', label: 'July 18 07:30 to 11:45', split: 'holdout' }),
     timeRangeRow({ id: 'range-24h-same-day', text: 'tomorrow 13:00-15:30', query: 'tomorrow', startClock: '13:00', endClock: '15:30', label: 'Tomorrow 13:00 to 15:30', split: 'holdout' }),
     timeRangeRow({ id: 'range-overnight-explicit', text: 'Friday 11pm-1am', query: 'Friday', startClock: '11pm', endClock: '1am', label: 'Friday 11 PM to Saturday 1 AM', overnight: true, split: 'train' }),
     timeRangeRow({ id: 'range-timezone-named-uk', text: 'tomorrow 3pm-5pm UK time', query: 'tomorrow', startClock: '3pm', endClock: '5pm', zoneText: 'UK time', label: 'Tomorrow 3 PM to 5 PM UK time', split: 'train' }),
@@ -410,6 +421,28 @@ function timeRangeReinforcementSeedRows(): TemporalIrTrainingRow[] {
 
   return [
     ...weighted,
+    ...Array.from({ length: 6 }, (_, index) => timeRangeRow({
+      id: `range-reinforce-overnight-required-${index + 1}`,
+      text: 'Friday 11pm-1am',
+      query: 'Friday',
+      startClock: '11pm',
+      endClock: '1am',
+      label: 'Friday 11 PM to Saturday 1 AM',
+      overnight: true,
+      tags: ['required-regression'],
+      split: 'train',
+    })),
+    ...Array.from({ length: 8 }, (_, index) => timeRangeRow({
+      id: `range-reinforce-fixed-offset-required-${index + 1}`,
+      text: 'tomorrow 3pm-5pm UTC+2',
+      query: 'tomorrow',
+      startClock: '3pm',
+      endClock: '5pm',
+      label: 'Tomorrow 3 PM to 5 PM UTC+2',
+      zoneText: 'UTC+2',
+      tags: ['required-regression'],
+      split: 'train',
+    })),
     nextWeekdayRangeClarificationRow({ id: 'range-reinforce-next-saturday-from-to', text: 'next saturday from 3pm to 5pm', weekday: 'saturday', startClock: '3pm', endClock: '5pm', split: 'train' }),
     nextWeekdayRangeClarificationRow({ id: 'range-reinforce-next-friday-hyphen', text: 'next friday 4pm-6pm', weekday: 'friday', startClock: '4pm', endClock: '6pm', split: 'train' }),
     nextWeekdayRangeClarificationRow({ id: 'range-reinforce-next-monday-24h', text: 'next monday 09:00-11:00', weekday: 'monday', startClock: '09:00', endClock: '11:00', split: 'train' }),
@@ -501,7 +534,12 @@ function row(input: Omit<TemporalIrTrainingRow, 'split' | 'input'> & { text: str
     id: input.id,
     split,
     tags: input.tags,
-    input: { text: input.text, referenceInstant: input.referenceInstant ?? referenceInstant, timeZone: input.timeZone ?? timeZone },
+    input: {
+      text: input.text,
+      referenceInstant: input.referenceInstant ?? referenceInstant,
+      timeZone: input.timeZone ?? timeZone,
+      discordTimestampRouting: classifyDiscordTimestampInput(input.text),
+    },
     output: input.output,
   };
 }
@@ -1258,6 +1296,551 @@ function explicitTimestampRows(): TemporalIrTrainingRow[] {
     unsupportedEpochRow('negative-compact-clock-shaped-unsupported-validation', '-430', 'validation'),
     unsupportedEpochRow('negative-large-epoch-unsupported-train', '-1779724800', 'train'),
   ];
+}
+
+function discordTimestampReferenceRows(): TemporalIrTrainingRow[] {
+  const anchor = '<t:1785643200:t>';
+  const end = '<t:1785646800:F>';
+  const alternateAnchor = '<t:1785733200:F>';
+  return [
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-train',
+      `${anchor} 1 hour later`,
+      anchor,
+      { hours: 1 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-minutes-earlier-train',
+      `${alternateAnchor} 30 minutes earlier`,
+      alternateAnchor,
+      { minutes: -30 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-day-earlier-train',
+      `${anchor} 1 day earlier`,
+      anchor,
+      { days: -1 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-day-earlier-typo-ebefore-train',
+      `${anchor} 1 day ebefore`,
+      anchor,
+      { days: -1 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-prefix-hours-before-typo-befoer-train',
+      `2 hours befoer ${alternateAnchor}`,
+      alternateAnchor,
+      { hours: -2 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-minutes-before-typo-befor-validation',
+      `${alternateAnchor} 45 minutes befor`,
+      alternateAnchor,
+      { minutes: -45 },
+      'validation',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-days-earlier-typo-eariler-holdout',
+      `${anchor} 2 days eariler`,
+      anchor,
+      { days: -2 },
+      'holdout',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-prefix-hours-after-typo-afetr-train',
+      `3 hours afetr ${anchor}`,
+      anchor,
+      { hours: 3 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-suffix-minutes-later-typo-ltaer-validation',
+      `${anchor} 20 minutes ltaer`,
+      anchor,
+      { minutes: 20 },
+      'validation',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-prefix-hours-before-train',
+      `2 hours before ${alternateAnchor}`,
+      alternateAnchor,
+      { hours: -2 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-prefix-days-after-train',
+      `two days after ${anchor}`,
+      anchor,
+      { days: 2 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-infix-hours-earlier-train',
+      `two hours earlier than ${alternateAnchor}`,
+      alternateAnchor,
+      { hours: -2 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-fall-back-hour-train',
+      '<t:1793511000:t> one hour later',
+      '<t:1793511000:t>',
+      { hours: 1 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-spring-forward-day-train',
+      '<t:1772951400:t> one day later',
+      '<t:1772951400:t>',
+      { days: 1 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-weeks-train',
+      `${anchor} three weeks later`,
+      anchor,
+      { weeks: 3 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-month-train',
+      `${alternateAnchor} one month later`,
+      alternateAnchor,
+      { months: 1 },
+      'train',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-prefix-validation',
+      `1 hour after ${anchor}`,
+      anchor,
+      { hours: 1 },
+      'validation',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-shift-infix-holdout',
+      `one hour earlier than ${anchor}`,
+      anchor,
+      { hours: -1 },
+      'holdout',
+    ),
+    discordTimestampShiftRow(
+      'discord-reference-fuzzy-shift-train',
+      `${anchor} roughly an hour later`,
+      anchor,
+      { hours: 1 },
+      'train',
+    ),
+    ...discordTimestampShiftClockCompositionRows(),
+    ...discordTimestampClockCompositionRows(),
+    ...discordTimestampShiftClockAmbiguityReinforcementRows(),
+    ...discordTimestampClockAmbiguityRows(),
+    row({
+      id: 'discord-reference-copied-prose-train',
+      text: `The event starts at ${anchor}; bring a friend and use the north entrance.`,
+      split: 'train',
+      tags: ['discord-reference', 'copied-prose', 'presentation'],
+      output: planner('plans', 'The affirmative copied announcement presents one timestamp without transforming it.', [
+        plan('Event timestamp', [
+          step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        ]),
+      ]),
+    }),
+    row({
+      id: 'discord-reference-transformed-range-end-train',
+      text: `${anchor} to ${alternateAnchor}, extend the end by two hours`,
+      split: 'train',
+      tags: ['discord-reference', 'time-range', 'offset'],
+      output: planner('plans', 'Resolve both explicit endpoints and shift only the requested end endpoint.', [
+        rangePlan('Extended Discord timestamp range', [
+          step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+          step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+          step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ hours: 2 }), precision: 'datetime' }),
+        ], 0, 2),
+      ]),
+    }),
+    row({
+      id: 'discord-reference-transformed-range-start-train',
+      text: `${anchor} to ${alternateAnchor}, move the start 30 minutes earlier`,
+      split: 'train',
+      tags: ['discord-reference', 'time-range', 'offset'],
+      output: planner('plans', 'Resolve both explicit endpoints and shift only the requested start endpoint.', [
+        rangePlan('Adjusted Discord timestamp range', [
+          step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+          step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+          step({ operation: 'shift_datetime', baseStep: 0, delta: delta({ minutes: -30 }), precision: 'datetime' }),
+        ], 2, 1),
+      ]),
+    }),
+    row({
+      id: 'discord-reference-transformed-range-validation',
+      text: `${anchor} to ${end}, but move the end one hour later`,
+      split: 'validation',
+      tags: ['discord-reference', 'time-range', 'offset'],
+      output: planner('plans', 'Resolve both explicit endpoints and shift only the requested end endpoint.', [
+        rangePlan('Shifted Discord timestamp range', [
+          step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+          step({ operation: 'resolve_calendar_query', query: end, precision: 'datetime' }),
+          step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ hours: 1 }), precision: 'datetime' }),
+        ], 0, 2),
+      ]),
+    }),
+    ...discordTimestampTransformedRangeReinforcementRows(anchor, end, alternateAnchor),
+    row({
+      id: 'discord-reference-comparison-unsupported-train',
+      text: `Compare ${anchor} with ${end}`,
+      split: 'train',
+      tags: ['discord-reference', 'comparison', 'unsupported'],
+      output: planner('no_plan', 'Timestamp comparison is outside the current instant and time-range result contract.', []),
+    }),
+    row({
+      id: 'discord-reference-timezone-presentation-unsupported-train',
+      text: `Show ${anchor} in Pacific time`,
+      split: 'train',
+      tags: ['discord-reference', 'timezone-presentation', 'unsupported'],
+      output: planner('no_plan', 'Discord timestamps render in each viewer local timezone and the current result contract has no timezone-only preview.', []),
+    }),
+    row({
+      id: 'discord-reference-unrelated-multiple-clarification-train',
+      text: `${anchor} and ${end}`,
+      split: 'train',
+      tags: ['discord-reference', 'multiple-reference', 'clarification'],
+      output: planner('clarification', 'Two timestamp references are present without a stated relationship.', [], 'How should these two timestamps be related?'),
+    }),
+  ];
+}
+
+function discordTimestampTransformedRangeReinforcementRows(
+  anchor: string,
+  end: string,
+  alternateAnchor: string,
+): TemporalIrTrainingRow[] {
+  const variants = [
+    {
+      text: `from ${anchor} until one hour after ${anchor}`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ hours: 1 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 2,
+    },
+    {
+      text: `starting at ${anchor} and ending two hours later`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 0, delta: delta({ hours: 2 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 1,
+    },
+    {
+      text: `${anchor} through 30 minutes before ${end}`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: end, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ minutes: -30 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 2,
+    },
+    {
+      text: `15 minutes before ${anchor} until ${end}`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: end, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 0, delta: delta({ minutes: -15 }), precision: 'datetime' }),
+      ],
+      startStep: 2,
+      endStep: 1,
+    },
+    {
+      text: `${anchor} to ${alternateAnchor}, add three hours to the end`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ hours: 3 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 2,
+    },
+    {
+      text: `${anchor} to ${alternateAnchor}, shift the start back two hours`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 0, delta: delta({ hours: -2 }), precision: 'datetime' }),
+      ],
+      startStep: 2,
+      endStep: 1,
+    },
+  ];
+
+  return variants.flatMap((variant, variantIndex) =>
+    Array.from({ length: 4 }, (_, repetition) => row({
+      id: `discord-reference-transformed-range-reinforcement-${variantIndex + 1}-${repetition + 1}`,
+      text: variant.text,
+      split: 'train',
+      tags: ['discord-reference', 'time-range', 'offset', 'reinforcement'],
+      output: planner('plans', 'Resolve the exact Discord timestamp endpoints and shift only the requested endpoint.', [
+        rangePlan('Transformed Discord timestamp range', variant.steps, variant.startStep, variant.endStep),
+      ]),
+    })),
+  );
+}
+
+function discordTimestampShiftRow(
+  id: string,
+  text: string,
+  anchor: string,
+  shift: Partial<TemporalPlanStep['delta']>,
+  split: Split,
+): TemporalIrTrainingRow {
+  return row({
+    id,
+    text,
+    split,
+    tags: ['discord-reference', 'offset', 'explicit-epoch'],
+    output: planner('plans', 'Resolve the exact Discord timestamp reference, then apply the requested duration shift.', [
+      plan('Shifted Discord timestamp', [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 0, delta: delta(shift), precision: 'datetime' }),
+      ], 1, 0.9, presentationFormatForShift(anchor, shift)),
+    ]),
+  });
+}
+
+function discordTimestampSourceFormat(anchor: string): PlanPresentationFormat {
+  const format = /:([dDtTfFR])>$/u.exec(anchor)?.[1];
+  return (format ?? 'f') as PlanPresentationFormat;
+}
+
+function presentationFormatForShift(
+  anchor: string,
+  shift: Partial<TemporalPlanStep['delta']>,
+): PlanPresentationFormat {
+  const source = discordTimestampSourceFormat(anchor);
+  const changesCalendarDate = [shift.years, shift.months, shift.weeks, shift.days]
+    .some((value) => value !== undefined && value !== null && value !== 0);
+  if (changesCalendarDate) {
+    return source === 'd' || source === 'D' || source === 'f' || source === 'F' ? source : 'f';
+  }
+  return source === 'd' || source === 'D' ? 'f' : source;
+}
+
+function presentationFormatForClockComposition(anchor: string): PlanPresentationFormat {
+  return discordTimestampSourceFormat(anchor) === 'F' ? 'F' : 'f';
+}
+
+function discordTimestampShiftClockCompositionRows(): TemporalIrTrainingRow[] {
+  const anchor = '<t:1785643200:t>';
+  const shifts = [
+    { id: 'day-earlier', text: '1 day earlier', delta: { days: -1 }, split: 'train' },
+    { id: 'day-ebefore', text: '1 day ebefore', delta: { days: -1 }, split: 'train' },
+    { id: 'two-days-eariler', text: '2 days eariler', delta: { days: -2 }, split: 'validation' },
+    { id: 'day-later', text: '1 day later', delta: { days: 1 }, split: 'train' },
+    { id: 'week-before', text: 'one week before', delta: { weeks: -1 }, split: 'holdout' },
+  ] as const;
+  const explicitClocks = [
+    { id: 'two-pm', text: '2 pm' },
+    { id: 'seven-thirty-am', text: '7:30 am' },
+    { id: 'noon', text: 'noon' },
+    { id: 'twenty-one-fifteen', text: '21:15' },
+    { id: 'midnight', text: 'midnight' },
+  ] as const;
+  const ambiguousClocks = [
+    { id: 'two', text: '2', question: 'Did you mean 2 AM or 2 PM?' },
+    { id: 'seven-thirty', text: '7:30', question: 'Did you mean 7:30 AM or 7:30 PM?' },
+    { id: 'nine', text: '9', question: 'Did you mean 9 AM or 9 PM?' },
+  ] as const;
+
+  const explicitRows = shifts.flatMap((shift) => explicitClocks.map((clock, clockIndex) => row({
+    id: `discord-reference-shift-clock-${shift.id}-${clock.id}`,
+    text: `${anchor} ${shift.text} at ${clock.text}`,
+    split: clockIndex === explicitClocks.length - 1
+      ? (shift.split === 'train' ? 'validation' : shift.split)
+      : shift.split,
+    tags: [
+      'discord-reference',
+      'offset',
+      'clock-composition',
+      'explicit-clock',
+      ...(shift.text.includes('ebe') || shift.text.includes('eariler') ? ['relative-typo'] : []),
+      ...(shift.split === 'train' ? [] : ['compositional-generalization']),
+    ],
+    output: planner(
+      'plans',
+      'Resolve the Discord timestamp as a date anchor, apply the requested calendar shift, and set the explicit clock on the shifted date.',
+      [plan('Shifted Discord timestamp with requested clock', [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'date' }),
+        step({ operation: 'resolve_clock_time', text: clock.text }),
+        step({ operation: 'shift_datetime', baseStep: 0, timeStep: 1, delta: delta(shift.delta), precision: 'datetime' }),
+      ], 2, 0.9, 'f')],
+    ),
+  })));
+
+  const ambiguousRows = shifts.flatMap((shift) => ambiguousClocks.map((clock, clockIndex) => row({
+    id: `discord-reference-shift-clock-ambiguity-${shift.id}-${clock.id}`,
+    text: `${anchor} ${shift.text} at ${clock.text}`,
+    split: shift.id === 'day-ebefore' && clock.id === 'two'
+      ? 'holdout'
+      : clockIndex === ambiguousClocks.length - 1
+        ? 'validation'
+        : shift.split,
+    tags: [
+      'discord-reference',
+      'offset',
+      'clock-composition',
+      'bare-clock',
+      'ambiguity',
+      ...(shift.text.includes('ebe') || shift.text.includes('eariler') ? ['relative-typo'] : []),
+      ...(shift.split === 'train' ? [] : ['compositional-generalization']),
+    ],
+    output: planner(
+      'clarification',
+      'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.',
+      [],
+      clock.question,
+    ),
+  })));
+
+  return [...explicitRows, ...ambiguousRows];
+}
+
+function discordTimestampClockCompositionRows(): TemporalIrTrainingRow[] {
+  const anchors = [
+    { id: 'summer-short-time', text: '<t:1785643200:t>' },
+    { id: 'summer-long-date-time', text: '<t:1785733200:F>' },
+    { id: 'spring-forward-date', text: '<t:1772951400:D>' },
+    { id: 'fall-back-relative', text: '<t:1793511000:R>' },
+  ] as const;
+  const clocks = [
+    { id: 'twelve-pm', text: '12 pm' },
+    { id: 'noon', text: 'noon' },
+    { id: 'evening', text: '6:30pm' },
+    { id: 'twenty-four-hour', text: '21:15' },
+    { id: 'midnight', text: 'midnight' },
+  ] as const;
+  const templates: ReadonlyArray<{
+    id: string;
+    split: Split;
+    render: (anchor: string, clock: string) => string;
+  }> = [
+    { id: 'day-at', split: 'train', render: (anchor, clock) => `${anchor} day at ${clock}` },
+    { id: 'that-day-at', split: 'train', render: (anchor, clock) => `${anchor} that day at ${clock}` },
+    { id: 'set-to', split: 'train', render: (anchor, clock) => `set ${anchor} to ${clock}` },
+    { id: 'change-time-to', split: 'train', render: (anchor, clock) => `change the time of ${anchor} to ${clock}` },
+    { id: 'but-at-that-day', split: 'train', render: (anchor, clock) => `${anchor}, but at ${clock} that day` },
+    { id: 'use-date-from', split: 'train', render: (anchor, clock) => `use the date from ${anchor} at ${clock}` },
+    { id: 'same-day-prefix', split: 'validation', render: (anchor, clock) => `${clock} on the same day as ${anchor}` },
+    { id: 'same-date-prefix', split: 'validation', render: (anchor, clock) => `same date as ${anchor}, at ${clock}` },
+    { id: 'keep-date', split: 'holdout', render: (anchor, clock) => `keep ${anchor}'s date and use ${clock}` },
+    { id: 'without-changing-day', split: 'holdout', render: (anchor, clock) => `move ${anchor} to ${clock} without changing the day` },
+  ];
+
+  return templates.flatMap((template) => anchors.flatMap((anchor) => clocks.map((clock) => row({
+    id: `discord-reference-clock-${template.id}-${anchor.id}-${clock.id}`,
+    text: template.render(anchor.text, clock.text),
+    split: template.split,
+    tags: [
+      'discord-reference',
+      'clock-composition',
+      'explicit-epoch',
+      'explicit-clock',
+      ...(template.split === 'train' ? [] : ['compositional-generalization']),
+    ],
+    output: planner(
+      'plans',
+      'Use the Discord timestamp as the date anchor in the selected timezone, then replace its clock without changing that local calendar date.',
+      [plan('Discord timestamp date with requested clock', [
+        step({ operation: 'resolve_calendar_query', query: anchor.text, precision: 'date' }),
+        step({ operation: 'resolve_clock_time', text: clock.text }),
+        step({ operation: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' }),
+      ], 2, 0.9, presentationFormatForClockComposition(anchor.text))],
+    ),
+  }))));
+}
+
+function discordTimestampShiftClockAmbiguityReinforcementRows(): TemporalIrTrainingRow[] {
+  const variants = [
+    '<t:1785733200:F> one day ebefore at 2',
+    '<t:1785643200:t> a day ebefore at 3',
+    '<t:1785643200:t> 1 day ebefore at 4',
+    '<t:1785733200:F> 1 day befoer at 2',
+    '<t:1785643200:t> one day eariler at 5',
+    '<t:1785733200:F> 2 days eariler at 7',
+    '<t:1785643200:t> a day earlier at 8:30',
+    '<t:1785733200:F> one day earlier at 10',
+    '<t:1772951400:D> one day ebefore at 11',
+    '<t:1793511000:R> one day befor at 6:15',
+    '<t:1785643200:t> 1 day ltaer at 3',
+    '<t:1785733200:F> one day afetr at 4:30',
+  ] as const;
+  return variants.flatMap((text, index) => Array.from({ length: 2 }, (_, repetition) => {
+    const clock = /\bat\s+(\d{1,2}(?::\d{2})?)\s*$/iu.exec(text)?.[1] ?? '2';
+    return row({
+      id: `discord-reference-shift-clock-ambiguity-reinforcement-${index + 1}-${repetition + 1}`,
+      text,
+      split: index < 10 ? 'train' : 'validation',
+      tags: ['discord-reference', 'offset', 'clock-composition', 'bare-clock', 'ambiguity', 'relative-typo', 'reinforcement'],
+      output: planner(
+        'clarification',
+        'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.',
+        [],
+        `Did you mean ${clock} AM or ${clock} PM?`,
+      ),
+    });
+  }));
+}
+
+function discordTimestampClockAmbiguityRows(): TemporalIrTrainingRow[] {
+  const anchors = [
+    { id: 'summer-short-time', text: '<t:1785643200:t>' },
+    { id: 'summer-long-date-time', text: '<t:1785733200:F>' },
+    { id: 'spring-forward-date', text: '<t:1772951400:D>' },
+    { id: 'fall-back-relative', text: '<t:1793511000:R>' },
+  ] as const;
+  const clocks = [
+    { id: 'twelve', text: '12', question: 'Did you mean 12 AM or 12 PM?' },
+    { id: 'nine', text: '9', question: 'Did you mean 9 AM or 9 PM?' },
+    { id: 'seven-thirty', text: '7:30', question: 'Did you mean 7:30 AM or 7:30 PM?' },
+  ] as const;
+  const templates: ReadonlyArray<{
+    id: string;
+    split: Split;
+    render: (anchor: string, clock: string) => string;
+  }> = [
+    { id: 'day-at', split: 'train', render: (anchor, clock) => `${anchor} day at ${clock}` },
+    { id: 'that-day-at', split: 'train', render: (anchor, clock) => `${anchor} that day at ${clock}` },
+    { id: 'set-to', split: 'train', render: (anchor, clock) => `set ${anchor} to ${clock}` },
+    { id: 'same-date-prefix', split: 'validation', render: (anchor, clock) => `same date as ${anchor}, at ${clock}` },
+    { id: 'keep-date', split: 'holdout', render: (anchor, clock) => `keep ${anchor}'s date and use ${clock}` },
+  ];
+
+  return templates.flatMap((template) => anchors.flatMap((anchor) => clocks.map((clock) => row({
+    id: `discord-reference-clock-ambiguity-${template.id}-${anchor.id}-${clock.id}`,
+    text: template.render(anchor.text, clock.text),
+    split: template.split,
+    tags: [
+      'discord-reference',
+      'clock-composition',
+      'bare-clock',
+      'ambiguity',
+      ...(template.split === 'train' ? [] : ['compositional-generalization']),
+    ],
+    output: planner(
+      'clarification',
+      'The timestamp supplies a date anchor, but the requested 1-12 clock does not specify AM or PM.',
+      [],
+      clock.question,
+    ),
+  }))));
 }
 
 function unsupportedEpochRow(id: string, text: string, split: Split): TemporalIrTrainingRow {
@@ -2407,9 +2990,16 @@ function planner(
   return TemporalPlanPlannerSchema.parse({ outcome, reason, clarificationQuestion, plans });
 }
 
-function plan(label: string, steps: TemporalPlanStep[], finalStep: number | null = null, confidence = 0.9): TemporalPlan {
+function plan(
+  label: string,
+  steps: TemporalPlanStep[],
+  finalStep: number | null = null,
+  confidence = 0.9,
+  presentationFormat?: PlanPresentationFormat,
+): TemporalPlan {
   return {
     kind: 'instant',
+    ...(presentationFormat === undefined ? {} : { presentationFormat }),
     label,
     rationale: label,
     assumptions: [],

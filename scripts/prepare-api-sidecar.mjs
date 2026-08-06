@@ -16,11 +16,13 @@ import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = path.join(rootDir, 'api');
+const sharedRoutingDir = path.join(rootDir, 'shared', 'discord-timestamp-routing');
 const tauriDir = path.join(rootDir, 'src-tauri');
 const sidecarDir = path.join(tauriDir, 'sidecars', 'hammer-overlay-api');
 const sidecarBinDir = path.join(sidecarDir, 'bin');
 const sidecarNodePath = path.join(sidecarBinDir, process.platform === 'win32' ? 'node.exe' : 'node');
 const stampPath = path.join(sidecarDir, '.sidecar-stamp');
+const stagedSharedRoutingDir = path.join(sidecarDir, 'node_modules', '@hammer-overlay', 'discord-timestamp-routing');
 
 if (!existsSync(path.join(apiDir, 'dist', 'index.js'))) {
   throw new Error('api/dist/index.js is missing. Run `npm --prefix api run build` first.');
@@ -55,8 +57,10 @@ function computeStamp() {
   hash.update(process.version);
   hash.update(process.platform);
   hash.update(process.arch);
+  hashFile(hash, fileURLToPath(import.meta.url));
   hashFile(hash, path.join(apiDir, 'package.json'));
   hashFile(hash, path.join(apiDir, 'package-lock.json'));
+  hashDirectory(hash, sharedRoutingDir);
   hashDirectory(hash, path.join(apiDir, 'dist'));
   hashFile(hash, process.execPath);
   return hash.digest('hex');
@@ -69,6 +73,7 @@ if (
   previousStamp === nextStamp &&
   existsSync(path.join(sidecarDir, 'dist', 'index.js')) &&
   existsSync(path.join(sidecarDir, 'node_modules')) &&
+  existsSync(path.join(stagedSharedRoutingDir, 'index.js')) &&
   existsSync(sidecarNodePath)
 ) {
   console.log('API sidecar staging is up to date.');
@@ -95,6 +100,12 @@ if (process.platform === 'win32') {
     stdio: 'inherit',
   });
 }
+
+// npm represents local file dependencies as links. Those links point outside the
+// staged tree and break once Tauri bundles it, so materialize the shared package.
+rmSync(stagedSharedRoutingDir, { force: true, recursive: true });
+mkdirSync(path.dirname(stagedSharedRoutingDir), { recursive: true });
+cpSync(sharedRoutingDir, stagedSharedRoutingDir, { recursive: true });
 
 writeFileSync(stampPath, `${nextStamp}\n`);
 console.log(`Prepared API sidecar resources in ${path.relative(rootDir, sidecarDir)}`);

@@ -166,6 +166,8 @@ export interface TemporalFeatureFlags {
   ordinalWeekdayGrammar?: boolean;
   planIr?: boolean;
   semanticConsistencyGate?: boolean;
+  discordReferenceRouting?: boolean;
+  discordReferenceShadow?: boolean;
 }
 
 export type TemporalPlanIrInstructionPreset = 'detailed' | 'minimal';
@@ -181,6 +183,13 @@ export interface TemporalPlanIrEndpointConfig {
   promptFormat: TemporalPlanIrEndpointPromptFormat;
   maxTokens: number;
   timeoutMs: number;
+}
+
+export interface TemporalModelCostConfig {
+  inputUsdPerMillionTokens: number;
+  outputUsdPerMillionTokens: number;
+  fixedUsdPerCall: number;
+  configured: boolean;
 }
 
 export interface TemporalParseRequest {
@@ -221,6 +230,11 @@ export interface TemporalParseResponse {
     firstLlmResponseMs?: number;
     firstCandidateMs?: number;
     finalResponseMs?: number;
+    modelCalls?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    estimatedCostUsd?: number;
+    costEstimateConfigured?: boolean;
     shortCircuitReason?: string;
     model?: string;
     reasoningEffort?: string;
@@ -230,6 +244,20 @@ export interface TemporalParseResponse {
     trace?: TemporalAgentTraceStep[];
     finalValidation?: TemporalFinalValidation;
     semanticConsistencyGate?: TemporalSemanticConsistencyGateResult;
+    referenceRouting?: {
+      classifierVersion: string;
+      route: string;
+      reason: string;
+      referenceCount: number;
+      malformedCount: number;
+      contextClass: string;
+      signals: string[];
+      inputLengthBucket: string;
+      modelEligible: boolean;
+      meaningfulResidue: boolean;
+      legacyFirstMatchWouldResolve: boolean;
+      shadow: boolean;
+    };
     langfuseTraceId?: string;
   };
 }

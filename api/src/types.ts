@@ -5,6 +5,7 @@
 
 // Request/Response DTOs
 export interface ParseRequest {
+  requestId?: string;
   text: string;
   tz: string;
   now?: string;
@@ -15,6 +16,8 @@ export interface ParseFeatureOverrides {
   deterministicPreflight?: boolean;
   ordinalWeekdayGrammar?: boolean;
   semanticConsistencyGate?: boolean;
+  discordReferenceRouting?: boolean;
+  discordReferenceShadow?: boolean;
 }
 
 export interface ParseResponse {
@@ -77,6 +80,25 @@ export interface ParseOutcomeResponse {
   ok: true;
 }
 
+export interface ClientRouteTelemetryRequest {
+  generationId: string;
+  classifierVersion: string;
+  route: string;
+  reason: string;
+  referenceCount: number;
+  malformedCount: number;
+  contextClass: string;
+  inputLengthBucket: string;
+  finalStatus: 'resolved' | 'needs_clarification' | 'failed';
+  finalMethod: string;
+  finalEpoch?: number;
+  totalDurationMs: number;
+  timeZone: string;
+  shadow: boolean;
+  legacyFirstMatchWouldResolve: boolean;
+  legacyFirstMatchWouldDiffer: boolean;
+}
+
 export interface ParseVerificationRequest {
   text: string;
   tz: string;
@@ -124,7 +146,27 @@ export interface GenerationRecord {
   candidateCount?: number;
   clarificationAlternativeCount?: number;
   totalDurationMs?: number;
+  firstCorrectDurationMs?: number;
   errorClass?: string;
+  classifierVersion?: string;
+  route?: string;
+  routeReason?: string;
+  referenceCount?: number;
+  malformedCount?: number;
+  contextClass?: string;
+  inputLengthBucket?: string;
+  shadow?: boolean;
+  legacyFirstMatchWouldResolve?: boolean;
+  legacyFirstMatchWouldDiffer?: boolean;
+  modelName?: string;
+  planOperations?: string;
+  modelCalls?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd?: number;
+  costEstimateConfigured?: boolean;
+  validationPassed?: boolean;
+  fallbackReason?: string;
 }
 
 export interface GenerationOutcomeRecord {
@@ -148,6 +190,8 @@ export interface EnvConfig {
   TEMPORAL_FEATURE_ORDINAL_WEEKDAY_GRAMMAR: boolean;
   TEMPORAL_FEATURE_PLAN_IR: boolean;
   TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: boolean;
+  TEMPORAL_FEATURE_DISCORD_REFERENCE_ROUTING: boolean;
+  TEMPORAL_FEATURE_DISCORD_REFERENCE_SHADOW: boolean;
   TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: string | undefined;
   TEMPORAL_PLAN_IR_ENDPOINT_MODEL: string;
   TEMPORAL_PLAN_IR_ENDPOINT_API_KEY: string | undefined;
@@ -156,6 +200,13 @@ export interface EnvConfig {
   TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT: string;
   TEMPORAL_PLAN_IR_ENDPOINT_MAX_TOKENS: number;
   TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS: number;
+  TELEMETRY_HMAC_KEY: string;
+  TELEMETRY_HMAC_KEY_ID: string;
+  TELEMETRY_RETENTION_DAYS: number;
+  TEMPORAL_MODEL_INPUT_USD_PER_MILLION: number;
+  TEMPORAL_MODEL_OUTPUT_USD_PER_MILLION: number;
+  TEMPORAL_MODEL_FIXED_USD_PER_CALL: number;
+  TEMPORAL_MODEL_COST_CONFIGURED: boolean;
   PORT: number;
   DB_PATH: string;
 }
