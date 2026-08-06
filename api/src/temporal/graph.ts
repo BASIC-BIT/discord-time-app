@@ -7,15 +7,27 @@ import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { Temporal } from '@js-temporal/polyfill';
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
-import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
+import {
+  classifyDiscordTimestampInput,
+  type DiscordTimestampClassification,
+} from '@hammer-overlay/discord-timestamp-routing';
+import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalModelCostConfig, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
-import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TimeOfDaySchema, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
+import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
+const OpenAiTemporalPlanSchema = TemporalPlanSchema.extend({
+  kind: z.enum(['instant', 'time_range']).nullable(),
+  startStep: z.number().int().min(0).nullable(),
+  endStep: z.number().int().min(0).nullable(),
+});
+const OpenAiTemporalPlanPlannerSchema = TemporalPlanPlannerSchema.extend({
+  plans: z.array(OpenAiTemporalPlanSchema).max(10),
+});
 const ENDPOINT_PLAN_INSTRUCTION_PRESETS: Record<TemporalPlanIrInstructionPreset, string> = {
-  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; the end must be after the start, so explicitly shift overnight end times. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep, or put an exact IANA/fixed-offset timezone string in timeZone. Use IANA/regional timezone intent for names like Eastern time, UK time, or Japan time; use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, return clarification instead of choosing silently. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
+  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; explicitly shift overnight end times. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep. Use fixed offsets only for explicit UTC/GMT offsets. Return clarification for ambiguous timezone abbreviations. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For instant plans, set format to d, D, t, T, f, F, or R when surrounding intent makes a presentation style meaningful. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
   minimal: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only.',
 };
 
@@ -71,6 +83,7 @@ const SemanticConsistencyGateSchema = z.object({
 type LangfuseHandler = BaseCallbackHandler & { last_trace_id: string | null };
 type RawTemporalPlan = {
   kind?: 'instant' | 'time_range' | undefined;
+  presentationFormat?: PlanPresentationFormat | null | undefined;
   label: string;
   rationale: string;
   assumptions?: string[] | undefined;
@@ -145,12 +158,15 @@ export interface TemporalGraphState {
 }
 
 export interface TemporalGraphOptions {
+  requestId?: string;
+  signal?: AbortSignal;
   maxAgentAttempts?: number;
   maxToolCalls?: number;
   openaiApiKey?: string;
   openaiModel?: string;
   openaiReasoningEffort?: string;
   planIrEndpoint?: TemporalPlanIrEndpointConfig;
+  modelCost?: TemporalModelCostConfig;
   features?: TemporalFeatureFlags;
   langfuse?: {
     enabled: boolean;
@@ -160,6 +176,19 @@ export interface TemporalGraphOptions {
     tags?: string[];
   };
   implementations: TemporalToolImplementations;
+}
+
+export class TemporalCancellationError extends Error {
+  constructor(message = 'Temporal parse was cancelled.') {
+    super(message);
+    this.name = 'AbortError';
+  }
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new TemporalCancellationError();
+  }
 }
 
 export function createInitialTemporalGraphState(request: TemporalParseRequest): TemporalGraphState {
@@ -178,22 +207,58 @@ export async function runTemporalCoalescingGraph(
   request: TemporalParseRequest,
   options: TemporalGraphOptions,
 ): Promise<TemporalParseResponse> {
+  throwIfCancelled(options.signal);
   const totalStartedAt = nowMs();
   const hasAgentPath = options.openaiApiKey !== undefined || (planIrEnabled(options.features) && options.planIrEndpoint !== undefined);
-  const useDeterministicPreflight = deterministicPreflightEnabled(options.features) || !hasAgentPath;
+  const referenceRouting = classifyDiscordTimestampInput(request.text);
+  const referenceRoutingEnabled = discordReferenceRoutingEnabled(options.features);
+  const forceSemanticReferencePath = referenceRouting.references.length > 0 && (
+    referenceRouting.route === 'model'
+    || (!referenceRoutingEnabled && referenceRouting.route === 'copied_prose')
+  );
+  const useDeterministicPreflight = !forceSemanticReferencePath && (deterministicPreflightEnabled(options.features) || !hasAgentPath);
   let fallback: TemporalParseResponse;
 
+  const terminalReferenceResponse = responseFromTerminalReferenceRouting(referenceRouting);
+  if (terminalReferenceResponse !== null) {
+    attachReferenceRoutingDebug(terminalReferenceResponse, referenceRouting, options.features);
+    attachTopLevelTiming(terminalReferenceResponse, totalStartedAt, undefined, undefined, options.features);
+    return terminalReferenceResponse;
+  }
+
+  if (
+    referenceRoutingEnabled
+    && (
+      referenceRouting.route === 'direct_instant'
+      || referenceRouting.route === 'direct_range'
+      || referenceRouting.route === 'copied_prose'
+    )
+  ) {
+    const directResult = await executeDirectDiscordReferenceRoute(referenceRouting, request, options);
+    attachReferenceRoutingDebug(directResult, referenceRouting, options.features);
+    attachTopLevelTiming(directResult, totalStartedAt, directResult.debug?.deterministicDurationMs, undefined, options.features);
+    return directResult;
+  }
+
   const ambiguityPolicyStartedAt = nowMs();
+  throwIfCancelled(options.signal);
   const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
   if (ambiguityPolicyResult !== null) {
     const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
+    attachReferenceRoutingDebug(response, referenceRouting, options.features);
     attachTopLevelTiming(response, totalStartedAt, undefined, undefined, options.features);
     return response;
   }
 
-  if (useDeterministicPreflight) {
+  if (forceSemanticReferencePath) {
+    fallback = responseFromUnresolvedReferenceRouting(referenceRouting);
+    fallback.debug = fallback.debug ?? {};
+    fallback.debug.shortCircuitReason = 'discord_reference_semantic_residue';
+  } else if (useDeterministicPreflight) {
     fallback = await deterministicParse(request, options.implementations, options.features);
     if (!hasAgentPath) {
+      applyReferenceFormatPreference(fallback, referenceRouting);
+      attachReferenceRoutingDebug(fallback, referenceRouting, options.features);
       attachTopLevelTiming(fallback, totalStartedAt, undefined, undefined, options.features);
       return fallback;
     }
@@ -207,9 +272,12 @@ export async function runTemporalCoalescingGraph(
       if (fallback.status === 'resolved' && options.openaiApiKey !== undefined) {
         const validationStartedAt = nowMs();
         const validated = await validateDeterministicResolvedResponse(request, fallback, options);
+        attachReferenceRoutingDebug(validated, referenceRouting, options.features);
         attachTopLevelTiming(validated, totalStartedAt, fallback.debug.deterministicDurationMs, elapsedMs(validationStartedAt), options.features);
         return validated;
       }
+      applyReferenceFormatPreference(fallback, referenceRouting);
+      attachReferenceRoutingDebug(fallback, referenceRouting, options.features);
       attachTopLevelTiming(fallback, totalStartedAt, fallback.debug.deterministicDurationMs, undefined, options.features);
       return fallback;
     }
@@ -228,48 +296,266 @@ export async function runTemporalCoalescingGraph(
 
   if (planIrEnabled(options.features)) {
     try {
+      throwIfCancelled(options.signal);
       const planResult = options.planIrEndpoint === undefined
         ? await runPlanIrPath(request, options)
         : await runEndpointPlanIrPath(request, options);
+      attachReferenceRoutingDebug(planResult, referenceRouting, options.features);
       attachTopLevelTiming(planResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
       if (!shouldEscalateAfterSemanticConsistencyGate(planResult) || options.openaiApiKey === undefined) {
         return planResult;
       }
     } catch (error) {
+      if (error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {
+        throw error;
+      }
       const response: TemporalParseResponse = {
         ...fallback,
         method: fallback.method === 'deterministic' ? 'fallback' : fallback.method,
         validation: {
           ...fallback.validation,
-          warnings: [...fallback.validation.warnings, `Plan-IR path failed; used deterministic fallback: ${errorMessage(error)}`],
+          warnings: [...fallback.validation.warnings, `Plan-IR path failed; returned only the previously validated safe fallback: ${errorMessage(error)}`],
         },
       };
+      attachReferenceRoutingDebug(response, referenceRouting, options.features);
       attachTopLevelTiming(response, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
       return response;
     }
   }
 
   try {
+    throwIfCancelled(options.signal);
     const agentResult = await runAgentGraph(request, options, maxToolCalls);
     if (agentResult) {
+      attachReferenceRoutingDebug(agentResult, referenceRouting, options.features);
       attachTopLevelTiming(agentResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
       return agentResult;
     }
   } catch (error) {
+    if (error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {
+      throw error;
+    }
     const response: TemporalParseResponse = {
       ...fallback,
       method: fallback.method === 'deterministic' ? 'fallback' : fallback.method,
       validation: {
         ...fallback.validation,
-        warnings: [...fallback.validation.warnings, `Agent graph failed; used deterministic fallback: ${errorMessage(error)}`],
+        warnings: [...fallback.validation.warnings, `Agent graph failed; returned only the previously validated safe fallback: ${errorMessage(error)}`],
       },
     };
+    attachReferenceRoutingDebug(response, referenceRouting, options.features);
     attachTopLevelTiming(response, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
     return response;
   }
 
+  attachReferenceRoutingDebug(fallback, referenceRouting, options.features);
   attachTopLevelTiming(fallback, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
   return fallback;
+}
+
+function responseFromTerminalReferenceRouting(
+  classification: DiscordTimestampClassification,
+): TemporalParseResponse | null {
+  if (classification.route !== 'clarify' && classification.route !== 'reject') {
+    return null;
+  }
+  const message = referenceRoutingMessage(classification);
+  return {
+    status: classification.route === 'clarify' ? 'needs_clarification' : 'failed',
+    confidence: 0,
+    method: 'fallback',
+    assumptions: [],
+    ambiguity: [message],
+    validation: {
+      passed: false,
+      warnings: [message],
+      checks: ['discord_reference_routing'],
+    },
+    ...(classification.route === 'clarify' ? { clarificationQuestion: message } : {}),
+    debug: {
+      candidateCount: 0,
+      agentAttempts: 0,
+      toolPasses: 0,
+      trace: [{
+        index: 1,
+        type: 'router',
+        name: 'discord_reference_terminal',
+        output: {
+          route: classification.route,
+          reason: classification.reason,
+        },
+      }],
+    },
+  };
+}
+
+function responseFromUnresolvedReferenceRouting(
+  classification: DiscordTimestampClassification,
+): TemporalParseResponse {
+  const message = classification.modelEligible
+    ? 'Timestamp reference has meaningful surrounding language that requires semantic interpretation.'
+    : 'Timestamp reference input is too long for safe semantic interpretation.';
+  return {
+    status: 'failed',
+    confidence: 0,
+    method: 'fallback',
+    assumptions: [],
+    ambiguity: [message],
+    validation: {
+      passed: false,
+      warnings: [message],
+      checks: ['discord_reference_semantic_residue'],
+    },
+    debug: {
+      candidateCount: 0,
+      agentAttempts: 0,
+      toolPasses: 0,
+      trace: [{
+        index: 1,
+        type: 'router',
+        name: 'discord_reference_requires_semantic_path',
+        output: {
+          route: classification.route,
+          reason: classification.reason,
+        },
+      }],
+    },
+  };
+}
+
+async function executeDirectDiscordReferenceRoute(
+  classification: DiscordTimestampClassification,
+  request: TemporalParseRequest,
+  options: TemporalGraphOptions,
+): Promise<TemporalParseResponse> {
+  const startedAt = nowMs();
+  const [startReference, endReference] = classification.references;
+  if (startReference === undefined) {
+    return responseFromUnresolvedReferenceRouting(classification);
+  }
+
+  const isRange = classification.route === 'direct_range';
+  const planResult = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Execute classifier-approved Discord timestamp references without semantic interpretation.',
+    clarificationQuestion: null,
+    plans: [{
+      ...(isRange ? {
+        kind: 'time_range',
+        finalStep: null,
+        startStep: 0,
+        endStep: 1,
+      } : {
+        finalStep: 0,
+      }),
+      label: isRange ? 'Discord timestamp range' : 'Discord timestamp',
+      rationale: 'Use only the exact classifier-approved timestamp reference operands.',
+      assumptions: [],
+      confidence: 1,
+      steps: [
+        {
+          op: 'resolve_calendar_query',
+          query: startReference.raw,
+          precision: 'datetime',
+        },
+        ...(isRange && endReference !== undefined ? [{
+          op: 'resolve_calendar_query' as const,
+          query: endReference.raw,
+          precision: 'datetime' as const,
+        }] : []),
+      ],
+    }],
+  });
+  const response = await executeTemporalPlanPlannerOutput(planResult, request, {
+    implementations: options.implementations,
+    ...(options.features === undefined ? {} : { features: options.features }),
+    method: 'deterministic',
+    modelName: 'discord-reference-fast-path-v2',
+  });
+  if (response.status === 'resolved' && response.range !== undefined && endReference !== undefined) {
+    response.range.start.suggestedFormatIndex = startReference.formatIndex;
+    response.range.end.suggestedFormatIndex = endReference.formatIndex;
+    response.range.discord = `${discordTimestamp(response.range.start.epoch, startReference.formatIndex)} - ${discordTimestamp(response.range.end.epoch, endReference.formatIndex)}`;
+    response.suggestedFormatIndex = startReference.formatIndex;
+    response.confidence = 1;
+  } else if (response.status === 'resolved') {
+    response.suggestedFormatIndex = startReference.formatIndex;
+    response.confidence = 1;
+  }
+  response.debug = response.debug ?? {};
+  response.debug.deterministicDurationMs = elapsedMs(startedAt);
+  response.debug.shortCircuitReason = `discord_reference_${classification.route}`;
+  return response;
+}
+
+function applyReferenceFormatPreference(
+  response: TemporalParseResponse,
+  classification: DiscordTimestampClassification,
+): void {
+  if (response.status !== 'resolved' || response.kind === 'time_range') {
+    return;
+  }
+  if (classification.references.length === 1) {
+    const reference = classification.references[0];
+    if (reference !== undefined) {
+      response.suggestedFormatIndex = (
+        (reference.formatIndex === 0 || reference.formatIndex === 1)
+        && classification.signals.includes('subday_duration')
+      )
+        ? 4
+        : reference.formatIndex;
+    }
+  }
+}
+
+function attachReferenceRoutingDebug(
+  response: TemporalParseResponse,
+  classification: DiscordTimestampClassification,
+  features?: TemporalFeatureFlags,
+): void {
+  response.debug = response.debug ?? {};
+  response.debug.referenceRouting = {
+    classifierVersion: classification.version,
+    route: classification.route,
+    reason: classification.reason,
+    referenceCount: classification.references.length,
+    malformedCount: classification.malformedCount,
+    contextClass: classification.contextClass,
+    signals: classification.signals,
+    inputLengthBucket: classification.inputLengthBucket,
+    modelEligible: classification.modelEligible,
+    meaningfulResidue: classification.meaningfulResidue,
+    legacyFirstMatchWouldResolve: classification.references.length > 0,
+    shadow: features?.discordReferenceShadow === true,
+  };
+}
+
+function referenceRoutingMessage(classification: DiscordTimestampClassification): string {
+  switch (classification.reason) {
+    case 'multiple_timestamps_without_relationship':
+      return 'I found multiple Discord timestamps. Please say how they are related or choose one.';
+    case 'invalid_timestamp_range':
+      return 'The Discord timestamp range must end after it starts.';
+    case 'unsupported_comparison':
+      return 'I found a timestamp comparison, but this app currently returns only one timestamp or one time range.';
+    case 'unsupported_scheduling':
+      return 'I can calculate a timestamp, but I cannot create reminders or calendar events.';
+    case 'unsupported_timezone_presentation':
+      return 'Discord timestamps already display in each viewer’s local timezone. Please ask for a timestamp calculation instead of a timezone-only conversion.';
+    case 'negated_or_corrected_reference':
+      return 'The surrounding text appears to reject or correct this timestamp. Please provide the intended time explicitly.';
+    case 'conditional_or_uncertain_reference':
+      return 'The timestamp is conditional or uncertain. Please clarify which time should be used.';
+    case 'ambiguous_code_or_url_context':
+      return 'The timestamp appears inside code or a URL with other text. Please paste the timestamp or intended calculation by itself.';
+    case 'malformed_timestamp_syntax':
+      return 'The Discord timestamp syntax is malformed or outside the supported epoch range.';
+    case 'input_too_long':
+    case 'model_input_too_long':
+      return 'The pasted text is too long to interpret safely. Please paste the relevant timestamp sentence.';
+    default:
+      return 'I could not safely determine how the surrounding text should affect this timestamp.';
+  }
 }
 
 export async function executeTemporalPlanPlannerOutput(
@@ -294,6 +580,13 @@ export async function executeTemporalPlanPlannerOutput(
 
   if (planResult.outcome === 'no_plan' || plans.length === 0) {
     const response = responseFromFailedPlanIr(planResult.reason, trace, 0, 0, 0);
+    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+    return response;
+  }
+
+  const referencePlanError = discordReferencePlanError(plans, request.text);
+  if (referencePlanError !== undefined) {
+    const response = responseFromFailedPlanIr(referencePlanError, trace, 0, 0, 0);
     attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
     return response;
   }
@@ -443,6 +736,7 @@ export async function executeTemporalPlanPlannerOutput(
     undefined,
     undefined,
     request.text,
+    selected.plan.presentationFormat ?? undefined,
   );
   attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
   return applySemanticConsistencyGateIfConfigured(request, response, {
@@ -491,6 +785,8 @@ async function runAgentGraph(
   const reasoningEffort = options.openaiReasoningEffort ?? DEFAULT_OPENAI_REASONING_EFFORT;
   let firstLlmResponseMs: number | undefined;
   let firstCandidateMs: number | undefined;
+  let agentInputTokens = 0;
+  let agentOutputTokens = 0;
   let finalizedCandidateId: string | null = null;
   let finalizedRationale = '';
   const clarificationResponseRef: { current: TemporalParseResponse | null } = { current: null };
@@ -516,6 +812,7 @@ async function runAgentGraph(
       response.debug.firstCandidateMs = firstCandidateMs;
     }
     response.debug.finalResponseMs = elapsedMs(agentGraphStartedAt);
+    attachModelUsageDebug(response, countTraceSteps(trace, 'llm'), agentInputTokens, agentOutputTokens, options.modelCost);
   };
   const autoFinalizeSoleCandidate = (rationale: string) => {
     const autoFinalized = onlyFinalizableCandidate(enrichedCandidates);
@@ -856,7 +1153,13 @@ async function runAgentGraph(
     const startedAt = nowMs();
     const system = systemPrompt(request, agentContext);
     const messages = [new SystemMessage(system), ...state.messages];
-    const result = await modelWithTools.invoke(messages, callbacks === undefined ? undefined : { callbacks });
+    const result = await modelWithTools.invoke(messages, {
+      ...(callbacks === undefined ? {} : { callbacks }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const usage = modelUsageFromUnknown(result.usage_metadata ?? result.response_metadata);
+    agentInputTokens += usage.inputTokens;
+    agentOutputTokens += usage.outputTokens;
     firstLlmResponseMs ??= elapsedMs(agentGraphStartedAt);
     trace.push({
       index: trace.length + 1,
@@ -904,10 +1207,9 @@ async function runAgentGraph(
 
   const finalState = await graph.invoke(
     { messages: [new HumanMessage(userPrompt(request))] },
-    callbacks === undefined
-      ? undefined
-      : {
-          callbacks,
+    {
+          ...(callbacks === undefined ? {} : { callbacks }),
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
           runName: 'temporal-coalescing-graph',
           tags: ['temporal-parse'],
           metadata: {
@@ -951,7 +1253,7 @@ async function runAgentGraph(
   const finalValidationStartedAt = nowMs();
   const runFinalValidation = shouldRunFinalValidation(finalized, agentProposedCandidateIds);
   const finalValidation = runFinalValidation
-    ? await validateFinalAnswer(model, request, finalized, finalizedRationale, trace, callbacks)
+    ? await validateFinalAnswer(model, request, finalized, finalizedRationale, trace, callbacks, options.signal)
     : skippedFinalValidation(finalized);
   trace.push({
     index: trace.length + 1,
@@ -1008,9 +1310,12 @@ async function runPlanIrPath(
   const langfuseHandler = await createLangfuseHandler(options, request);
   const callbacks = langfuseHandler === null ? undefined : [langfuseHandler];
   const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
-  const planner = model.withStructuredOutput(TemporalPlanPlannerSchema);
+  const planner = model.withStructuredOutput(OpenAiTemporalPlanPlannerSchema, { includeRaw: true });
   const system = planIrSystemPrompt(request, agentContext);
   const human = JSON.stringify({ text: request.text, calendarContext: request.calendarContext });
+  let modelCalls = 1;
+  let inputTokens = 0;
+  let outputTokens = 0;
 
   let firstLlmResponseMs: number | undefined;
   let firstCandidateMs: number | undefined;
@@ -1026,6 +1331,7 @@ async function runPlanIrPath(
       response.debug.firstCandidateMs = firstCandidateMs;
     }
     response.debug.finalResponseMs = elapsedMs(planStartedAt);
+    attachModelUsageDebug(response, modelCalls, inputTokens, outputTokens, options.modelCost);
     const traceId = getLangfuseTraceId(langfuseHandler);
     if (traceId !== undefined) {
       response.debug.langfuseTraceId = traceId;
@@ -1033,10 +1339,25 @@ async function runPlanIrPath(
   };
 
   const llmStartedAt = nowMs();
-  const planResult = await planner.invoke([
+  const { parsed: structuredPlanResult, raw } = await planner.invoke([
     new SystemMessage(system),
     new HumanMessage(human),
-  ], callbacks === undefined ? undefined : { callbacks, runName: 'temporal-plan-ir' });
+  ], {
+    ...(callbacks === undefined ? {} : { callbacks }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    runName: 'temporal-plan-ir',
+  });
+  const planResult = TemporalPlanPlannerSchema.parse({
+    ...structuredPlanResult,
+    plans: structuredPlanResult.plans.map((plan) => ({
+      ...plan,
+      kind: plan.kind ?? undefined,
+    })),
+  });
+  const rawMessage = raw as AIMessage;
+  const usage = modelUsageFromUnknown(rawMessage.usage_metadata ?? rawMessage.response_metadata);
+  inputTokens += usage.inputTokens;
+  outputTokens += usage.outputTokens;
   firstLlmResponseMs = elapsedMs(planStartedAt);
   trace.push({
     index: trace.length + 1,
@@ -1048,7 +1369,10 @@ async function runPlanIrPath(
       systemPromptChars: system.length,
       totalMessageChars: system.length + human.length,
     },
-    output: summarizeValue(planResult),
+    output: {
+      planResult: summarizeValue(planResult),
+      usage: summarizeValue(rawMessage.usage_metadata ?? rawMessage.response_metadata),
+    },
   });
 
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
@@ -1178,7 +1502,20 @@ async function runPlanIrPath(
   });
 
   const finalValidationStartedAt = nowMs();
-  const finalValidation = await validateFinalAnswer(model, request, selected.enriched, selected.plan.rationale, trace, callbacks);
+  const finalValidation = await validateFinalAnswer(
+    model,
+    request,
+    selected.enriched,
+    selected.plan.rationale,
+    trace,
+    callbacks,
+    options.signal,
+    (validationUsage) => {
+      modelCalls += 1;
+      inputTokens += validationUsage.inputTokens;
+      outputTokens += validationUsage.outputTokens;
+    },
+  );
   trace.push({
     index: trace.length + 1,
     type: 'final_validation',
@@ -1229,7 +1566,7 @@ async function runEndpointPlanIrPath(
 
   const prompt = formatEndpointPlanPrompt(request, endpoint.instructionPreset, endpoint.promptFormat);
   const planningStartedAt = nowMs();
-  const completion = await invokePlanIrEndpoint(endpoint, prompt);
+  const completion = await invokePlanIrEndpoint(endpoint, prompt, options.requestId, options.signal);
   const planningDurationMs = elapsedMs(planningStartedAt);
   let planResult: TemporalPlanPlannerOutput;
   try {
@@ -1274,6 +1611,8 @@ async function runEndpointPlanIrPath(
   response.debug.instructionPreset = endpoint.instructionPreset;
   response.debug.promptFormat = endpoint.promptFormat;
   response.debug.firstLlmResponseMs = planningDurationMs;
+  const usage = modelUsageFromUnknown(completion.usage);
+  attachModelUsageDebug(response, 1, usage.inputTokens, usage.outputTokens, options.modelCost);
   response.debug.trace = reindexTrace([llmTrace, ...(response.debug.trace ?? [])]);
   return applySemanticConsistencyGateIfConfigured(request, response, options, {
     solverStage: 'local_endpoint_plan_ir',
@@ -1300,11 +1639,26 @@ type OpenAiCompatibleCompletionResponse = {
   usage?: unknown;
 };
 
-async function invokePlanIrEndpoint(endpoint: TemporalPlanIrEndpointConfig, prompt: string): Promise<EndpointCompletion> {
+async function invokePlanIrEndpoint(
+  endpoint: TemporalPlanIrEndpointConfig,
+  prompt: string,
+  requestId?: string,
+  parentSignal?: AbortSignal,
+): Promise<EndpointCompletion> {
+  throwIfCancelled(parentSignal);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), endpoint.timeoutMs);
+  let timedOut = false;
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, endpoint.timeoutMs);
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (requestId !== undefined) {
+      headers['x-request-id'] = requestId;
+    }
     if (endpoint.apiKey !== undefined) {
       headers['Authorization'] = `Bearer ${endpoint.apiKey}`;
     }
@@ -1325,6 +1679,7 @@ async function invokePlanIrEndpoint(endpoint: TemporalPlanIrEndpointConfig, prom
       signal: controller.signal,
     });
     const bodyText = await response.text();
+    throwIfCancelled(parentSignal);
     if (!response.ok) {
       throw new Error(`Endpoint returned HTTP ${response.status}: ${bodyText.slice(0, 1000)}`);
     }
@@ -1346,11 +1701,36 @@ async function invokePlanIrEndpoint(endpoint: TemporalPlanIrEndpointConfig, prom
     return completion;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
+      if (requestId !== undefined) {
+        await cancelPlanIrEndpointRequest(endpoint, requestId);
+      }
+      if (parentSignal?.aborted && !timedOut) {
+        throw new TemporalCancellationError();
+      }
       throw new Error(`Endpoint request timed out after ${endpoint.timeoutMs}ms.`);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  }
+}
+
+async function cancelPlanIrEndpointRequest(endpoint: TemporalPlanIrEndpointConfig, requestId: string): Promise<void> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (endpoint.apiKey !== undefined) {
+    headers['Authorization'] = `Bearer ${endpoint.apiKey}`;
+  }
+  const baseUrl = endpoint.baseUrl.replace(/\/+$/, '');
+  const versionedBaseUrl = baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;
+  try {
+    await fetch(`${versionedBaseUrl}/cancel`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ request_id: requestId }),
+    });
+  } catch {
+    // Best effort: the original request is already locally aborted.
   }
 }
 
@@ -1373,13 +1753,27 @@ function formatEndpointPlanPrompt(request: TemporalParseRequest, instructionPres
   return `### Instruction:\n${instruction}\n\n### Input:\n${formatEndpointInputJson(input)}\n\n### Response:\n`;
 }
 
-function formatEndpointInputJson(input: { referenceInstant: string; text: string; timeZone: string }): string {
-  const entries = [
-    ['referenceInstant', input.referenceInstant],
-    ['text', input.text],
-    ['timeZone', input.timeZone],
-  ];
-  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(', ')}}`;
+export function formatEndpointInputJson(input: { referenceInstant: string; text: string; timeZone: string }): string {
+  return stringifySortedJson({
+    discordTimestampRouting: classifyDiscordTimestampInput(input.text),
+    referenceInstant: input.referenceInstant,
+    text: input.text,
+    timeZone: input.timeZone,
+  });
+}
+
+function stringifySortedJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stringifySortedJson(item)).join(', ')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}: ${stringifySortedJson(record[key])}`)
+      .join(', ')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function parsePredictedPlanIr(value: unknown): TemporalPlanPlannerOutput {
@@ -1481,6 +1875,7 @@ async function executeTemporalPlan(
   };
 
   try {
+    validateTemporalPlanDependencies(plan);
     const outputs = await Promise.all(plan.steps.map((_, stepIndex) => executeStep(stepIndex)));
     if (isTimeRangePlan(plan)) {
       const ranges = await enrichedRangesFromPlanOutput(plan, outputs, request, options.implementations);
@@ -1506,7 +1901,13 @@ async function executeTemporalPlan(
 
     const candidates = await Promise.all(finalOutput.candidates.map(async (candidate) => ({
       label: candidate.label,
-      enriched: await enrichCandidate(candidate.candidate, request, options.implementations),
+      enriched: await enrichCandidate(
+        candidate.candidate,
+        request,
+        options.implementations,
+        request.text,
+        planFinalStepExecutesExplicitClockTransform(plan),
+      ),
     })));
     trace.push({
       type: 'router',
@@ -1534,6 +1935,35 @@ async function executeTemporalPlan(
       trace,
       toolPasses: trace.filter((step) => step.type === 'tool').length,
     };
+  }
+}
+
+function validateTemporalPlanDependencies(plan: TemporalPlan): void {
+  const states = new Array<number>(plan.steps.length).fill(0);
+
+  const visit = (stepIndex: number): void => {
+    if (stepIndex < 0 || stepIndex >= plan.steps.length) {
+      throw new Error(`Plan ${plan.label} references missing step ${stepIndex}.`);
+    }
+    if (states[stepIndex] === 1) {
+      throw new Error(`Plan ${plan.label} contains a cyclic step dependency at step ${stepIndex}.`);
+    }
+    if (states[stepIndex] === 2) {
+      return;
+    }
+
+    states[stepIndex] = 1;
+    const step = plan.steps[stepIndex]!;
+    for (const dependency of [step.baseStep, step.timeStep, step.timeZoneStep]) {
+      if (dependency !== null) {
+        visit(dependency);
+      }
+    }
+    states[stepIndex] = 2;
+  };
+
+  for (let stepIndex = 0; stepIndex < plan.steps.length; stepIndex += 1) {
+    visit(stepIndex);
   }
 }
 
@@ -1829,7 +2259,7 @@ async function enrichedRangesFromPlanOutput(
       start: { enriched: start, label: pair.start.label },
       end: { enriched: end, label: pair.end.label },
       label: pair.label ?? plan.label,
-      validation: validateRange(start, end),
+      validation: validateRange(start, end, request.text),
       finalizable: false,
     };
     range.finalizable = range.validation.passed;
@@ -1939,7 +2369,7 @@ function pairRangeCandidateOutputs(
   throw new Error(`Cannot pair ${starts.length} range starts with ${ends.length} range ends.`);
 }
 
-function validateRange(start: EnrichedCandidate, end: EnrichedCandidate): TemporalValidation {
+function validateRange(start: EnrichedCandidate, end: EnrichedCandidate, originalText?: string): TemporalValidation {
   const warnings: string[] = [];
   if (!start.finalizable) {
     warnings.push(...(start.validation?.warnings ?? ['Range start is not finalizable.']).map((warning) => `Range start: ${warning}`));
@@ -1951,6 +2381,19 @@ function validateRange(start: EnrichedCandidate, end: EnrichedCandidate): Tempor
   const endEpoch = candidateToEpoch(end.candidate);
   if (endEpoch <= startEpoch) {
     warnings.push('Range end must be after range start; overnight ranges must explicitly shift the end date.');
+  }
+  if (originalText !== undefined) {
+    const classification = classifyDiscordTimestampInput(originalText);
+    const referenceEpochs = classification.references.map((reference) => reference.epochSeconds);
+    if (
+      classification.meaningfulResidue
+      && classification.route === 'model'
+      && referenceEpochs.length > 0
+      && referenceEpochs.includes(startEpoch)
+      && referenceEpochs.includes(endEpoch)
+    ) {
+      warnings.push('Range reused only bare Discord timestamp endpoints even though meaningful surrounding language was not consumed.');
+    }
   }
   return {
     passed: warnings.length === 0,
@@ -1967,6 +2410,7 @@ function planStepAssumptions(step: TemporalPlanStep): string[] {
 function normalizeTemporalPlan(plan: RawTemporalPlan): TemporalPlan {
   const normalized: TemporalPlan = {
     kind: plan.kind ?? 'instant',
+    presentationFormat: plan.presentationFormat ?? null,
     label: plan.label,
     rationale: plan.rationale,
     assumptions: plan.assumptions ?? [],
@@ -2328,7 +2772,7 @@ async function deterministicDiscordTimestampRangeParse(
     start: { enriched: start, label: 'Start' },
     end: { enriched: end, label: 'End' },
     label: 'Discord timestamp range',
-    validation: validateRange(start, end),
+    validation: validateRange(start, end, request.text),
     finalizable: false,
   };
   range.finalizable = range.validation.passed;
@@ -2446,7 +2890,7 @@ async function deterministicDatedTimeRangeParse(
     start: { enriched: start, label: parts.startText },
     end: { enriched: end, label: parts.endText },
     label: `${parts.dateText} ${parts.startText}-${parts.endText}`,
-    validation: validateRange(start, end),
+    validation: validateRange(start, end, request.text),
     finalizable: false,
   };
   range.finalizable = range.validation.passed;
@@ -2525,7 +2969,7 @@ async function deterministicBareTimeRangeParse(
     start: { enriched: start, label: parts.startText },
     end: { enriched: end, label: parts.endText },
     label: `${parts.startText}-${parts.endText}`,
-    validation: validateRange(start, end),
+    validation: validateRange(start, end, request.text),
     finalizable: false,
   };
   range.finalizable = range.validation.passed;
@@ -2605,7 +3049,7 @@ async function validateDeterministicResolvedResponse(
 
   try {
     const finalValidationStartedAt = nowMs();
-    const finalValidation = await validateFinalAnswer(model, request, enriched, 'Deterministic temporal parse.', trace, callbacks);
+    const finalValidation = await validateFinalAnswer(model, request, enriched, 'Deterministic temporal parse.', trace, callbacks, options.signal);
     trace.push({
       index: trace.length + 1,
       type: 'final_validation',
@@ -2853,8 +3297,14 @@ function rangesOverlap(leftIndex: number, leftLength: number, rightIndex: number
 }
 
 function trailingBareHourMention(text: string): AmbiguousBareClockMention | null {
-  const match = /\b(\d{1,2})\s*$/.exec(text.trimEnd());
+  const trimmed = text.trimEnd();
+  const match = /\b(\d{1,2})\s*$/.exec(trimmed);
   if (!match?.[1] || match.index === undefined) {
+    return null;
+  }
+
+  const precedingCharacter = match.index > 0 ? trimmed[match.index - 1] : undefined;
+  if (precedingCharacter === '-' || precedingCharacter === '+') {
     return null;
   }
 
@@ -3113,6 +3563,7 @@ async function enrichCandidate(
   request: TemporalParseRequest,
   implementations: TemporalToolImplementations,
   validationText = request.text,
+  explicitClockTransformExecuted = false,
 ): Promise<EnrichedCandidate> {
   const [facts, shortFormat, fullFormat, weekdayFormat, discordFormat, validation] = await Promise.all([
     implementations.candidateFacts({ candidate, calendarContext: request.calendarContext }),
@@ -3120,7 +3571,12 @@ async function enrichCandidate(
     implementations.formatCandidate({ candidate, calendarContext: request.calendarContext, style: 'full' }),
     implementations.formatCandidate({ candidate, calendarContext: request.calendarContext, style: 'weekday-check' }),
     implementations.formatCandidate({ candidate, calendarContext: request.calendarContext, style: 'discord-preview' }),
-    implementations.validateCandidate({ originalText: validationText, candidate, calendarContext: request.calendarContext }),
+    implementations.validateCandidate({
+      originalText: validationText,
+      candidate,
+      calendarContext: request.calendarContext,
+      explicitClockTransformExecuted,
+    }),
   ]);
 
   return {
@@ -3153,6 +3609,7 @@ function responseFromEnrichedCandidate(
   finalValidation?: TemporalFinalValidation,
   langfuseTraceId?: string,
   originalText = '',
+  presentationFormat?: PlanPresentationFormat,
 ): TemporalParseResponse {
   const validation = enriched.validation ?? { passed: false, warnings: ['Candidate was not validated.'], checks: [] };
   const canonical: NonNullable<TemporalParseResponse['canonical']> = {
@@ -3177,7 +3634,9 @@ function responseFromEnrichedCandidate(
   const response: TemporalParseResponse = {
     status: validation.passed ? 'resolved' : 'ambiguous',
     epoch: candidateToEpoch(enriched.candidate),
-    suggestedFormatIndex: suggestedFormatIndex(originalText, enriched.candidate.precision),
+    suggestedFormatIndex: presentationFormat === undefined
+      ? suggestedFormatIndex(originalText, enriched.candidate.precision)
+      : presentationFormatIndex(presentationFormat),
     confidence: validation.passed ? confidence : Math.min(confidence, 0.4),
     method,
     canonical,
@@ -3412,9 +3871,11 @@ async function validateFinalAnswer(
   rationale: string,
   trace: TemporalAgentTraceStep[],
   callbacks: BaseCallbackHandler[] | undefined,
+  signal?: AbortSignal,
+  onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
 ): Promise<TemporalFinalValidation> {
-  const validator = model.withStructuredOutput(FinalValidationSchema);
-  const result = await validator.invoke([
+  const validator = model.withStructuredOutput(FinalValidationSchema, { includeRaw: true });
+  const { parsed: result, raw } = await validator.invoke([
     new SystemMessage(`You are an independent final validation pass for a temporal parser.
 
 Your job is not to be generous. Reject candidates that dropped, contradicted, or guessed around temporal signals in the original input.
@@ -3438,7 +3899,13 @@ Validation rules:
       agentRationale: rationale,
       agentTrace: trace,
     })),
-  ], callbacks === undefined ? undefined : { callbacks, runName: 'temporal-final-validation' });
+  ], {
+    ...(callbacks === undefined ? {} : { callbacks }),
+    ...(signal === undefined ? {} : { signal }),
+    runName: 'temporal-final-validation',
+  });
+  const rawMessage = raw as AIMessage;
+  onUsage?.(modelUsageFromUnknown(rawMessage.usage_metadata ?? rawMessage.response_metadata));
   return {
     accepted: result.accepted,
     confidence: result.confidence,
@@ -3529,7 +3996,11 @@ Rules:
 - Do not repair the result, produce a new timestamp, rewrite Plan-IR, or suggest a better answer.
 - Be stricter for a singular resolved timestamp than for a clarification response.`),
     new HumanMessage(JSON.stringify(packet)),
-  ], callbacks === undefined ? undefined : { callbacks, runName: 'semantic-consistency-gate' });
+  ], {
+    ...(callbacks === undefined ? {} : { callbacks }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    runName: 'semantic-consistency-gate',
+  });
   return {
     decision: result.decision,
     confidence: result.confidence,
@@ -3661,6 +4132,9 @@ Rules:
 - If a timezone abbreviation is ambiguous, such as CST, IST, or BST, ask for clarification rather than choosing silently.
 - When inferring a fuzzy clock token, first decide whether the token is wordplay, slang, or a cultural time phrase rather than a literal clock string.
 - Preserve all available signal. Do not silently discard trailing characters or default minutes to :00 when the token appears to include minute information.
+- Discord timestamp references in factual routing context are exact, immutable anchors, not answers by themselves when route is "model". Resolve each required reference using its exact raw token, then interpret all meaningful surrounding language with tools.
+- For arithmetic around a Discord timestamp, you—not the deterministic router—must decide the intended operation and emit the corresponding shift_datetime call. Never finalize an unchanged reference anchor when surrounding language transforms it.
+- Routing signals are safety metadata, not a parsed semantic result. If the full intent cannot be represented or is ambiguous, ask for clarification instead of discarding residue.
 - For obfuscated cultural clock phrases, preserve the intended phrase meaning. For example, leetspeak references to "leet time" mean 13:37, not a literal parse of the visible digits.
 - For example, "day after a week from tomorrow" means anchor "tomorrow" plus weeks: 1 and days: 1.
 - Tool outputs contain validated candidates under candidate; use candidate.id for follow-up tool base references or finalization.
@@ -3680,6 +4154,9 @@ ${JSON.stringify(request.calendarContext)}
 
 Factual context:
 ${JSON.stringify(agentContext)}
+
+Discord timestamp reference routing:
+${JSON.stringify(classifyDiscordTimestampInput(request.text))}
 
 Original input:
 ${request.text}`;
@@ -3725,6 +4202,10 @@ Planning rules:
 - For negative or unsupported-length bare epoch-like numbers, use outcome "no_plan" rather than guessing.
 - For bounded repeated "day after ... tomorrow" chains up to five repetitions, resolve "tomorrow" and emit one shift_datetime step whose days delta equals the repetition count. If the chain is longer or uncertain, use outcome "no_plan" rather than guessing.
 - Preserve every date, time, holiday, weekday, offset, and timezone signal. If you cannot express the full meaning with the operations, use outcome "no_plan".
+- Discord timestamp references in routing context are exact, immutable anchor operands. When route is "model", use each required reference's exact raw token in resolve_calendar_query, interpret the surrounding language yourself, and represent transformations with operations such as shift_datetime.
+- The router's signals identify possible hazards; they do not encode the requested arithmetic. Do not copy or infer a precomputed delta from routing context.
+- Never emit a plan whose final result is merely an unchanged referenced timestamp when meaningful residue transforms or relates it. If the entire intent cannot be represented confidently, use outcome "clarification" or "no_plan".
+- For instant plans, presentationFormat may be d, D, t, T, f, F, or R. Choose it from the requested result context; do not mechanically copy a referenced timestamp's source style.
 - finalStep should be a zero-based index pointing to the candidate-producing step that represents an instant answer. For time_range plans, set finalStep to null and set startStep/endStep to the candidate-producing endpoint steps.
 
 Calendar context:
@@ -3732,6 +4213,9 @@ ${JSON.stringify(request.calendarContext)}
 
 Factual context:
 ${JSON.stringify(agentContext)}
+
+Discord timestamp reference routing:
+${JSON.stringify(classifyDiscordTimestampInput(request.text))}
 
 Original input:
 ${request.text}`;
@@ -3868,7 +4352,67 @@ function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFla
   if (features.semanticConsistencyGate !== undefined) {
     compact.semanticConsistencyGate = features.semanticConsistencyGate;
   }
+  if (features.discordReferenceRouting !== undefined) {
+    compact.discordReferenceRouting = features.discordReferenceRouting;
+  }
+  if (features.discordReferenceShadow !== undefined) {
+    compact.discordReferenceShadow = features.discordReferenceShadow;
+  }
   return compact;
+}
+
+function planFinalStepExecutesExplicitClockTransform(plan: TemporalPlan): boolean {
+  const finalStepIndex = plan.finalStep ?? plan.steps.length - 1;
+  const operation = plan.steps[finalStepIndex]?.operation;
+  return operation === 'set_clock_time' || operation === 'combine_date_time';
+}
+
+function presentationFormatIndex(format: PlanPresentationFormat): number {
+  const index = ['d', 'D', 't', 'T', 'f', 'F', 'R'].indexOf(format);
+  return index >= 0 ? index : 4;
+}
+
+function discordReferencePlanError(plans: TemporalPlan[], originalText: string): string | undefined {
+  const classification = classifyDiscordTimestampInput(originalText);
+  if (classification.route !== 'model' || classification.references.length === 0) {
+    return undefined;
+  }
+
+  for (const plan of plans) {
+    const referenceStepIndexes = new Map<string, number[]>();
+    for (const reference of classification.references) {
+      referenceStepIndexes.set(reference.raw, []);
+    }
+    plan.steps.forEach((step, index) => {
+      if (step.operation !== 'resolve_calendar_query' || step.query === null) {
+        return;
+      }
+      const indexes = referenceStepIndexes.get(step.query);
+      if (indexes !== undefined) {
+        indexes.push(index);
+      }
+    });
+
+    const missingReferences = [...referenceStepIndexes.entries()]
+      .filter(([, indexes]) => indexes.length === 0)
+      .map(([raw]) => raw);
+    if (missingReferences.length > 0) {
+      return `Model plan did not preserve required Discord timestamp reference operand(s): ${missingReferences.join(', ')}.`;
+    }
+
+    if (classification.meaningfulResidue) {
+      const allReferenceIndexes = new Set([...referenceStepIndexes.values()].flat());
+      const derivesFromReference = plan.steps.some((step) => (
+        step.operation !== 'resolve_calendar_query'
+        && step.baseStep !== null
+        && allReferenceIndexes.has(step.baseStep)
+      ));
+      if (!derivesFromReference) {
+        return 'Model plan did not derive the requested transformation from an explicit Discord timestamp reference operand.';
+      }
+    }
+  }
+  return undefined;
 }
 
 function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {
@@ -3881,6 +4425,10 @@ function deterministicPreflightEnabled(features: TemporalFeatureFlags | undefine
 
 function semanticConsistencyGateEnabled(features: TemporalFeatureFlags | undefined): boolean {
   return features?.semanticConsistencyGate === true;
+}
+
+function discordReferenceRoutingEnabled(features: TemporalFeatureFlags | undefined): boolean {
+  return features?.discordReferenceRouting !== false;
 }
 
 function shouldEscalateAfterSemanticConsistencyGate(response: TemporalParseResponse): boolean {
@@ -3940,7 +4488,52 @@ function summarizeAiMessage(message: AIMessage): unknown {
     content: summarizeValue(message.content),
     toolCalls: message.tool_calls?.map((call) => ({ name: call.name, args: summarizeValue(call.args), id: call.id })),
     reasoning: summarizeValue((message.additional_kwargs as { reasoning?: unknown }).reasoning),
+    usage: summarizeValue(message.usage_metadata ?? message.response_metadata),
   });
+}
+
+function countTraceSteps(trace: TemporalAgentTraceStep[], type: TemporalAgentTraceStep['type']): number {
+  return trace.filter((step) => step.type === type).length;
+}
+
+function modelUsageFromUnknown(value: unknown): { inputTokens: number; outputTokens: number } {
+  if (typeof value !== 'object' || value === null) {
+    return { inputTokens: 0, outputTokens: 0 };
+  }
+  const usage = value as Record<string, unknown>;
+  return {
+    inputTokens: firstFiniteNumber(usage, ['input_tokens', 'prompt_tokens', 'inputTokens']),
+    outputTokens: firstFiniteNumber(usage, ['output_tokens', 'completion_tokens', 'outputTokens']),
+  };
+}
+
+function firstFiniteNumber(record: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.round(value);
+    }
+  }
+  return 0;
+}
+
+function attachModelUsageDebug(
+  response: TemporalParseResponse,
+  modelCalls: number,
+  inputTokens: number,
+  outputTokens: number,
+  cost: TemporalModelCostConfig | undefined,
+): void {
+  response.debug = response.debug ?? {};
+  response.debug.modelCalls = modelCalls;
+  response.debug.inputTokens = inputTokens;
+  response.debug.outputTokens = outputTokens;
+  response.debug.costEstimateConfigured = cost?.configured === true;
+  if (cost !== undefined) {
+    response.debug.estimatedCostUsd = modelCalls * cost.fixedUsdPerCall
+      + inputTokens * cost.inputUsdPerMillionTokens / 1_000_000
+      + outputTokens * cost.outputUsdPerMillionTokens / 1_000_000;
+  }
 }
 
 function summarizeValue(value: unknown): unknown {

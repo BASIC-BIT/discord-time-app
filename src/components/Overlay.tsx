@@ -6,14 +6,20 @@ import { Row } from './Row';
 import { RangeRow } from './RangeRow';
 import { formatDiscordRange, formats, getFormatLabel, getRangeLabel, rangeFormats } from '../lib/formats';
 import { getUserTimezone } from '../lib/prompt';
-import { createAPIClient, TimeParserAPIError, TimeParserUnavailableError, type ParseAlternative, type ParseRangeResult, type ParseResponse } from '../lib/api-client';
+import { createAPIClient, TimeParserAPIError, TimeParserTimeoutError, TimeParserUnavailableError, type ParseAlternative, type ParseRangeResult, type ParseResponse } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
+import {
+  classifyDiscordTimestampInput,
+  type DiscordTimestampClassification,
+} from '@hammer-overlay/discord-timestamp-routing';
 
 const LOCAL_FALLBACK_CONFIDENCE = 0.65;
 
 interface AppSettings {
   deterministic_preflight: boolean;
+  discord_reference_routing: boolean;
+  discord_reference_shadow: boolean;
 }
 
 function clarificationKeyLabel(index: number): string {
@@ -29,18 +35,9 @@ function clarificationIndexForKey(key: string): number | null {
   }
   return null;
 }
-
-const DISCORD_TIMESTAMP_PATTERN = '<t:(\\d+)(:[dDtTfFR])>';
-const DISCORD_TIMESTAMP_REGEX = new RegExp(DISCORD_TIMESTAMP_PATTERN);
-const DISCORD_TIMESTAMP_RANGE_REGEX = new RegExp(`${DISCORD_TIMESTAMP_PATTERN}\\s*(?:-|–|—|to)\\s*${DISCORD_TIMESTAMP_PATTERN}`, 'i');
-
 function formatIndexForCode(formatCode: string): number {
   const formatIndex = formats.findIndex(f => f.code === formatCode);
   return formatIndex >= 0 ? formatIndex : 0;
-}
-
-function isValidDiscordEpoch(epoch: number): boolean {
-  return epoch > 0 && epoch < 2147483647; // Unix timestamp limits
 }
 
 function getZonedDateTimeLabel(epoch: number, timeZone: string): string {
@@ -75,42 +72,32 @@ function buildDiscordRangeEndpoint(epoch: number, formatCode: string, timeZone: 
   };
 }
 
-// Function to detect and parse existing Discord timestamps
-function parseExistingTimestamp(text: string): { epoch: number; formatCode: string } | null {
-  // Match Discord timestamp format: <t:1234567890:d>
-  const match = text.match(DISCORD_TIMESTAMP_REGEX);
-  
-  if (match) {
-    const epoch = parseInt(match[1], 10);
-    const formatCode = match[2];
-    
-    if (isValidDiscordEpoch(epoch)) {
-      return { epoch, formatCode };
-    }
-  }
-  
-  return null;
-}
-
-function parseExistingTimestampRange(text: string): ParseRangeResult | null {
-  const match = text.match(DISCORD_TIMESTAMP_RANGE_REGEX);
-  if (!match) {
+function directInstantFromClassification(classification: DiscordTimestampClassification): { epoch: number; formatCode: string } | null {
+  if (classification.route !== 'direct_instant' && classification.route !== 'copied_prose') {
     return null;
   }
+  const reference = classification.references[0];
+  return reference === undefined ? null : {
+    epoch: reference.epochSeconds,
+    formatCode: reference.formatCode,
+  };
+}
 
-  const startEpoch = parseInt(match[1], 10);
-  const startFormatCode = match[2];
-  const endEpoch = parseInt(match[3], 10);
-  const endFormatCode = match[4];
-  if (!isValidDiscordEpoch(startEpoch) || !isValidDiscordEpoch(endEpoch)) {
+function directRangeFromClassification(classification: DiscordTimestampClassification): ParseRangeResult | null {
+  if (classification.route !== 'direct_range') {
+    return null;
+  }
+  const startReference = classification.references[0];
+  const endReference = classification.references[1];
+  if (startReference === undefined || endReference === undefined) {
     return null;
   }
 
   const timeZone = getUserTimezone();
   return {
-    start: buildDiscordRangeEndpoint(startEpoch, startFormatCode, timeZone),
-    end: buildDiscordRangeEndpoint(endEpoch, endFormatCode, timeZone),
-    discord: `<t:${startEpoch}${startFormatCode}> - <t:${endEpoch}${endFormatCode}>`,
+    start: buildDiscordRangeEndpoint(startReference.epochSeconds, startReference.formatCode, timeZone),
+    end: buildDiscordRangeEndpoint(endReference.epochSeconds, endReference.formatCode, timeZone),
+    discord: `<t:${startReference.epochSeconds}${startReference.formatCode}> - <t:${endReference.epochSeconds}${endReference.formatCode}>`,
   };
 }
 
@@ -135,6 +122,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [isClipboardText, setIsClipboardText] = useState(false);
   const [parseProgressMessage, setParseProgressMessage] = useState<string | null>(null);
   const [deterministicPreflight, setDeterministicPreflight] = useState(false);
+  const [discordReferenceRouting, setDiscordReferenceRouting] = useState(true);
+  const [discordReferenceShadow, setDiscordReferenceShadow] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
@@ -156,8 +145,44 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     progressTimeoutsRef.current = [
       window.setTimeout(() => setParseProgressMessage('Mathing'), 1500),
       window.setTimeout(() => setParseProgressMessage('Picking'), 3600),
-      window.setTimeout(() => setParseProgressMessage('Still churning'), 6500),
+      window.setTimeout(() => setParseProgressMessage('Still working safely'), 5000),
     ];
+  };
+
+  const recordClientRoute = async (
+    classification: DiscordTimestampClassification,
+    clientGenerationId: string,
+    finalStatus: 'resolved' | 'failed',
+    finalEpoch: number | undefined,
+    totalDurationMs: number,
+  ) => {
+    try {
+      const apiClient = await createAPIClient();
+      await apiClient?.recordClientRoute({
+        generationId: clientGenerationId,
+        classifierVersion: classification.version,
+        route: classification.route,
+        reason: classification.reason,
+        referenceCount: classification.references.length,
+        malformedCount: classification.malformedCount,
+        contextClass: classification.contextClass,
+        inputLengthBucket: classification.inputLengthBucket,
+        finalStatus,
+        finalMethod: 'client_deterministic',
+        ...(finalEpoch === undefined ? {} : { finalEpoch }),
+        totalDurationMs,
+        timeZone: getUserTimezone(),
+        shadow: discordReferenceShadow,
+        legacyFirstMatchWouldResolve: classification.references.length > 0,
+        legacyFirstMatchWouldDiffer: classification.references.length > 0 && (
+          finalStatus !== 'resolved'
+          || classification.route === 'direct_range'
+          || finalEpoch !== classification.references[0]?.epochSeconds
+        ),
+      });
+    } catch (telemetryError) {
+      console.log('Client route telemetry failed:', telemetryError);
+    }
   };
 
   // Initialize and load clipboard content. Re-run when Rust reports a fresh overlay open.
@@ -170,6 +195,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         try {
           const settings = await invoke<AppSettings>('get_settings');
           setDeterministicPreflight(settings.deterministic_preflight);
+          setDiscordReferenceRouting(settings.discord_reference_routing);
+          setDiscordReferenceShadow(settings.discord_reference_shadow);
         } catch (settingsError) {
           console.log('Settings unavailable, using parser defaults:', settingsError);
         }
@@ -184,28 +211,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         }
         
         if (clipboardText) {
-          // Check if clipboard contains existing Discord timestamps.
-          const existingRange = parseExistingTimestampRange(clipboardText);
-          const existingTimestamp = existingRange === null ? parseExistingTimestamp(clipboardText) : null;
-          
-          if (existingRange) {
-            setEpoch(null);
-            setRange(existingRange);
-            setInputText(clipboardText);
-            setSelectedIndex(0);
-          } else if (existingTimestamp) {
-            // Found existing timestamp - extract epoch and set format
-            setEpoch(existingTimestamp.epoch);
-            setRange(null);
-            setInputText(clipboardText);
-            
-            // Find the format index that matches the current format code
-            setSelectedIndex(formatIndexForCode(existingTimestamp.formatCode));
-          } else {
-            // Regular text - set as input for parsing
-            setInputText(clipboardText);
-            setIsClipboardText(true);
-          }
+          setInputText(clipboardText);
+          setIsClipboardText(true);
         }
         
         // Focus the window
@@ -255,39 +262,64 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setVerifying(false);
 
     if (inputText.trim()) {
-      // Check if input is already a Discord timestamp or range (no debounce needed)
-      const existingRange = parseExistingTimestampRange(inputText.trim());
-      const existingTimestamp = existingRange === null ? parseExistingTimestamp(inputText.trim()) : null;
+      const classificationStartedAt = performance.now();
+      const referenceRouting = classifyDiscordTimestampInput(inputText.trim());
+      const classificationDurationMs = Math.max(0, performance.now() - classificationStartedAt);
+      const directRange = discordReferenceRouting ? directRangeFromClassification(referenceRouting) : null;
+      const directInstant = discordReferenceRouting && directRange === null
+        ? directInstantFromClassification(referenceRouting)
+        : null;
+      const directReject = discordReferenceRouting && referenceRouting.route === 'reject';
       
-      if (existingRange) {
+      if (directReject) {
+        const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
         setEpoch(null);
-        setRange(existingRange);
+        setRange(null);
         setConfidence(1);
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
-        setGenerationId(null);
+        setGenerationId(clientGenerationId);
+        setVerifying(false);
+        selectionTouchedRef.current = false;
+        setError(referenceRouting.reason === 'malformed_timestamp_syntax'
+          ? 'That Discord timestamp is malformed or outside the supported range.'
+          : 'That paste is too long to interpret safely. Paste only the relevant timestamp sentence.');
+        setParseProgressMessage(null);
+        setLoading(false);
+        void recordClientRoute(referenceRouting, clientGenerationId, 'failed', undefined, classificationDurationMs);
+      } else if (directRange) {
+        setEpoch(null);
+        setRange(directRange);
+        setConfidence(1);
+        setClarificationQuestion(null);
+        setClarificationAlternatives([]);
+        setSelectedAlternativeIndex(0);
+        const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
+        setGenerationId(clientGenerationId);
         setVerifying(false);
         setSelectedIndex(0);
         selectionTouchedRef.current = false;
         setError(null);
         setParseProgressMessage(null);
         setLoading(false);
-      } else if (existingTimestamp) {
-        // Already a timestamp - just update the epoch and format immediately
-        setEpoch(existingTimestamp.epoch);
+        void recordClientRoute(referenceRouting, clientGenerationId, 'resolved', directRange.start.epoch, classificationDurationMs);
+      } else if (directInstant) {
+        setEpoch(directInstant.epoch);
         setRange(null);
         setConfidence(1);
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
-        setGenerationId(null);
+        const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
+        setGenerationId(clientGenerationId);
         setVerifying(false);
-        setSelectedIndex(formatIndexForCode(existingTimestamp.formatCode));
+        setSelectedIndex(formatIndexForCode(directInstant.formatCode));
         selectionTouchedRef.current = false;
         setError(null);
         setParseProgressMessage(null);
         setLoading(false);
+        void recordClientRoute(referenceRouting, clientGenerationId, 'resolved', directInstant.epoch, classificationDurationMs);
       } else {
         setEpoch(null);
         setRange(null);
@@ -302,9 +334,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         // Parse as natural language with debounce
         setLoading(true);
         setParseProgressMessage('Settling');
+        const debounceMs = 300;
         debounceTimeoutRef.current = setTimeout(() => {
           parseInput(inputText.trim(), isClipboardText);
-        }, 300); // 300ms debounce for faster response
+        }, debounceMs);
       }
     } else {
       setEpoch(null);
@@ -320,7 +353,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       selectionTouchedRef.current = false;
       setLoading(false);
     }
-  }, [inputText]);
+  }, [inputText, discordReferenceRouting, discordReferenceShadow]);
 
   // Auto-resize window height based on content (only for main window)
   useEffect(() => {
@@ -387,7 +420,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       }
       
       const apiClient = await createAPIClient();
-      const fallbackEpoch = apiClient || isFromClipboard ? null : parseFallback(text);
+      const referenceRouting = classifyDiscordTimestampInput(text);
+      const hasDiscordReference = referenceRouting.references.length > 0 || referenceRouting.malformedCount > 0;
+      const fallbackEpoch = apiClient || isFromClipboard || hasDiscordReference ? null : parseFallback(text);
       let displayedFallback = false;
       if (fallbackEpoch) {
         setEpoch(fallbackEpoch);
@@ -404,7 +439,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       if (apiClient) {
         startBackendProgress(displayedFallback);
         try {
-          result = await apiClient.parseTime(text, timezone, abortController.signal, { deterministicPreflight });
+          result = await apiClient.parseTime(text, timezone, abortController.signal, {
+            requestId: crypto.randomUUID(),
+            deterministicPreflight,
+            discordReferenceRouting,
+            discordReferenceShadow,
+          });
           setGenerationId(result.generationId);
           console.log("API Result: ", result);
         } catch (error) {
@@ -456,14 +496,14 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setEpoch(null);
           setRange(null);
           setConfidence(1);
-          if (isFromClipboard) {
+          if (isFromClipboard && !hasDiscordReference) {
             setError(null);
           } else if (apiError instanceof TimeParserAPIError && apiError.alternatives && apiError.alternatives.length > 0) {
             setClarificationQuestion(apiError.message);
             setClarificationAlternatives(apiError.alternatives);
             setSelectedAlternativeIndex(0);
             setError(null);
-          } else if (apiError instanceof TimeParserUnavailableError) {
+          } else if (apiError instanceof TimeParserUnavailableError || apiError instanceof TimeParserTimeoutError) {
             setError(apiError.message);
           } else {
             setError(apiError?.message ?? 'Could not understand that time expression. Try being more specific like "Jan 15 at 3pm" or "in 2 hours".');

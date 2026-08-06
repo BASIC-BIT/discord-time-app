@@ -17,6 +17,11 @@ Edit `.env` and configure:
 - `OPENAI_API_KEY`: optional OpenAI API key for agent-assisted parsing
 - `STATIC_API_KEY`: API key for frontend authentication, defaulting to `STATIC_KEY_123` for local QA
 - `TEMPORAL_FEATURE_PLAN_IR`: optional experimental structured plan/action-list parser, defaulting to `false`
+- `TEMPORAL_FEATURE_DISCORD_REFERENCE_ROUTING`: enables complete-consumption timestamp-reference routing; semantic transformations are model-interpreted Plan-IR and fail closed when no model path is available, defaulting to `true`
+- `TEMPORAL_FEATURE_DISCORD_REFERENCE_SHADOW`: records legacy-versus-classifier decision metadata without retaining prose, defaulting to `false`
+- `TELEMETRY_HMAC_KEY` and `TELEMETRY_HMAC_KEY_ID`: keyed, rotatable input fingerprints; production should not reuse the local API key
+- `TELEMETRY_RETENTION_DAYS`: metadata and keyed-fingerprint retention window, defaulting to 30 days
+- `TEMPORAL_MODEL_*_USD_*`: current provider/model prices used by `/stats` for token-cost and 30-day spend projections
 
 ### 2. Install Dependencies & Run
 
@@ -47,15 +52,22 @@ The desktop build stages a bundled Node runtime, `api/dist`, and production API 
 
 OpenAI and Langfuse secrets are not bundled. For local development, the launcher forwards values from `api/.env` when present. Installed builds need those values supplied through environment/config until a Settings UI for parser credentials exists.
 
+On Windows, a user-scoped `OPENAI_API_KEY` is the shared local credential source
+for development, evals, tests, and newly launched installed builds. An
+`api/.env` assignment remains a per-checkout override. Store only
+`OPENAI_API_KEY=<value>`—a raw key without the variable name is ignored by
+dotenv—and never add the value to `.env.example`, tracked configuration, logs,
+or reports.
+
 ### Local SLM Runtime
 
 The Settings window has a **Local SLM Runtime** section for the fine-tuned Temporal Plan-IR model. It is disabled by default. When enabled, HammerOverlay injects the local Plan-IR endpoint configuration into the bundled parser sidecar before startup, so saving Local SLM settings restarts the local parser service.
 
 Default runtime values:
 
-- Endpoint: `http://127.0.0.1:8765/v1`
-- Model: `qwen-temporal-ir-qwen35-bf16-chat-time-range-2687`
-- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora`
+- Endpoint: `http://127.0.0.1:8770/v1`
+- Model: `qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora`
 - Docker image: `ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8`
 
 Installed MSI builds use the Settings actions to prepare the local runtime: `Install Runtime Files` copies bundled lightweight launch/server files into app data, `Download Model` retrieves the adapter package, and `Pull Docker Image` installs the serving backend. The model package must be published at the URL configured in `src-tauri/src/lib.rs` before installed-app smoke can pass. The SLM only proposes Temporal Plan-IR; schema validation, calendar arithmetic, and final timestamp rendering stay deterministic.

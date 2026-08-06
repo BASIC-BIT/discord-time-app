@@ -1,0 +1,8 @@
+{
+  "productName": "HammerOverlay Routing Smoke",
+  "version": "0.1.0",
+  "identifier": "com.hammer-overlay.routing-smoke",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

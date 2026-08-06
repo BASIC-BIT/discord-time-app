@@ -48,9 +48,54 @@ These fields are API analytics-ready, but they are not true token-level TTFT. Ex
 
 Baseline runners are eval-only. `deterministic` measures the existing local parser without model calls. `single-call:model` measures a non-agentic structured model call with no tools so we can compare raw model latency/accuracy against the LangGraph tool chain. `trained-plan` replays JSONL Plan-IR predictions through the deterministic executor. `endpoint-plan` calls a local or hosted OpenAI-compatible endpoint, parses compact Temporal Plan-IR, and runs the same executor-backed scoring.
 
+Presentation-aware Plan-IR evals score the optional instant-plan `format` operand as part of correctness. Do not infer that semantic choice from Plan-IR step order or overwrite model-owned results with the source timestamp style. Direct standalone timestamp routes remain deterministic and should preserve their exact source style. For transformed references, include cases where a subday shift can remain time-focused, a calendar shift needs its changed date visible, and a same-day clock replacement benefits from date/time presentation.
+
+## Production Routing Evaluation Boundary
+
+Discord-reference and other parser-default changes use one canonical catalog in
+`api/scripts/temporal-model-eval.ts` and three separately reported gates:
+
+- Gate A is blocking and runs every required case through the production
+  classifier, selected parser, executor, and validation path.
+- Gate B is blocking and selects model-owned Gate A cases, requiring an actual
+  model call and the exact final product result.
+- Gate C is nonblocking and forces classifier-owned or optional cases through
+  the model to preserve fallback and resilience weaknesses as diagnostics.
+
+Run the current local V9 boundary from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-temporal-evaluation-boundary.ps1 `
+  -BaselineReport "reports/temporal-ml/discord-reference-v9-evaluation-boundary-v2.json" `
+  -Output "reports/temporal-ml/discord-reference-v9-evaluation-boundary-final.json"
+```
+
+The wrapper first verifies that `/models` serves the exact configured model. It
+then marks the deployment as local, where hosted inference spend is zero. A
+hosted boundary run must instead set `TEMPORAL_EVAL_DEPLOYMENT_MODE=hosted`,
+configure the endpoint pricing used by API metrics, and set
+`TEMPORAL_EVAL_MONTHLY_REQUESTS`; missing cost inputs or a projection over the
+`$50/month` cap blocks the boundary.
+
+The boundary fails on required routed correctness, client/server classifier
+disagreement, a model-owned case that did not call the model, warmed p95 over
+five seconds, a compatible pass-to-fail baseline regression, a missing
+baseline case, or missing deployment/cost evidence. Gate C failures remain
+named in the JSON report and do not change a routed product pass into a model
+claim.
+
+Set a case's explicit `routeOwnership` when a safe deterministic policy owns
+the final decision even though the Discord-reference syntax classifier returns
+`model`. The clean bare-hour ambiguity policy is the canonical example: it can
+clarify `... at 2` without inference, while typo recovery and semantic
+composition remain model-owned. Do not relabel a case merely to avoid a Gate B
+failure; the annotation must match an intentional production policy.
+
 ## OpenAI-Compatible Plan-IR Endpoint Eval
 
 Use this lane for vLLM, SGLang, hosted OpenAI-compatible SLM endpoints, or RunPod queue workers that wrap OpenAI-compatible payloads. The runner sends the same compact Temporal Plan-IR prompt shape used by the Python prediction scripts, then executes valid output through the TypeScript deterministic executor.
+
+Use `TEMPORAL_EVAL_CASE_IDS` with a comma-separated list of stable case IDs for focused regression gates. Prefer this over `TEMPORAL_EVAL_OFFSET`/`TEMPORAL_EVAL_LIMIT`, which are intended for sharding and can drift when the catalog grows.
 
 Hosted endpoint experiments must report two latency profiles: submit-only and hotkey-prewarm. The product SLO is that the model is already warm by the time the user finishes typing after opening the overlay, and the visible result usually arrives within 5 seconds. Treat this as an architecture target and measured SLO, not a blanket hard timeout.
 

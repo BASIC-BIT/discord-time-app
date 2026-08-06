@@ -1,42 +1,48 @@
 import 'dotenv/config';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Temporal } from '@js-temporal/polyfill';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
+import {
+  classifyDiscordTimestampInput,
+  type DiscordTimestampRoute,
+  type DiscordTimestampRouteReason,
+} from '@hammer-overlay/discord-timestamp-routing';
 import { parseTemporalExpression } from '../src/temporal';
 import { parseCalendarContext } from '../src/temporal/deterministic';
-import { executeTemporalPlanPlannerOutput } from '../src/temporal/graph';
+import { executeTemporalPlanPlannerOutput, formatEndpointInputJson } from '../src/temporal/graph';
 import { parseTemporalPlanPlannerOutput, PLAN_WEEKDAYS, TEMPORAL_PLAN_MAX_PLANS, TEMPORAL_PLAN_MAX_STEPS } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
 import type { TemporalAgentTraceStep, TemporalFeatureFlags, TemporalParseResponse } from '../src/temporal/types';
 
-type ExpectedResolved = {
+export type ExpectedResolved = {
   status: 'resolved';
   epoch?: number;
   suggestedFormatIndex?: number;
   range?: ExpectedRange;
 };
 
-type ExpectedClarification = {
+export type ExpectedClarification = {
   status: 'needs_clarification';
-  alternativeEpochs: number[];
+  alternativeEpochs?: number[];
   alternativeRanges?: ExpectedRange[];
 };
 
-type ExpectedRange = {
+export type ExpectedRange = {
   startEpoch: number;
   endEpoch: number;
   startFormatIndex?: number;
   endFormatIndex?: number;
 };
 
-type ExpectedFailed = {
+export type ExpectedFailed = {
   status: 'failed';
 };
 
-type TemporalEvalCase = {
+export type TemporalEvalCase = {
   id: string;
   text: string;
   category: string;
@@ -44,6 +50,9 @@ type TemporalEvalCase = {
   referenceInstant?: string;
   timeZone?: string;
   required?: boolean;
+  routeOwnership?: 'classifier' | 'model';
+  expectedRoute?: DiscordTimestampRoute;
+  expectedRouteReason?: DiscordTimestampRouteReason;
 };
 
 type ModelSpec = {
@@ -86,7 +95,11 @@ type EndpointPlanSpec = {
   extraBody?: Record<string, unknown>;
 };
 
-type EvalRunnerSpec = ModelSpec | DeterministicSpec | TrainedPlanSpec | EndpointPlanSpec;
+type RoutedEndpointSpec = Omit<EndpointPlanSpec, 'runner'> & {
+  runner: 'routed_endpoint';
+};
+
+type EvalRunnerSpec = ModelSpec | DeterministicSpec | TrainedPlanSpec | EndpointPlanSpec | RoutedEndpointSpec;
 
 type EvalExperimentSpec = {
   label: string;
@@ -126,6 +139,14 @@ type EvalResult = {
   range?: TemporalParseResponse['range'];
   confidence?: number;
   method?: string;
+  referenceRoute?: string;
+  referenceRouteReason?: string;
+  expectedRoute?: string;
+  expectedRouteReason?: string;
+  routeOwnership: 'classifier' | 'model';
+  classifierAgreement?: boolean;
+  clientReferenceRoute?: string;
+  clientReferenceRouteReason?: string;
   instructionPreset?: string;
   error?: string;
   mismatch?: string;
@@ -142,6 +163,11 @@ type EvalResult = {
     toolDurationMs: number;
     finalValidationDurationMs: number;
     firstCorrectDisplayMs?: number;
+    modelCalls?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    estimatedCostUsd?: number;
+    costEstimateConfigured?: boolean;
     llmTurns: number;
     toolCallCount: number;
     finalValidationCount: number;
@@ -173,14 +199,19 @@ const baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES'])
 const experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
 const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
 const evalInputOutputPath = process.env['TEMPORAL_EVAL_EXPORT_INPUT'];
+const selectedCaseIds = new Set(splitList(process.env['TEMPORAL_EVAL_CASE_IDS'] ?? ''));
 const limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
+const offset = parseNonNegativeInt(process.env['TEMPORAL_EVAL_OFFSET']) ?? 0;
 const repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
+const progressEvery = parsePositiveInt(process.env['TEMPORAL_EVAL_PROGRESS_EVERY']);
 const blockingRunners = splitList(process.env['TEMPORAL_EVAL_BLOCKING_RUNNERS'] ?? 'agent');
 const includeExhaustiveRelativeOffsetEvals = isTruthy(process.env['TEMPORAL_EVAL_EXHAUSTIVE_RELATIVE_OFFSETS']);
+const boundaryEnabled = isTruthy(process.env['TEMPORAL_EVAL_BOUNDARY']);
+const boundaryBaselineReportPath = nonBlank(process.env['TEMPORAL_EVAL_BASELINE_REPORT']);
 let trainedPlanPredictionCache: Promise<Map<string, TrainedPlanPrediction>> | undefined;
 
 const ENDPOINT_PLAN_INSTRUCTION_PRESETS = {
-  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; the end must be after the start, so explicitly shift overnight end times. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep, or put an exact IANA/fixed-offset timezone string in timeZone. Use IANA/regional timezone intent for names like Eastern time, UK time, or Japan time; use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, return clarification instead of choosing silently. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
+  detailed: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only. For time ranges, set plan kind=time_range with startStep and endStep candidate steps; explicitly shift overnight end times. For explicit 24-hour clock text like 13:37, preserve that clock text exactly; do not append am or pm. For explicit timezone text, emit resolve_timezone and reference it with timeZoneStep. Use fixed offsets only for explicit UTC/GMT offsets. Return clarification for ambiguous timezone abbreviations. For Discord timestamps or bare 10/13/16/19 digit epoch-like numbers, pass the timestamp text to resolve_calendar_query. For instant plans, set format to d, D, t, T, f, F, or R when surrounding intent makes a presentation style meaningful. For negative or unsupported-length bare epoch-like numbers, return no_plan. For up to five repeated day-after modifiers before tomorrow, resolve tomorrow and emit one shift_datetime days delta equal to the repetition count; for longer chains return no_plan.',
   minimal: 'Translate the temporal user input into compact Temporal Plan-IR JSON. Return JSON only.',
 } as const;
 
@@ -213,6 +244,7 @@ const CompactTemporalPlanPlannerJsonSchema = {
         required: ['label', 'steps'],
         properties: {
           kind: { type: 'string', enum: ['instant', 'time_range'] },
+          format: { type: 'string', enum: ['d', 'D', 't', 'T', 'f', 'F', 'R'] },
           label: { type: 'string' },
           rationale: { type: 'string' },
           assumptions: { type: 'array', items: { type: 'string' } },
@@ -614,6 +646,7 @@ function bareHourDateAnchorEvalCase(spec: BareHourDateAnchorEvalSpec): TemporalE
     id: spec.id,
     text: spec.text,
     category: 'date-bare-hour-clarification',
+    routeOwnership: 'classifier',
     ...(spec.referenceInstant === undefined ? {} : { referenceInstant: spec.referenceInstant }),
     ...(spec.timeZone === undefined ? {} : { timeZone: spec.timeZone }),
     expected: {
@@ -776,7 +809,7 @@ function rangeExpected(
   };
 }
 
-const evalCases: TemporalEvalCase[] = [
+export const temporalEvalCases: TemporalEvalCase[] = [
   {
     id: 'relative-date-default-noon',
     text: 'tomorrow',
@@ -839,6 +872,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'weekday-bare-hour-clarification',
     text: 'saturday at 3',
     category: 'clarification',
+    routeOwnership: 'classifier',
     expected: { status: 'needs_clarification', alternativeEpochs: [1780124400, 1780167600] },
   },
   {
@@ -857,7 +891,328 @@ const evalCases: TemporalEvalCase[] = [
     id: 'direct-discord-timestamp',
     text: '<t:1779724800:F>',
     category: 'explicit-epoch',
-    expected: { status: 'resolved', epoch: 1779724800, suggestedFormatIndex: 4 },
+    expected: { status: 'resolved', epoch: 1779724800, suggestedFormatIndex: 5 },
+    expectedRoute: 'direct_instant',
+    expectedRouteReason: 'standalone_timestamp',
+  },
+  {
+    id: 'discord-reference-shift-suffix',
+    text: '<t:1785643200:t> 1 hour later',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785646800, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-suffix-day-earlier',
+    text: '<t:1785643200:t> 1 day earlier',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785556800, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-suffix-day-earlier-typo-ebefore',
+    text: '<t:1785643200:t> 1 day ebefore',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785556800, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-prefix-hours-before-typo-befoer',
+    text: '2 hours befoer <t:1785733200:F>',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785726000, suggestedFormatIndex: 5 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-prefix-hours-after-typo-afetr',
+    text: '3 hours afetr <t:1785643200:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785654000, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-prefix',
+    text: '1 hour after <t:1785643200:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785646800, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-infix',
+    text: 'one hour earlier than <t:1785643200:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785639600, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-day-at',
+    text: '<t:1785643200:t> day at 12 pm',
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'resolved', epoch: 1785686400, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-same-day-prefix',
+    text: '6:30pm on the same day as <t:1785643200:t>',
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'resolved', epoch: 1785709800, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-set-to',
+    text: 'set <t:1785733200:F> to 21:15',
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'resolved', epoch: 1785806100, suggestedFormatIndex: 5 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-spring-forward-day',
+    text: '<t:1772951400:D> that day at noon',
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'resolved', epoch: 1772985600, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-fall-back-day',
+    text: 'use the date from <t:1793511000:R> at noon',
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'resolved', epoch: 1793552400, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-held-out-wording',
+    text: "keep <t:1785643200:t>'s date and use noon",
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'resolved', epoch: 1785686400, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-ambiguous-bare-hour',
+    text: '<t:1785643200:t> day at 12',
+    category: 'discord-reference-clock-composition',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-midnight-presentation',
+    text: '<t:1785643200:t> that day at midnight',
+    category: 'discord-reference-presentation',
+    expected: { status: 'resolved', epoch: 1785643200, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-clock-composition-five-am-presentation',
+    text: '<t:1785643200:t> that day at 5 am',
+    category: 'discord-reference-presentation',
+    expected: { status: 'resolved', epoch: 1785661200, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clean',
+    text: '<t:1785643200:t> 1 day earlier at 2',
+    category: 'discord-reference-shift-clock-composition',
+    routeOwnership: 'classifier',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-typo-ebefore',
+    text: '<t:1785643200:t> 1 day ebefore at 2',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-explicit-typo-ebefore',
+    text: '<t:1785643200:t> 1 day ebefore at 2 pm',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'resolved', epoch: 1785607200, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-explicit-later',
+    text: '<t:1785643200:t> 1 day later at 2 pm',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'resolved', epoch: 1785780000, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-copied-prose',
+    text: 'The event starts at <t:1785643200:t>; bring a friend and use the north entrance.',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785643200, suggestedFormatIndex: 2 },
+    expectedRoute: 'copied_prose',
+    expectedRouteReason: 'affirmative_presentation_prose',
+  },
+  {
+    id: 'discord-reference-long-copied-prose',
+    text: 'The community launch event starts at <t:1785643200:t>; bring a friend, enter through the north lobby, and keep this entire copied announcement for context.',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785643200, suggestedFormatIndex: 2 },
+    expectedRoute: 'copied_prose',
+    expectedRouteReason: 'affirmative_presentation_prose',
+  },
+  {
+    id: 'discord-reference-negated',
+    text: "Don't use <t:1785643200:t>; that time is wrong.",
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'negated_or_corrected_reference',
+  },
+  {
+    id: 'discord-reference-multiple-unrelated',
+    text: '<t:1785643200:t> and <t:1785646800:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'multiple_timestamps_without_relationship',
+  },
+  {
+    id: 'discord-reference-comparison-unsupported',
+    text: 'Compare <t:1785643200:t> with <t:1785646800:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'unsupported_comparison',
+  },
+  {
+    id: 'discord-reference-timezone-presentation-unsupported',
+    text: 'Show <t:1785643200:t> in Pacific time',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'unsupported_timezone_presentation',
+  },
+  {
+    id: 'discord-reference-scheduling-action-unsupported',
+    text: 'Schedule <t:1785643200:t> on my calendar',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'unsupported_scheduling',
+  },
+  {
+    id: 'discord-reference-range-residue',
+    text: '<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785643200, endEpoch: 1785650400 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-exact-range',
+    text: '<t:1785643200:t> to <t:1785646800:F>',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: {
+        startEpoch: 1785643200,
+        endEpoch: 1785646800,
+        startFormatIndex: 2,
+        endFormatIndex: 5,
+      },
+    },
+    expectedRoute: 'direct_range',
+    expectedRouteReason: 'exact_timestamp_range',
+  },
+  {
+    id: 'discord-reference-reversed-range',
+    text: '<t:1785646800:t> to <t:1785643200:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'invalid_timestamp_range',
+  },
+  {
+    id: 'discord-reference-fuzzy-shift-model-diagnostic',
+    text: '<t:1785643200:t> roughly an hour later',
+    category: 'discord-reference-model-routing',
+    expected: { status: 'resolved', epoch: 1785646800, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+    required: false,
+  },
+  {
+    id: 'discord-reference-inline-code-context',
+    text: '`note <t:1785643200:t>`',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'ambiguous_code_or_url_context',
+  },
+  {
+    id: 'discord-reference-url-context',
+    text: 'https://example.com/<t:1785643200:t>',
+    category: 'discord-reference-routing',
+    expected: { status: 'needs_clarification' },
+    expectedRoute: 'clarify',
+    expectedRouteReason: 'ambiguous_code_or_url_context',
+  },
+  {
+    id: 'discord-reference-malformed-style',
+    text: '<t:1785643200:x>',
+    category: 'discord-reference-routing',
+    expected: { status: 'failed' },
+    expectedRoute: 'reject',
+    expectedRouteReason: 'malformed_timestamp_syntax',
+  },
+  {
+    id: 'discord-reference-model-length-limit',
+    text: `${'context '.repeat(650)}<t:1785643200:t> adjust somehow`,
+    category: 'discord-reference-routing',
+    expected: { status: 'failed' },
+    expectedRoute: 'reject',
+    expectedRouteReason: 'model_input_too_long',
+  },
+  {
+    id: 'discord-reference-fall-back-hour',
+    text: '<t:1793511000:t> 1 hour later',
+    category: 'discord-reference-dst',
+    expected: { status: 'resolved', epoch: 1793514600, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-spring-forward-hour',
+    text: '<t:1772951400:t> 1 hour later',
+    category: 'discord-reference-dst',
+    expected: { status: 'resolved', epoch: 1772955000, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-spring-forward-day',
+    text: '<t:1772951400:t> 1 day later',
+    category: 'discord-reference-dst',
+    expected: { status: 'resolved', epoch: 1773034200, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
   },
   {
     id: 'direct-epoch-seconds',
@@ -893,6 +1248,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'negative-epoch-rejected',
     text: '-1',
     category: 'explicit-epoch-rejection',
+    routeOwnership: 'classifier',
     expected: { status: 'failed' },
   },
   {
@@ -1001,6 +1357,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'relative-typo-tmrw-bare-compact-clock',
     text: 'tmrw 430',
     category: 'relative-typo-clarification',
+    routeOwnership: 'classifier',
     expected: { status: 'needs_clarification', alternativeEpochs: [1779697800, 1779741000] },
   },
   {
@@ -1080,6 +1437,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'event-post-multiline-typo-weekday-times',
     text: 'Club night:\nFrii May 29\nDoors 8pm\nMain set 10:30pm',
     category: 'event-post-typo-multiline',
+    routeOwnership: 'classifier',
     expected: { status: 'needs_clarification', alternativeEpochs: [1780099200, 1780108200] },
   },
   {
@@ -1144,6 +1502,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'relative-anchor-bare-minute-clarification',
     text: 'day after tomorrow 11:34',
     category: 'bare-minute-clarification',
+    routeOwnership: 'classifier',
     expected: {
       status: 'needs_clarification',
       alternativeEpochs: [
@@ -1156,6 +1515,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'weekday-leading-bare-minute-clarification',
     text: '4:30 Tuesday',
     category: 'bare-minute-clarification',
+    routeOwnership: 'classifier',
     expected: {
       status: 'needs_clarification',
       alternativeEpochs: [
@@ -1187,6 +1547,7 @@ const evalCases: TemporalEvalCase[] = [
     id: 'event-post-text-start-end',
     text: 'Club night: Friday May 29, doors 8pm, main set 10:30pm',
     category: 'future-event-extraction-pressure',
+    routeOwnership: 'classifier',
     expected: { status: 'needs_clarification', alternativeEpochs: [1780099200, 1780108200] },
   },
   {
@@ -1216,15 +1577,48 @@ const evalCases: TemporalEvalCase[] = [
     id: 'month-day-bare-hour-clarification',
     text: 'may 5 5',
     category: 'date-bare-hour-clarification',
+    routeOwnership: 'classifier',
     referenceInstant: '2026-06-02T04:50:00Z',
     timeZone: 'America/New_York',
     expected: { status: 'needs_clarification', alternativeEpochs: [1809507600, 1809550800] },
   },
 ];
 
+export function temporalEvalRouteOwnership(evalCase: TemporalEvalCase): 'classifier' | 'model' {
+  if (evalCase.routeOwnership !== undefined) {
+    return evalCase.routeOwnership;
+  }
+  return evalCase.expectedRoute === undefined || evalCase.expectedRoute === 'model'
+    ? 'model'
+    : 'classifier';
+}
+
 async function main() {
   const runnerSpecs: EvalRunnerSpec[] = [...modelSpecs, ...baselineSpecs];
-  const cases = limit === undefined ? evalCases : evalCases.slice(0, limit);
+  const excludedCategories = new Set(
+    (process.env['TEMPORAL_EVAL_EXCLUDE_CATEGORIES'] ?? '')
+      .split(',')
+      .map((category) => category.trim())
+      .filter((category) => category.length > 0),
+  );
+  const categoryFilteredCases = excludedCategories.size === 0
+    ? temporalEvalCases
+    : temporalEvalCases.filter((evalCase) => !excludedCategories.has(evalCase.category));
+  const idFilteredCases = selectedCaseIds.size === 0
+    ? categoryFilteredCases
+    : categoryFilteredCases.filter((evalCase) => selectedCaseIds.has(evalCase.id));
+  if (selectedCaseIds.size > 0) {
+    const matchedIds = new Set(idFilteredCases.map((evalCase) => evalCase.id));
+    const missingIds = [...selectedCaseIds].filter((caseId) => !matchedIds.has(caseId));
+    if (missingIds.length > 0) {
+      throw new Error(`TEMPORAL_EVAL_CASE_IDS did not match eval case(s): ${missingIds.join(', ')}`);
+    }
+  }
+  const offsetCases = idFilteredCases.slice(offset);
+  const cases = limit === undefined ? offsetCases : offsetCases.slice(0, limit);
+  if (excludedCategories.size > 0) {
+    console.log(`Excluded eval categories handled by a separate routed gate: ${[...excludedCategories].sort().join(', ')}`);
+  }
   if (evalInputOutputPath !== undefined) {
     await writeEvalInputRows(cases, evalInputOutputPath);
   }
@@ -1248,19 +1642,46 @@ async function main() {
     for (const experimentSpec of experimentSpecs) {
       for (const evalCase of cases) {
         for (let repeat = 1; repeat <= repeats; repeat += 1) {
-          results.push(await runCase(modelSpec, experimentSpec, evalCase, repeat));
+          const result = await runCase(modelSpec, experimentSpec, evalCase, repeat);
+          results.push(result);
+          if (progressEvery !== undefined && results.length % progressEvery === 0) {
+            console.log(
+              `progress ${results.length}: ${result.runner}/${result.model} ${result.caseId} `
+              + `${result.passed ? 'PASS' : 'FAIL'} ${result.durationMs}ms`,
+            );
+          }
         }
       }
     }
   }
 
   printSummary(results);
+  const boundary = boundaryEnabled
+    ? await buildEvaluationBoundary(results, boundaryBaselineReportPath)
+    : undefined;
+  if (boundary !== undefined) {
+    printEvaluationBoundary(boundary);
+  }
   if (outputPath !== undefined) {
     await mkdir(dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, `${JSON.stringify({ referenceInstant, timeZone, experiments: experimentSpecs, results }, null, 2)}\n`, 'utf8');
+    await writeFile(
+      outputPath,
+      `${JSON.stringify({
+        referenceInstant,
+        timeZone,
+        experiments: experimentSpecs,
+        ...(boundary === undefined ? {} : { boundary }),
+        results,
+      }, null, 2)}\n`,
+      'utf8',
+    );
     console.log(`Wrote temporal eval results to ${outputPath}`);
   }
 
+  if (boundary !== undefined && !boundary.passed) {
+    process.exitCode = 1;
+    return;
+  }
   if (results.some((result) => result.required && !result.passed && blockingRunners.includes(result.runner))) {
     process.exitCode = 1;
   }
@@ -1273,10 +1694,19 @@ function requiresOpenAi(modelSpec: EvalRunnerSpec): modelSpec is ModelSpec {
 async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperimentSpec, evalCase: TemporalEvalCase, repeat: number): Promise<EvalResult> {
   const startedAt = Date.now();
   const predictionInstructionPreset = await instructionPresetForCase(modelSpec, evalCase.id);
+  const routeOwnership = temporalEvalRouteOwnership(evalCase);
   try {
     const parsed = await runEvalRunner(modelSpec, experimentSpec, evalCase);
     const durationMs = Date.now() - startedAt;
-    const mismatch = evaluateParsed(evalCase, parsed);
+    const semanticMismatch = evaluateParsed(evalCase, parsed);
+    const routeCheck = modelSpec.runner === 'routed_endpoint' && evalCase.expectedRoute !== undefined
+      ? evaluateReferenceRoute(evalCase, parsed)
+      : undefined;
+    const mismatch = [semanticMismatch, routeCheck?.mismatch].filter((value): value is string => value !== undefined).join('; ') || undefined;
+    if (process.env['TEMPORAL_EVAL_DEBUG_CASE'] === evalCase.id) {
+      console.log(`DEBUG ${evalCase.id} response: ${JSON.stringify(parsed, null, 2)}`);
+      console.log(`DEBUG ${evalCase.id}: ${JSON.stringify(parsed.debug?.trace ?? [], null, 2)}`);
+    }
     return {
       experimentLabel: experimentSpec.label,
       featureFlags: experimentSpec.featureFlags,
@@ -1298,6 +1728,14 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       range: parsed.range,
       confidence: parsed.confidence,
       method: parsed.method,
+      referenceRoute: parsed.debug?.referenceRouting?.route,
+      referenceRouteReason: parsed.debug?.referenceRouting?.reason,
+      expectedRoute: evalCase.expectedRoute,
+      expectedRouteReason: evalCase.expectedRouteReason,
+      routeOwnership,
+      classifierAgreement: routeCheck?.classifierAgreement,
+      clientReferenceRoute: routeCheck?.clientRoute,
+      clientReferenceRouteReason: routeCheck?.clientReason,
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
       metrics: metricsFromResponse(parsed, evalCase, durationMs),
@@ -1317,14 +1755,54 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       required: evalCase.required ?? true,
       passed: false,
       durationMs: Date.now() - startedAt,
+      expectedRoute: evalCase.expectedRoute,
+      expectedRouteReason: evalCase.expectedRouteReason,
+      routeOwnership,
       instructionPreset: predictionInstructionPreset,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
+function evaluateReferenceRoute(
+  evalCase: TemporalEvalCase,
+  parsed: EvalParsed,
+): {
+  mismatch?: string;
+  classifierAgreement: boolean;
+  clientRoute: DiscordTimestampRoute;
+  clientReason: DiscordTimestampRouteReason;
+} {
+  const client = classifyDiscordTimestampInput(evalCase.text);
+  const server = parsed.debug?.referenceRouting;
+  const mismatches: string[] = [];
+  if (client.route !== evalCase.expectedRoute) {
+    mismatches.push(`expected client route ${evalCase.expectedRoute}, got ${client.route}`);
+  }
+  if (evalCase.expectedRouteReason !== undefined && client.reason !== evalCase.expectedRouteReason) {
+    mismatches.push(`expected client route reason ${evalCase.expectedRouteReason}, got ${client.reason}`);
+  }
+  if (server?.classifierVersion !== client.version) {
+    mismatches.push(`client/server classifier version mismatch ${client.version}/${server?.classifierVersion ?? 'missing'}`);
+  }
+  if (server?.route !== client.route) {
+    mismatches.push(`client/server route mismatch ${client.route}/${server?.route ?? 'missing'}`);
+  }
+  if (server?.reason !== client.reason) {
+    mismatches.push(`client/server route reason mismatch ${client.reason}/${server?.reason ?? 'missing'}`);
+  }
+  return {
+    ...(mismatches.length === 0 ? {} : { mismatch: mismatches.join(', ') }),
+    classifierAgreement: server?.classifierVersion === client.version
+      && server.route === client.route
+      && server.reason === client.reason,
+    clientRoute: client.route,
+    clientReason: client.reason,
+  };
+}
+
 async function instructionPresetForCase(modelSpec: EvalRunnerSpec, caseId: string): Promise<string | undefined> {
-  if (modelSpec.runner === 'endpoint_plan') {
+  if (modelSpec.runner === 'endpoint_plan' || modelSpec.runner === 'routed_endpoint') {
     return modelSpec.instructionPreset;
   }
   if (modelSpec.runner === 'trained_plan') {
@@ -1352,6 +1830,37 @@ async function runEvalRunner(modelSpec: EvalRunnerSpec, experimentSpec: EvalExpe
     return runEndpointPlanPrediction(modelSpec, experimentSpec, evalCase);
   }
 
+  if (modelSpec.runner === 'routed_endpoint') {
+    if (modelSpec.transport !== 'openai') {
+      throw new Error('The production-routed endpoint runner currently requires an OpenAI-compatible HTTP endpoint.');
+    }
+    return parseTemporalExpression({
+      text: evalCase.text,
+      timeZone: caseTimeZone,
+      referenceInstant: caseReferenceInstant,
+      features: {
+        deterministicPreflight: false,
+        ordinalWeekdayGrammar: true,
+        planIr: true,
+        semanticConsistencyGate: false,
+        discordReferenceRouting: true,
+        discordReferenceShadow: false,
+        ...experimentSpec.featureFlags,
+      },
+      planIrEndpoint: {
+        baseUrl: modelSpec.baseUrl,
+        model: modelSpec.model,
+        ...(modelSpec.apiKey === undefined ? {} : { apiKey: modelSpec.apiKey }),
+        instructionPreset: modelSpec.instructionPreset,
+        api: modelSpec.api,
+        promptFormat: modelSpec.promptFormat,
+        maxTokens: modelSpec.maxTokens,
+        timeoutMs: modelSpec.timeoutMs,
+      },
+      modelCost: evalModelCost(),
+    });
+  }
+
   if (modelSpec.runner === 'single_call') {
     return runSingleCallBaseline(modelSpec, experimentSpec, evalCase);
   }
@@ -1365,6 +1874,7 @@ async function runEvalRunner(modelSpec: EvalRunnerSpec, experimentSpec: EvalExpe
     openaiReasoningEffort: modelSpec.reasoningEffort,
     features: experimentSpec.featureFlags,
     langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
+    modelCost: evalModelCost(),
   });
 }
 
@@ -1411,6 +1921,9 @@ async function runEndpointPlanPrediction(modelSpec: EndpointPlanSpec, experiment
   const llmStartedAt = Date.now();
   const completion = await invokeOpenAiCompatibleEndpoint(modelSpec, prompt);
   const planningDurationMs = Date.now() - llmStartedAt;
+  if (process.env['TEMPORAL_EVAL_DEBUG_CASE'] === evalCase.id) {
+    console.log(`DEBUG ${evalCase.id} endpoint completion: ${completion.content}`);
+  }
   let predicted: ReturnType<typeof parsePredictedPlanIr>;
   try {
     predicted = parsePredictedPlanIr(completion.content);
@@ -1460,6 +1973,16 @@ async function runEndpointPlanPrediction(modelSpec: EndpointPlanSpec, experiment
   response.debug.promptFormat = modelSpec.promptFormat;
   response.debug.featureFlags = experimentSpec.featureFlags;
   response.debug.firstLlmResponseMs = planningDurationMs;
+  const usage = endpointTokenUsage(completion.usage);
+  const modelCost = evalModelCost();
+  response.debug.modelCalls = (response.debug.modelCalls ?? 0) + 1;
+  response.debug.inputTokens = (response.debug.inputTokens ?? 0) + usage.inputTokens;
+  response.debug.outputTokens = (response.debug.outputTokens ?? 0) + usage.outputTokens;
+  response.debug.estimatedCostUsd = (response.debug.estimatedCostUsd ?? 0)
+    + usage.inputTokens * modelCost.inputUsdPerMillionTokens / 1_000_000
+    + usage.outputTokens * modelCost.outputUsdPerMillionTokens / 1_000_000
+    + modelCost.fixedUsdPerCall;
+  response.debug.costEstimateConfigured = modelCost.configured;
   response.debug.trace = reindexTrace([llmTrace, ...(response.debug.trace ?? [])]);
   return response;
 }
@@ -1478,9 +2001,18 @@ Discord format indexes: 0 short date, 1 long date, 2 short time, 3 long time, 4 
 If AM/PM, "next weekday", or another phrase is materially ambiguous, return needs_clarification with alternatives.
 Do not call tools. Do not explain outside the schema.`;
   const human = JSON.stringify({ text: evalCase.text, referenceInstant: caseReferenceInstant, timeZone: caseTimeZone });
-  const model = createChatModel(modelSpec.model, modelSpec.reasoningEffort).withStructuredOutput(SingleCallResponseSchema);
-  const result = await model.invoke([new SystemMessage(system), new HumanMessage(human)]);
+  const model = createChatModel(modelSpec.model, modelSpec.reasoningEffort).withStructuredOutput(
+    SingleCallResponseSchema,
+    { includeRaw: true },
+  );
+  const { parsed: result, raw } = await model.invoke([new SystemMessage(system), new HumanMessage(human)]);
   const durationMs = Date.now() - startedAt;
+  const inputTokens = raw.usage_metadata?.input_tokens;
+  const outputTokens = raw.usage_metadata?.output_tokens;
+  const modelCost = evalModelCost();
+  const estimatedCostUsd = (inputTokens ?? 0) * modelCost.inputUsdPerMillionTokens / 1_000_000
+    + (outputTokens ?? 0) * modelCost.outputUsdPerMillionTokens / 1_000_000
+    + modelCost.fixedUsdPerCall;
   const parsed: EvalParsed = {
     status: result.status,
     confidence: result.confidence,
@@ -1493,6 +2025,10 @@ Do not call tools. Do not explain outside the schema.`;
       agentDurationMs: durationMs,
       firstLlmResponseMs: durationMs,
       finalResponseMs: durationMs,
+      ...(inputTokens === undefined ? {} : { inputTokens }),
+      ...(outputTokens === undefined ? {} : { outputTokens }),
+      estimatedCostUsd,
+      costEstimateConfigured: modelCost.configured,
       trace: [{
         index: 1,
         type: 'llm',
@@ -1520,6 +2056,35 @@ Do not call tools. Do not explain outside the schema.`;
     parsed.clarificationAlternatives = result.alternatives.map((alternative) => ({ epoch: alternative.epoch }));
   }
   return parsed;
+}
+
+function evalModelCost() {
+  const configuredValues = [
+    process.env['TEMPORAL_MODEL_INPUT_USD_PER_MILLION'],
+    process.env['TEMPORAL_MODEL_OUTPUT_USD_PER_MILLION'],
+    process.env['TEMPORAL_MODEL_FIXED_USD_PER_CALL'],
+  ];
+  return {
+    inputUsdPerMillionTokens: parseFiniteNumber(configuredValues[0]) ?? 0,
+    outputUsdPerMillionTokens: parseFiniteNumber(configuredValues[1]) ?? 0,
+    fixedUsdPerCall: parseFiniteNumber(configuredValues[2]) ?? 0,
+    configured: configuredValues.some((value) => value !== undefined && value.trim() !== ''),
+  };
+}
+
+function endpointTokenUsage(usage: unknown): { inputTokens: number; outputTokens: number } {
+  if (usage === null || typeof usage !== 'object') {
+    return { inputTokens: 0, outputTokens: 0 };
+  }
+  const record = usage as Record<string, unknown>;
+  return {
+    inputTokens: finiteUsageTokenCount(record['prompt_tokens'] ?? record['input_tokens']),
+    outputTokens: finiteUsageTokenCount(record['completion_tokens'] ?? record['output_tokens']),
+  };
+}
+
+function finiteUsageTokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 type EndpointCompletion = {
@@ -1645,7 +2210,7 @@ function endpointPayload(modelSpec: EndpointPlanSpec, prompt: string): Record<st
   };
   if (modelSpec.api === 'chat') {
     payload['messages'] = [{ role: 'user', content: prompt }];
-    payload['max_tokens'] = modelSpec.maxTokens;
+    payload[modelSpec.model.startsWith('gpt-5') ? 'max_completion_tokens' : 'max_tokens'] = modelSpec.maxTokens;
   } else {
     payload['prompt'] = prompt;
     payload['max_tokens'] = modelSpec.maxTokens;
@@ -1703,15 +2268,6 @@ function formatEndpointPlanPrompt(input: { text: string; referenceInstant: strin
   return `### Instruction:\n${instruction}\n\n### Input:\n${formatEndpointInputJson(input)}\n\n### Response:\n`;
 }
 
-function formatEndpointInputJson(input: { text: string; referenceInstant: string; timeZone: string }): string {
-  const entries = [
-    ['referenceInstant', input.referenceInstant],
-    ['text', input.text],
-    ['timeZone', input.timeZone],
-  ];
-  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(', ')}}`;
-}
-
 function reindexTrace(trace: TemporalAgentTraceStep[]): TemporalAgentTraceStep[] {
   return trace.map((step, index) => ({ ...step, index: index + 1 }));
 }
@@ -1719,6 +2275,13 @@ function reindexTrace(trace: TemporalAgentTraceStep[]): TemporalAgentTraceStep[]
 function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string | undefined {
   if (parsed.status !== evalCase.expected.status) {
     return `expected status ${evalCase.expected.status}, got ${parsed.status}`;
+  }
+  if (
+    evalCase.expectedRoute !== undefined
+    && parsed.debug?.referenceRouting !== undefined
+    && parsed.debug.referenceRouting.route !== evalCase.expectedRoute
+  ) {
+    return `expected route ${evalCase.expectedRoute}, got ${parsed.debug.referenceRouting.route}`;
   }
 
   if (evalCase.expected.status === 'resolved') {
@@ -1752,7 +2315,7 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
     if (JSON.stringify(actualRanges) !== JSON.stringify(expectedRanges)) {
       return `expected range alternatives ${expectedRanges.join(',')}, got ${actualRanges.join(',') || 'none'}`;
     }
-  } else {
+  } else if (evalCase.expected.alternativeEpochs !== undefined) {
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)
       .sort((a, b) => a - b);
@@ -1819,6 +2382,11 @@ function metricsFromResponse(parsed: EvalParsed, evalCase: TemporalEvalCase, dur
     toolDurationMs,
     finalValidationDurationMs,
     firstCorrectDisplayMs: firstCorrectDisplayMs(evalCase, parsed, durationMs),
+    modelCalls: parsed.debug?.modelCalls,
+    inputTokens: parsed.debug?.inputTokens,
+    outputTokens: parsed.debug?.outputTokens,
+    estimatedCostUsd: parsed.debug?.estimatedCostUsd,
+    costEstimateConfigured: parsed.debug?.costEstimateConfigured,
     llmTurns: trace.filter((step) => step.type === 'llm').length,
     toolCallCount: toolSequence.length,
     finalValidationCount: trace.filter((step) => step.type === 'final_validation').length,
@@ -1864,7 +2432,7 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
     if (JSON.stringify(actualRanges) !== JSON.stringify(expectedRanges)) {
       return undefined;
     }
-  } else {
+  } else if (evalCase.expected.alternativeEpochs !== undefined) {
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)
       .sort((a, b) => a - b);
@@ -1885,6 +2453,330 @@ function isPromptMetrics(value: unknown): value is { systemPromptChars: number; 
   }
   const record = value as Record<string, unknown>;
   return typeof record['systemPromptChars'] === 'number' && typeof record['totalMessageChars'] === 'number';
+}
+
+type BoundaryCaseResult = Pick<
+  EvalResult,
+  'caseId' | 'text' | 'category' | 'passed' | 'durationMs' | 'status' | 'kind' | 'epoch'
+  | 'suggestedFormatIndex' | 'range' | 'method' | 'referenceRoute' | 'referenceRouteReason'
+  | 'routeOwnership' | 'mismatch' | 'error'
+> & {
+  modelCalls: number;
+  firstCorrectMs?: number;
+};
+
+type BoundaryGateSummary = {
+  name: 'A' | 'B' | 'C';
+  blocking: boolean;
+  description: string;
+  total: number;
+  passed: number;
+  failed: number;
+  correctnessPassed: boolean;
+  medianDurationMs?: number;
+  p95DurationMs?: number;
+  latencyTargetMs?: number;
+  latencyPassed?: boolean;
+  classifierAgreement?: string;
+  cases: BoundaryCaseResult[];
+  failures: BoundaryCaseResult[];
+};
+
+type EvaluationBoundary = {
+  version: 'temporal-evaluation-boundary-v1';
+  generatedAt: string;
+  passed: boolean;
+  blockers: string[];
+  ownership: {
+    classifier: number;
+    model: number;
+  };
+  gates: {
+    A: BoundaryGateSummary;
+    B: BoundaryGateSummary;
+    C: BoundaryGateSummary;
+  };
+  cost: {
+    deploymentMode: 'local' | 'hosted' | 'unspecified';
+    modelCalls: number;
+    estimatedCostUsd: number;
+    pricingConfigured: boolean;
+    assumedMonthlyRequests?: number;
+    projectedHostedMonthlyUsd?: number;
+    hostedMonthlyCapUsd: 50;
+    withinHostedMonthlyCap: boolean;
+    status: 'local-no-hosted-spend' | 'configured' | 'unconfigured';
+  };
+  baseline: {
+    path?: string;
+    compatible: boolean;
+    comparedCases: number;
+    regressions: string[];
+    improvements: string[];
+    missingCandidateCases: string[];
+    addedCandidateCases: string[];
+  };
+};
+
+async function buildEvaluationBoundary(
+  results: EvalResult[],
+  baselinePath: string | undefined,
+): Promise<EvaluationBoundary> {
+  const routed = results.filter((result) => result.runner === 'routed_endpoint' && result.required);
+  const routedModelOwned = routed.filter((result) => result.routeOwnership === 'model');
+  const endpointDiagnostics = results.filter((result) =>
+    result.runner === 'endpoint_plan'
+    && (result.routeOwnership === 'classifier' || !result.required),
+  );
+  const gateA = boundaryGate(
+    'A',
+    true,
+    'Production-routed correctness over every required case.',
+    routed,
+    true,
+  );
+  const gateB = boundaryGate(
+    'B',
+    true,
+    'Required cases owned by the model, exercised through production routing, execution, and validation.',
+    routedModelOwned,
+    true,
+  );
+  const gateC = boundaryGate(
+    'C',
+    false,
+    'Model-only resilience diagnostics for classifier-owned and optional cases.',
+    endpointDiagnostics,
+    false,
+  );
+  const blockers: string[] = [];
+  if (routed.length === 0) {
+    blockers.push('Gate A has no routed_endpoint results.');
+  } else {
+    if (!gateA.correctnessPassed) {
+      blockers.push(`Gate A has ${gateA.failed} required correctness failure(s).`);
+    }
+    if (gateA.latencyPassed === false) {
+      blockers.push(`Gate A p95 latency ${gateA.p95DurationMs}ms exceeds the 5000ms product target.`);
+    }
+  }
+  if (routedModelOwned.length === 0) {
+    blockers.push('Gate B has no model-owned routed_endpoint results.');
+  } else {
+    if (!gateB.correctnessPassed) {
+      blockers.push(`Gate B has ${gateB.failed} required model-owned failure(s).`);
+    }
+    const nonModelExecutions = routedModelOwned.filter((result) =>
+      result.method !== 'agent+plan' || (result.metrics?.modelCalls ?? 0) < 1,
+    );
+    if (nonModelExecutions.length > 0) {
+      blockers.push(`Gate B has ${nonModelExecutions.length} case(s) that did not execute the required model path.`);
+    }
+  }
+  const classifierExpected = routed.filter((result) => result.expectedRoute !== undefined);
+  const classifierAgreementCount = classifierExpected.filter((result) => result.classifierAgreement === true).length;
+  if (classifierAgreementCount !== classifierExpected.length) {
+    blockers.push(
+      `Gate A client/server classifier agreement is ${classifierAgreementCount}/${classifierExpected.length}.`,
+    );
+  }
+
+  const routedModelCalls = routed.reduce((total, result) => total + (result.metrics?.modelCalls ?? 0), 0);
+  const routedEstimatedCost = routed.reduce((total, result) => total + (result.metrics?.estimatedCostUsd ?? 0), 0);
+  const pricingConfigured = routed.some((result) => result.metrics?.costEstimateConfigured === true);
+  const configuredDeploymentMode = process.env['TEMPORAL_EVAL_DEPLOYMENT_MODE']?.trim().toLowerCase();
+  const deploymentMode = configuredDeploymentMode === 'local' || configuredDeploymentMode === 'hosted'
+    ? configuredDeploymentMode
+    : 'unspecified';
+  const configuredMonthlyRequests = Number(process.env['TEMPORAL_EVAL_MONTHLY_REQUESTS']);
+  const assumedMonthlyRequests = Number.isFinite(configuredMonthlyRequests) && configuredMonthlyRequests >= 0
+    ? configuredMonthlyRequests
+    : undefined;
+  const projectedHostedMonthlyUsd = deploymentMode === 'local'
+    ? 0
+    : pricingConfigured && assumedMonthlyRequests !== undefined && routed.length > 0
+      ? (routedEstimatedCost / routed.length) * assumedMonthlyRequests
+      : undefined;
+  const withinHostedMonthlyCap = projectedHostedMonthlyUsd !== undefined && projectedHostedMonthlyUsd <= 50;
+  const costStatus = deploymentMode === 'local'
+    ? 'local-no-hosted-spend'
+    : pricingConfigured && assumedMonthlyRequests !== undefined
+      ? 'configured'
+      : 'unconfigured';
+  if (deploymentMode === 'unspecified') {
+    blockers.push('Evaluation deployment mode is unspecified; set TEMPORAL_EVAL_DEPLOYMENT_MODE.');
+  } else if (deploymentMode === 'hosted') {
+    if (costStatus === 'unconfigured') {
+      blockers.push('Hosted cost projection requires configured pricing and TEMPORAL_EVAL_MONTHLY_REQUESTS.');
+    } else if (!withinHostedMonthlyCap) {
+      blockers.push(`Projected hosted monthly cost $${projectedHostedMonthlyUsd?.toFixed(2)} exceeds the $50 cap.`);
+    }
+  }
+  const baseline = await compareEvaluationBoundaryBaseline(routed, baselinePath);
+  if (baseline.compatible && baseline.regressions.length > 0) {
+    blockers.push(`Baseline comparison found ${baseline.regressions.length} pass-to-fail regression(s).`);
+  }
+  if (baseline.compatible && baseline.missingCandidateCases.length > 0) {
+    blockers.push(`Baseline comparison found ${baseline.missingCandidateCases.length} missing candidate case(s).`);
+  }
+
+  return {
+    version: 'temporal-evaluation-boundary-v1',
+    generatedAt: new Date().toISOString(),
+    passed: blockers.length === 0,
+    blockers,
+    ownership: {
+      classifier: temporalEvalCases.filter((evalCase) => (evalCase.required ?? true) && temporalEvalRouteOwnership(evalCase) === 'classifier').length,
+      model: temporalEvalCases.filter((evalCase) => (evalCase.required ?? true) && temporalEvalRouteOwnership(evalCase) === 'model').length,
+    },
+    gates: {
+      A: {
+        ...gateA,
+        classifierAgreement: `${classifierAgreementCount}/${classifierExpected.length}`,
+      },
+      B: gateB,
+      C: gateC,
+    },
+    cost: {
+      deploymentMode,
+      modelCalls: routedModelCalls,
+      estimatedCostUsd: routedEstimatedCost,
+      pricingConfigured,
+      assumedMonthlyRequests,
+      projectedHostedMonthlyUsd,
+      hostedMonthlyCapUsd: 50,
+      withinHostedMonthlyCap,
+      status: costStatus,
+    },
+    baseline,
+  };
+}
+
+function boundaryGate(
+  name: BoundaryGateSummary['name'],
+  blocking: boolean,
+  description: string,
+  results: EvalResult[],
+  enforceLatency: boolean,
+): BoundaryGateSummary {
+  const cases = results.map(boundaryCaseResult);
+  const durations = results
+    .map((result) => result.metrics?.firstCorrectDisplayMs ?? result.durationMs)
+    .sort((left, right) => left - right);
+  const medianDurationMs = durations.length === 0 ? undefined : percentile(durations, 0.5);
+  const p95DurationMs = durations.length === 0 ? undefined : percentile(durations, 0.95);
+  return {
+    name,
+    blocking,
+    description,
+    total: results.length,
+    passed: results.filter((result) => result.passed).length,
+    failed: results.filter((result) => !result.passed).length,
+    correctnessPassed: results.length > 0 && results.every((result) => result.passed),
+    medianDurationMs,
+    p95DurationMs,
+    ...(enforceLatency ? {
+      latencyTargetMs: 5000,
+      latencyPassed: p95DurationMs !== undefined && p95DurationMs <= 5000,
+    } : {}),
+    cases,
+    failures: cases.filter((result) => !result.passed),
+  };
+}
+
+function boundaryCaseResult(result: EvalResult): BoundaryCaseResult {
+  return {
+    caseId: result.caseId,
+    text: result.text,
+    category: result.category,
+    passed: result.passed,
+    durationMs: result.durationMs,
+    status: result.status,
+    kind: result.kind,
+    epoch: result.epoch,
+    suggestedFormatIndex: result.suggestedFormatIndex,
+    range: result.range,
+    method: result.method,
+    referenceRoute: result.referenceRoute,
+    referenceRouteReason: result.referenceRouteReason,
+    routeOwnership: result.routeOwnership,
+    mismatch: result.mismatch,
+    error: result.error,
+    modelCalls: result.metrics?.modelCalls ?? 0,
+    firstCorrectMs: result.metrics?.firstCorrectDisplayMs,
+  };
+}
+
+async function compareEvaluationBoundaryBaseline(
+  candidateResults: EvalResult[],
+  path: string | undefined,
+): Promise<EvaluationBoundary['baseline']> {
+  if (path === undefined) {
+    return {
+      compatible: false,
+      comparedCases: 0,
+      regressions: [],
+      improvements: [],
+      missingCandidateCases: [],
+      addedCandidateCases: [],
+    };
+  }
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as { results?: EvalResult[] };
+  const baselineResults = (parsed.results ?? []).filter((result) =>
+    result.runner === 'routed_endpoint' && result.required,
+  );
+  if (baselineResults.length === 0) {
+    return {
+      path,
+      compatible: false,
+      comparedCases: 0,
+      regressions: [],
+      improvements: [],
+      missingCandidateCases: [],
+      addedCandidateCases: [],
+    };
+  }
+  const candidateById = new Map(candidateResults.map((result) => [result.caseId, result]));
+  const baselineById = new Map(baselineResults.map((result) => [result.caseId, result]));
+  const regressions: string[] = [];
+  const improvements: string[] = [];
+  const missingCandidateCases: string[] = [];
+  for (const [caseId, baseline] of baselineById) {
+    const candidate = candidateById.get(caseId);
+    if (candidate === undefined) {
+      missingCandidateCases.push(caseId);
+    } else if (baseline.passed && !candidate.passed) {
+      regressions.push(caseId);
+    } else if (!baseline.passed && candidate.passed) {
+      improvements.push(caseId);
+    }
+  }
+  const addedCandidateCases = [...candidateById.keys()].filter((caseId) => !baselineById.has(caseId));
+  return {
+    path,
+    compatible: true,
+    comparedCases: [...baselineById.keys()].filter((caseId) => candidateById.has(caseId)).length,
+    regressions: regressions.sort(),
+    improvements: improvements.sort(),
+    missingCandidateCases: missingCandidateCases.sort(),
+    addedCandidateCases: addedCandidateCases.sort(),
+  };
+}
+
+function printEvaluationBoundary(boundary: EvaluationBoundary): void {
+  console.log(
+    `boundary ${boundary.version}: ${boundary.passed ? 'PASS' : 'FAIL'}`
+    + ` | Gate A ${boundary.gates.A.passed}/${boundary.gates.A.total}`
+    + ` p95=${boundary.gates.A.p95DurationMs ?? 'n/a'}ms`
+    + ` | Gate B ${boundary.gates.B.passed}/${boundary.gates.B.total}`
+    + ` | Gate C ${boundary.gates.C.passed}/${boundary.gates.C.total} diagnostic`,
+  );
+  for (const blocker of boundary.blockers) {
+    console.log(`  BLOCKER ${blocker}`);
+  }
+  for (const failure of [...boundary.gates.A.failures, ...boundary.gates.B.failures]) {
+    console.log(`  ${failure.caseId}: ${failure.mismatch ?? failure.error ?? 'failed'}`);
+  }
 }
 
 function printSummary(results: EvalResult[]) {
@@ -1908,9 +2800,13 @@ function printSummary(results: EvalResult[]) {
     const meanTools = mean(modelResults.map((result) => result.metrics?.toolCallCount ?? 0));
     const meanLlmTurns = mean(modelResults.map((result) => result.metrics?.llmTurns ?? 0));
     const meanFirstLlm = mean(modelResults.map((result) => result.metrics?.firstLlmResponseMs ?? 0));
+    const totalInputTokens = modelResults.reduce((total, result) => total + (result.metrics?.inputTokens ?? 0), 0);
+    const totalOutputTokens = modelResults.reduce((total, result) => total + (result.metrics?.outputTokens ?? 0), 0);
+    const totalEstimatedCost = modelResults.reduce((total, result) => total + (result.metrics?.estimatedCostUsd ?? 0), 0);
+    const unconfiguredCostRows = modelResults.filter((result) => result.metrics?.modelCalls && result.metrics.costEstimateConfigured !== true).length;
     const diagnosticSummary = diagnosticResults.length > 0 ? `, diagnostics=${diagnosticPassed}/${diagnosticResults.length}` : '';
     const promptSummary = firstResult.instructionPreset === undefined ? '' : ` prompt=${firstResult.instructionPreset}`;
-    console.log(`${firstResult.experimentLabel} ${firstResult.runner}/${firstResult.model}${promptSummary}: required=${passed}/${requiredResults.length}${diagnosticSummary}, firstCorrectMedian=${formatMs(medianFirstCorrect)}, firstCorrectP95=${formatMs(p95FirstCorrect)}, finalMedian=${median}ms, finalP95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}`);
+    console.log(`${firstResult.experimentLabel} ${firstResult.runner}/${firstResult.model}${promptSummary}: required=${passed}/${requiredResults.length}${diagnosticSummary}, firstCorrectMedian=${formatMs(medianFirstCorrect)}, firstCorrectP95=${formatMs(p95FirstCorrect)}, finalMedian=${median}ms, finalP95=${p95}ms, tools=${meanTools.toFixed(1)}, llmTurns=${meanLlmTurns.toFixed(1)}, firstLlm=${Math.round(meanFirstLlm)}ms, maxPromptChars=${maxPromptChars}, tokens=${totalInputTokens}/${totalOutputTokens}, estimatedCostUsd=${totalEstimatedCost.toFixed(6)}, unconfiguredCostRows=${unconfiguredCostRows}`);
     for (const result of modelResults) {
       const status = result.required ? (result.passed ? 'PASS' : 'FAIL') : (result.passed ? 'DIAG-PASS' : 'DIAG');
       const detail = result.error ?? result.mismatch ?? `${result.status} epoch=${result.epoch ?? 'none'}`;
@@ -1963,6 +2859,12 @@ function normalizeFeatureName(value: string): keyof TemporalFeatureFlags {
   if (normalized === 'semanticconsistencygate') {
     return 'semanticConsistencyGate';
   }
+  if (normalized === 'discordreferencerouting') {
+    return 'discordReferenceRouting';
+  }
+  if (normalized === 'discordreferenceshadow') {
+    return 'discordReferenceShadow';
+  }
   throw new Error(`Unknown temporal feature flag: ${value}`);
 }
 
@@ -2010,6 +2912,10 @@ function parseBaselineSpecs(value: string | undefined): EvalRunnerSpec[] {
 
     if (entry === 'endpoint-plan') {
       return parseEndpointPlanSpec();
+    }
+
+    if (entry === 'routed-endpoint' || entry === 'routed_endpoint') {
+      return { ...parseEndpointPlanSpec(), runner: 'routed_endpoint' };
     }
 
     const [kind, model, reasoningEffort] = entry.split(':');
@@ -2271,6 +3177,14 @@ function parsePositiveInt(value: string | undefined): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function parseNonNegativeInt(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 function parseFiniteNumber(value: string | undefined): number | undefined {
   if (value === undefined || value.trim() === '') {
     return undefined;
@@ -2306,7 +3220,12 @@ function nonBlank(value: string | undefined): string | undefined {
   return value;
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exit(1);
-});
+const invokedAsMain = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedAsMain) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

@@ -1,6 +1,7 @@
 import { Temporal, Intl as TemporalIntl } from '@js-temporal/polyfill';
 import * as chrono from 'chrono-node';
 import Holidays from 'date-holidays';
+import { classifyDiscordTimestampInput } from '@hammer-overlay/discord-timestamp-routing';
 import type { HolidaysTypes } from 'date-holidays';
 import type {
   CalendarContext,
@@ -63,7 +64,6 @@ const ORDINAL_WEEKDAY_OF_MONTH_PATTERN = new RegExp(
   `^\\s*(?:(?:the\\s+)?day\\s+(?<dayShift>after|before)\\s+)?(?:the\\s+)?(?<ordinal>first|second|third|fourth|fifth|last)\\s+(?<weekday>${WEEKDAY_NAME_PATTERN})\\s+(?:of|in)\\s+(?:(?<relativeMonth>this|next)\\s+month|(?<monthName>${MONTH_NAME_PATTERN})(?:,?\\s+(?<year>\\d{4}))?)(?:\\s+at\\s+(?<timeText>.+?))?\\s*$`,
   'i',
 );
-const DISCORD_TIMESTAMP_PATTERN = /<t:(\d+)(?::[tTdDfFR])?>/;
 const BARE_EPOCH_PATTERN = /^\d+$/;
 const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 const TWELVE_HOUR_TIME_PATTERN = /\b(\d{1,2})(?:(?::|\.)([0-5]\d))?\s*(am|pm)\b/i;
@@ -369,6 +369,7 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
   const requestedHoliday = resolveHolidayFromText(input.originalText, input.calendarContext);
   const requestedTime = extractTimeOfDay(input.originalText);
   const timeZoneValidation = timeZoneValidationForCandidate(input.originalText, input.candidate);
+  const referenceRouting = classifyDiscordTimestampInput(input.originalText);
   warnings.push(...timeZoneValidation.warnings);
   errors.push(...timeZoneValidation.errors);
   ambiguity.push(...timeZoneValidation.ambiguity);
@@ -401,6 +402,19 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
     warnings.push('Date-only input is represented at noon in the selected timezone for Discord timestamp compatibility.');
   }
 
+  if (
+    referenceRouting.meaningfulResidue
+    && referenceRouting.route === 'model'
+    && input.explicitClockTransformExecuted !== true
+    && referenceRouting.references.some((reference) => reference.epochSeconds === candidateToEpoch(input.candidate))
+  ) {
+    errors.push('Candidate equals the bare Discord timestamp anchor even though meaningful surrounding language was not consumed.');
+  }
+
+  if (referenceRouting.route === 'clarify' || referenceRouting.route === 'reject') {
+    errors.push(`Discord timestamp reference routing requires ${referenceRouting.route}: ${referenceRouting.reason}.`);
+  }
+
   return {
     passed: errors.length === 0,
     warnings,
@@ -430,11 +444,17 @@ export function candidateFromProposal(params: {
 }
 
 function parseExplicitTimestamp(text: string, calendarContext: CalendarContext): Candidate | null {
-  const discordMatch = DISCORD_TIMESTAMP_PATTERN.exec(text);
-  if (discordMatch?.[1]) {
+  const referenceRouting = classifyDiscordTimestampInput(text);
+  const discordReference = (
+    referenceRouting.route === 'direct_instant'
+    || referenceRouting.route === 'copied_prose'
+  )
+    ? referenceRouting.references[0]
+    : undefined;
+  if (discordReference !== undefined) {
     try {
       return candidateFromExplicitInstant(
-        Temporal.Instant.fromEpochNanoseconds(BigInt(discordMatch[1]) * 1_000_000_000n),
+        Temporal.Instant.fromEpochNanoseconds(BigInt(discordReference.epochSeconds) * 1_000_000_000n),
         calendarContext,
         'Used explicit Discord timestamp from input.',
       );

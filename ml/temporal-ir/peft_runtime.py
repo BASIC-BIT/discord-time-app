@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 from typing import Union
 
 
@@ -59,8 +60,26 @@ class TemporalPeftGenerator:
             enable_thinking=enable_thinking,
         )
 
-    def generate(self, prompt: str, *, max_new_tokens: int, temperature: float = 0) -> GenerationResult:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_new_tokens: int,
+        temperature: float = 0,
+        cancel_event: threading.Event | None = None,
+    ) -> GenerationResult:
         import torch
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        class CancellationStoppingCriteria(StoppingCriteria):
+            def __call__(self, input_ids, scores, **kwargs):
+                cancelled = cancel_event is not None and cancel_event.is_set()
+                return torch.full(
+                    (input_ids.shape[0],),
+                    cancelled,
+                    device=input_ids.device,
+                    dtype=torch.bool,
+                )
 
         inputs = self.tokenizer([prompt], return_tensors="pt").to(self.model.device)
         started = time.perf_counter()
@@ -74,6 +93,7 @@ class TemporalPeftGenerator:
                 top_p=None,
                 eos_token_id=self.tokenizer.eos_token_id,
                 pad_token_id=self.tokenizer.eos_token_id,
+                stopping_criteria=StoppingCriteriaList([CancellationStoppingCriteria()]),
             )
         duration_ms = round((time.perf_counter() - started) * 1000)
         prompt_tokens = inputs["input_ids"].shape[-1]

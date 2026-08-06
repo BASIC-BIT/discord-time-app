@@ -3,14 +3,15 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { Temporal } from '@js-temporal/polyfill';
-import { createHash } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
+import { classifyDiscordTimestampInput, DISCORD_TIMESTAMP_MAX_INPUT_CHARS } from '@hammer-overlay/discord-timestamp-routing';
 import { statSync } from 'node:fs';
-import { ParseOutcomeRequest, ParseRequest, ParseVerificationRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
+import { ClientRouteTelemetryRequest, ParseOutcomeRequest, ParseRequest, ParseVerificationRequest, ErrorResponse, API_VERSION, REQUIRED_HEADERS } from './types';
 import { config } from './config';
 import { db, getDatabase } from './database';
 import { parseTemporalExpression } from './temporal';
 import { parseCalendarContext } from './temporal/deterministic';
-import { verifyTemporalParseResponseWithSemanticConsistencyGate } from './temporal/graph';
+import { TemporalCancellationError, verifyTemporalParseResponseWithSemanticConsistencyGate } from './temporal/graph';
 import { createDeterministicTemporalToolImplementations } from './temporal/tools';
 import type { Candidate, TemporalParseResponse, Weekday } from './temporal/types';
 
@@ -59,6 +60,7 @@ const apiRuntime = {
 
 const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:[zZ]|[+-]\\d{2}:\\d{2})$';
 const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
+const activeParseRequests = new Map<string, AbortController>();
 
 const CORS_ORIGINS = ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
 
@@ -99,7 +101,8 @@ const parseRequestSchema = {
   type: 'object',
   required: ['text'],
   properties: {
-    text: { type: 'string', minLength: 1 },
+    requestId: { type: 'string', minLength: 1, maxLength: 128 },
+    text: { type: 'string', minLength: 1, maxLength: DISCORD_TIMESTAMP_MAX_INPUT_CHARS },
     tz: { type: 'string', default: 'UTC' },
     now: { type: 'string', pattern: ISO_INSTANT_PATTERN },
     features: {
@@ -107,7 +110,9 @@ const parseRequestSchema = {
       properties: {
         deterministicPreflight: { type: 'boolean' },
         ordinalWeekdayGrammar: { type: 'boolean' },
-        semanticConsistencyGate: { type: 'boolean' }
+        semanticConsistencyGate: { type: 'boolean' },
+        discordReferenceRouting: { type: 'boolean' },
+        discordReferenceShadow: { type: 'boolean' }
       }
     }
   }
@@ -230,11 +235,50 @@ const parseOutcomeResponseSchema = {
   }
 } as const;
 
+const clientRouteTelemetrySchema = {
+  type: 'object',
+  required: [
+    'generationId',
+    'classifierVersion',
+    'route',
+    'reason',
+    'referenceCount',
+    'malformedCount',
+    'contextClass',
+    'inputLengthBucket',
+    'finalStatus',
+    'finalMethod',
+    'totalDurationMs',
+    'timeZone',
+    'shadow',
+    'legacyFirstMatchWouldResolve',
+    'legacyFirstMatchWouldDiffer',
+  ],
+  properties: {
+    generationId: { type: 'string', minLength: 1, maxLength: 128 },
+    classifierVersion: { type: 'string', minLength: 1, maxLength: 64 },
+    route: { type: 'string', minLength: 1, maxLength: 64 },
+    reason: { type: 'string', minLength: 1, maxLength: 128 },
+    referenceCount: { type: 'integer', minimum: 0, maximum: 100 },
+    malformedCount: { type: 'integer', minimum: 0, maximum: 100 },
+    contextClass: { type: 'string', minLength: 1, maxLength: 64 },
+    inputLengthBucket: { type: 'string', minLength: 1, maxLength: 32 },
+    finalStatus: { type: 'string', enum: ['resolved', 'needs_clarification', 'failed'] },
+    finalMethod: { type: 'string', minLength: 1, maxLength: 64 },
+    finalEpoch: { type: 'number' },
+    totalDurationMs: { type: 'number', minimum: 0 },
+    timeZone: { type: 'string', minLength: 1, maxLength: 128 },
+    shadow: { type: 'boolean' },
+    legacyFirstMatchWouldResolve: { type: 'boolean' },
+    legacyFirstMatchWouldDiffer: { type: 'boolean' },
+  },
+} as const;
+
 const parseVerificationRequestSchema = {
   type: 'object',
   required: ['text', 'generationId', 'epoch', 'suggestedFormatIndex', 'confidence', 'method'],
   properties: {
-    text: { type: 'string', minLength: 1 },
+    text: { type: 'string', minLength: 1, maxLength: DISCORD_TIMESTAMP_MAX_INPUT_CHARS },
     tz: { type: 'string', default: 'UTC' },
     now: { type: 'string', pattern: ISO_INSTANT_PATTERN },
     generationId: { type: 'string', minLength: 1 },
@@ -322,6 +366,27 @@ server.get('/health', async (_request, reply) => {
   });
 });
 
+server.post<{ Body: { requestId: string } }>('/parse/cancel', {
+  schema: {
+    body: {
+      type: 'object',
+      required: ['requestId'],
+      properties: {
+        requestId: { type: 'string', minLength: 1, maxLength: 128 },
+      },
+    },
+  },
+}, async (request) => {
+  const controller = activeParseRequests.get(request.body.requestId);
+  controller?.abort(new TemporalCancellationError());
+  request.log.info({
+    requestId: request.body.requestId,
+    status: 'cancelled',
+    cancellationDelivered: controller !== undefined,
+  }, 'parse cancellation');
+  return { requestId: request.body.requestId, cancelled: controller !== undefined };
+});
+
 /**
  * Parse endpoint with OpenAI + chrono-node fallback
  */
@@ -331,11 +396,25 @@ server.post<{ Body: ParseRequest }>('/parse', {
     response: {
       200: parseResponseSchema,
       400: errorResponseSchema,
+      499: errorResponseSchema,
       500: errorResponseSchema
     }
   }
 }, async (request, reply) => {
   const { text, tz = 'UTC', now } = request.body;
+  const requestId = request.body.requestId ?? randomUUID();
+  const controller = new AbortController();
+  activeParseRequests.get(requestId)?.abort(new TemporalCancellationError('Superseded by a request with the same ID.'));
+  activeParseRequests.set(requestId, controller);
+  const abortOnDisconnect = () => controller.abort(new TemporalCancellationError('Client disconnected.'));
+  const abortOnPrematureClose = () => {
+    if (!reply.raw.writableEnded) {
+      abortOnDisconnect();
+    }
+  };
+  request.raw.once('aborted', abortOnDisconnect);
+  reply.raw.once('close', abortOnPrematureClose);
+  const startedAt = performance.now();
 
   try {
     if (now !== undefined && !isValidIsoInstant(now)) {
@@ -348,11 +427,16 @@ server.post<{ Body: ParseRequest }>('/parse', {
     const parseInput: Parameters<typeof parseTemporalExpression>[0] = {
       text,
       timeZone: tz,
+      requestId,
+      signal: controller.signal,
+      modelCost: config.temporalModelCost,
       features: {
         ...config.temporalFeatures,
         ...(request.body.features?.deterministicPreflight === undefined ? {} : { deterministicPreflight: request.body.features.deterministicPreflight }),
         ...(request.body.features?.ordinalWeekdayGrammar === undefined ? {} : { ordinalWeekdayGrammar: request.body.features.ordinalWeekdayGrammar }),
         ...(request.body.features?.semanticConsistencyGate === undefined ? {} : { semanticConsistencyGate: request.body.features.semanticConsistencyGate }),
+        ...(request.body.features?.discordReferenceRouting === undefined ? {} : { discordReferenceRouting: request.body.features.discordReferenceRouting }),
+        ...(request.body.features?.discordReferenceShadow === undefined ? {} : { discordReferenceShadow: request.body.features.discordReferenceShadow }),
       },
     };
     const planIrEndpoint = config.temporalPlanIrEndpoint;
@@ -377,17 +461,31 @@ server.post<{ Body: ParseRequest }>('/parse', {
     const parsed = await parseTemporalExpression(parseInput);
     logTemporalGeneration(text, tz, now, parsed);
     request.log.info({
-      text,
+      requestId,
+      inputTextHmac: hashInputText(text),
+      inputLength: text.length,
       tz,
       status: parsed.status,
       generationId: parsed.generationId,
       method: parsed.method,
       epoch: parsed.epoch,
       confidence: parsed.confidence,
-      debug: parsed.debug,
-      validation: parsed.validation,
-      ambiguity: parsed.ambiguity,
-      clarificationQuestion: parsed.clarificationQuestion,
+      route: parsed.debug?.referenceRouting,
+      timing: {
+        deterministicDurationMs: parsed.debug?.deterministicDurationMs,
+        agentDurationMs: parsed.debug?.agentDurationMs,
+        firstCandidateMs: parsed.debug?.firstCandidateMs,
+        finalResponseMs: parsed.debug?.finalResponseMs,
+        totalDurationMs: parsed.debug?.totalDurationMs,
+      },
+      model: parsed.debug?.model,
+      modelCalls: parsed.debug?.modelCalls,
+      inputTokens: parsed.debug?.inputTokens,
+      outputTokens: parsed.debug?.outputTokens,
+      estimatedCostUsd: parsed.debug?.estimatedCostUsd,
+      validationPassed: parsed.validation.passed,
+      validationChecks: parsed.validation.checks,
+      clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
     }, 'parse result');
 
     // If all parsing failed
@@ -430,11 +528,31 @@ server.post<{ Body: ParseRequest }>('/parse', {
     };
 
   } catch (error) {
+    if (controller.signal.aborted || error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {
+      request.log.info({
+        requestId,
+        status: 'cancelled',
+        durationMs: Math.round(performance.now() - startedAt),
+      }, 'parse cancelled');
+      if (!reply.raw.destroyed) {
+        return reply.status(499).send({
+          error: 'cancelled',
+          message: 'The parse request was cancelled.',
+        });
+      }
+      return reply;
+    }
     console.error('Parse endpoint error:', error);
     return reply.status(500).send({
       error: 'Internal server error',
       message: 'An unexpected error occurred while parsing the time expression'
     });
+  } finally {
+    if (activeParseRequests.get(requestId) === controller) {
+      activeParseRequests.delete(requestId);
+    }
+    request.raw.removeListener('aborted', abortOnDisconnect);
+    reply.raw.removeListener('close', abortOnPrematureClose);
   }
 });
 
@@ -510,6 +628,54 @@ server.post<{ Body: ParseOutcomeRequest }>('/parse/outcome', {
   return { ok: true };
 });
 
+server.post<{ Body: ClientRouteTelemetryRequest }>('/parse/client-route', {
+  schema: {
+    body: clientRouteTelemetrySchema,
+    response: {
+      200: parseOutcomeResponseSchema,
+      400: errorResponseSchema,
+    },
+  },
+}, async (request) => {
+  const body = request.body;
+  db.logGeneration({
+    generationId: body.generationId,
+    surface: 'desktop',
+    flowVersion: 'temporal-cascade-v1',
+    requestTimeZone: body.timeZone,
+    referenceInstant: new Date().toISOString(),
+    inputTextHash: hashInputText(`client-route:${body.generationId}`),
+    inputTextRetained: false,
+    finalStatus: body.finalStatus,
+    finalMethod: body.finalMethod,
+    ...(body.finalEpoch === undefined ? {} : { finalEpoch: body.finalEpoch }),
+    candidateCount: body.finalStatus === 'resolved' ? 1 : 0,
+    clarificationAlternativeCount: 0,
+    totalDurationMs: Math.round(body.totalDurationMs),
+    firstCorrectDurationMs: Math.round(body.totalDurationMs),
+    classifierVersion: body.classifierVersion,
+    route: body.route,
+    routeReason: body.reason,
+    referenceCount: body.referenceCount,
+    malformedCount: body.malformedCount,
+    contextClass: body.contextClass,
+    inputLengthBucket: body.inputLengthBucket,
+    shadow: body.shadow,
+    legacyFirstMatchWouldResolve: body.legacyFirstMatchWouldResolve,
+    legacyFirstMatchWouldDiffer: body.legacyFirstMatchWouldDiffer,
+    modelCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    estimatedCostUsd: 0,
+    costEstimateConfigured: true,
+    validationPassed: body.finalStatus === 'resolved',
+    fallbackReason: body.finalStatus === 'resolved'
+      ? 'client_deterministic_complete_consumption'
+      : body.reason,
+  });
+  return { ok: true };
+});
+
 function isValidIsoInstant(value: string): boolean {
   if (!isoInstantPattern.test(value)) {
     return false;
@@ -540,6 +706,12 @@ function userFacingParseErrorMessage(parsed: Awaited<ReturnType<typeof parseTemp
 }
 
 function genericParseFailureMessage(text: string, internalMessage: string): string {
+  if (/timed?\s*out|timeout/i.test(internalMessage)) {
+    return 'The semantic time parser timed out before it could return a safe answer. Try again with a shorter phrase.';
+  }
+  if (/endpoint returned|fetch failed|connection|unavailable/i.test(internalMessage)) {
+    return 'The semantic time parser is unavailable right now. No timestamp was returned.';
+  }
   if (/am\/pm|meridiem|bare time-like|compact time|bare number|bare 1-12 clock|unresolved time signal/i.test(`${text} ${internalMessage}`)) {
     return 'I could not confidently turn that into a timestamp. Check the date and include AM or PM if needed.';
   }
@@ -615,6 +787,19 @@ function logTemporalGeneration(text: string, timeZone: string, referenceInstant:
   }
 
   const errorClass = generationErrorClass(parsed);
+  const referenceRouting = parsed.debug?.referenceRouting;
+  const planOperations = parsed.debug?.trace
+    ?.filter((step) => step.type === 'tool')
+    .map((step) => step.name)
+    .join(',');
+  const firstCorrectDurationMs = parsed.debug?.firstCandidateMs ?? parsed.debug?.totalDurationMs;
+  const classification = classifyDiscordTimestampInput(text);
+  const legacyFirstMatchWouldResolve = classification.references.length > 0;
+  const legacyFirstMatchWouldDiffer = legacyFirstMatchWouldResolve && (
+    parsed.status !== 'resolved'
+    || parsed.kind === 'time_range'
+    || parsed.epoch !== classification.references[0]?.epochSeconds
+  );
 
   db.logGeneration({
     generationId: parsed.generationId,
@@ -630,12 +815,34 @@ function logTemporalGeneration(text: string, timeZone: string, referenceInstant:
     ...(parsed.debug?.candidateCount === undefined ? {} : { candidateCount: parsed.debug.candidateCount }),
     clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
     ...(parsed.debug?.totalDurationMs === undefined ? {} : { totalDurationMs: parsed.debug.totalDurationMs }),
+    ...(firstCorrectDurationMs === undefined ? {} : { firstCorrectDurationMs }),
     ...(errorClass === undefined ? {} : { errorClass }),
+    ...(referenceRouting === undefined ? {} : {
+      classifierVersion: referenceRouting.classifierVersion,
+      route: referenceRouting.route,
+      routeReason: referenceRouting.reason,
+      referenceCount: referenceRouting.referenceCount,
+      malformedCount: referenceRouting.malformedCount,
+      contextClass: referenceRouting.contextClass,
+      inputLengthBucket: referenceRouting.inputLengthBucket,
+      shadow: referenceRouting.shadow,
+      legacyFirstMatchWouldResolve,
+      legacyFirstMatchWouldDiffer,
+    }),
+    ...(parsed.debug?.model === undefined ? {} : { modelName: parsed.debug.model }),
+    ...(planOperations === undefined || planOperations.length === 0 ? {} : { planOperations }),
+    modelCalls: parsed.debug?.modelCalls ?? 0,
+    inputTokens: parsed.debug?.inputTokens ?? 0,
+    outputTokens: parsed.debug?.outputTokens ?? 0,
+    ...(parsed.debug?.estimatedCostUsd === undefined ? {} : { estimatedCostUsd: parsed.debug.estimatedCostUsd }),
+    costEstimateConfigured: parsed.debug?.costEstimateConfigured ?? true,
+    validationPassed: parsed.validation.passed,
+    ...(parsed.debug?.shortCircuitReason === undefined ? {} : { fallbackReason: parsed.debug.shortCircuitReason }),
   });
 }
 
 function hashInputText(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
+  return `${config.telemetryHmacKeyId}:${createHmac('sha256', config.telemetryHmacKey).update(text, 'utf8').digest('hex')}`;
 }
 
 function fileMtimeIso(filePath: string | undefined): string | undefined {
@@ -688,10 +895,12 @@ function generationErrorClass(parsed: TemporalParseResponse): string | undefined
  */
 server.get('/stats', async (_request, reply) => {
   const stats = db.getUsageStats();
+  const referenceRouting = db.getReferenceRoutingStats();
   const recentUsage = db.getRecentUsage(5);
   
   reply.send({
     usage: stats,
+    referenceRouting,
     recent: recentUsage.map(record => ({
       text: record.text,
       tz: record.tz,
@@ -774,7 +983,7 @@ const start = async () => {
     console.log('Configuration:', config.getSanitizedConfig());
     
     // Initialize database with config path
-    getDatabase(config.dbPath);
+    getDatabase(config.dbPath, config.telemetryRetentionDays);
     
     await server.listen({
       host: '0.0.0.0',

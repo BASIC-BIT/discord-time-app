@@ -4,6 +4,8 @@ export const PLAN_WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'fri
 export type PlanWeekday = typeof PLAN_WEEKDAYS[number];
 export const TEMPORAL_PLAN_MAX_PLANS = 10;
 export const TEMPORAL_PLAN_MAX_STEPS = 12;
+export const PLAN_PRESENTATION_FORMATS = ['d', 'D', 't', 'T', 'f', 'F', 'R'] as const;
+export type PlanPresentationFormat = typeof PLAN_PRESENTATION_FORMATS[number];
 
 export const PLAN_WEEKDAY_INDEX: Record<PlanWeekday, number> = {
   monday: 1,
@@ -77,6 +79,7 @@ export const TemporalPlanStepSchema = z.object({
 
 export const TemporalPlanSchema = z.object({
   kind: z.enum(['instant', 'time_range']).optional(),
+  presentationFormat: z.enum(PLAN_PRESENTATION_FORMATS).nullable().optional(),
   label: z.string(),
   rationale: z.string(),
   assumptions: z.array(z.string()),
@@ -136,6 +139,7 @@ export const CompactTemporalPlanStepSchema = z.object({
 
 export const CompactTemporalPlanSchema = z.object({
   kind: z.enum(['instant', 'time_range']).optional(),
+  format: z.enum(PLAN_PRESENTATION_FORMATS).optional(),
   label: z.string(),
   rationale: z.string().optional(),
   assumptions: z.array(z.string()).optional(),
@@ -175,6 +179,7 @@ export function expandCompactTemporalPlanPlannerOutput(input: unknown): Temporal
     clarificationQuestion: compact.clarificationQuestion ?? null,
     plans: compact.plans.map((plan) => ({
       kind: plan.kind,
+      presentationFormat: plan.format ?? null,
       label: plan.label,
       rationale: plan.rationale ?? plan.label,
       assumptions: plan.assumptions ?? [],

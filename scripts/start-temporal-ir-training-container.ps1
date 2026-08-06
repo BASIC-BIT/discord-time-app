@@ -8,10 +8,17 @@ param(
     [string]$BaseModel = "Qwen/Qwen3.5-0.8B",
 
     [Parameter(ParameterSetName = "Start")]
+    [ValidateSet("none", "minimal", "detailed")]
     [string]$InstructionPreset = "minimal",
 
     [Parameter(ParameterSetName = "Start")]
-    [string]$Dataset = "",
+    [string]$Dataset = "api/reports/temporal-ml/temporal-ir-seeds.jsonl",
+
+    [Parameter(ParameterSetName = "Start")]
+    [int]$Seed = 3407,
+
+    [Parameter(ParameterSetName = "Start")]
+    [string]$ExpectedDatasetSha256 = "",
 
     [Parameter(ParameterSetName = "Start")]
     [double]$Epochs = 0,
@@ -59,8 +66,13 @@ Assert-NoSingleQuote "BaseModel" $BaseModel
 Assert-NoSingleQuote "InstructionPreset" $InstructionPreset
 Assert-NoSingleQuote "Dataset" $Dataset
 Assert-NoSingleQuote "PromptFormat" $PromptFormat
+Assert-NoSingleQuote "ExpectedDatasetSha256" $ExpectedDatasetSha256
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
+$datasetPath = Join-Path $repoRoot $Dataset
+if (-not (Test-Path -LiteralPath $datasetPath -PathType Leaf)) {
+    throw "Temporal IR dataset not found: $datasetPath"
+}
 $reportDir = Join-Path $repoRoot "api\reports\temporal-ml"
 if (-not (Test-Path -LiteralPath $reportDir)) {
     New-Item -ItemType Directory -Path $reportDir | Out-Null
@@ -106,14 +118,16 @@ $envArgs = @(
     "TEMPORAL_IR_OUTPUT_DIR=ml/temporal-ir/outputs/$AdapterName",
     "TEMPORAL_IR_INSTRUCTION_PRESET=$InstructionPreset",
     "TEMPORAL_IR_PROMPT_FORMAT=$PromptFormat",
+    "TEMPORAL_IR_SEED=$Seed",
     "PYTHONIOENCODING=utf-8",
     "TERM=dumb",
     "NO_COLOR=1",
     "TQDM_DISABLE=1",
     "HF_HUB_DISABLE_PROGRESS_BARS=1"
 )
-if ($Dataset.Trim().Length -gt 0) {
-    $envArgs += "TEMPORAL_IR_DATASET=$Dataset"
+$envArgs += "TEMPORAL_IR_DATASET=$Dataset"
+if ($ExpectedDatasetSha256.Trim().Length -gt 0) {
+    $envArgs += "TEMPORAL_IR_EXPECTED_DATASET_SHA256=$ExpectedDatasetSha256"
 }
 if ($Epochs -gt 0) {
     $envArgs += "TEMPORAL_IR_EPOCHS=$Epochs"
@@ -151,5 +165,8 @@ $dockerArgs += $envFlags
 $dockerArgs += @($Image, "bash", "-lc", "python -u ml/temporal-ir/train_unsloth.py 2>&1 | tee 'api/reports/temporal-ml/container-train-$slug.log'")
 
 docker @dockerArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker failed to start Temporal IR training container $containerName."
+}
 "Container: $containerName"
 "Log: $logPath"

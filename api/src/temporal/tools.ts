@@ -108,6 +108,7 @@ export interface ValidateCandidateInput {
   originalText: string;
   candidate: Candidate;
   calendarContext: CalendarContext;
+  explicitClockTransformExecuted?: boolean;
 }
 
 export interface ValidateCandidateOutput {

@@ -1,7 +1,7 @@
 import { createDeterministicTemporalToolImplementations } from './tools';
 import { parseCalendarContext } from './deterministic';
 import { runTemporalCoalescingGraph, type TemporalGraphOptions } from './graph';
-import type { TemporalFeatureFlags, TemporalParseResponse, TemporalPlanIrEndpointConfig } from './types';
+import type { TemporalFeatureFlags, TemporalModelCostConfig, TemporalParseResponse, TemporalPlanIrEndpointConfig } from './types';
 
 export async function parseTemporalExpression(params: {
   text: string;
@@ -13,6 +13,9 @@ export async function parseTemporalExpression(params: {
   referenceInstant?: string;
   features?: TemporalFeatureFlags;
   planIrEndpoint?: TemporalPlanIrEndpointConfig;
+  modelCost?: TemporalModelCostConfig;
+  requestId?: string;
+  signal?: AbortSignal;
 }): Promise<TemporalParseResponse> {
   const implementations = createDeterministicTemporalToolImplementations();
   const options: TemporalGraphOptions = params.openaiApiKey === undefined
@@ -23,6 +26,15 @@ export async function parseTemporalExpression(params: {
   }
   if (params.planIrEndpoint !== undefined) {
     options.planIrEndpoint = params.planIrEndpoint;
+  }
+  if (params.modelCost !== undefined) {
+    options.modelCost = params.modelCost;
+  }
+  if (params.requestId !== undefined) {
+    options.requestId = params.requestId;
+  }
+  if (params.signal !== undefined) {
+    options.signal = params.signal;
   }
   if (params.openaiModel !== undefined && 'openaiApiKey' in options) {
     options.openaiModel = params.openaiModel;

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { Temporal } from '@js-temporal/polyfill';
 import { parseTemporalExpression } from '../src/temporal';
 import { collectTemporalAgentContext, parseCalendarContext } from '../src/temporal/deterministic';
+import { executeTemporalPlanPlannerOutput, formatEndpointInputJson } from '../src/temporal/graph';
+import { parseTemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
 
 const referenceInstant = '2026-05-15T16:00:00Z'; // Friday noon in America/New_York.
@@ -11,9 +14,128 @@ async function parse(text: string) {
   return parseTemporalExpression({ text, timeZone, referenceInstant });
 }
 
+async function executeModelReferenceShift(
+  text: string,
+  reference: string,
+  delta: Record<string, number>,
+) {
+  const plan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Test fixture representing a model-interpreted Discord reference transformation.',
+    clarificationQuestion: null,
+    plans: [{
+      label: 'Model-interpreted Discord reference shift',
+      rationale: 'Resolve the explicit anchor and apply the semantic transformation.',
+      assumptions: [],
+      confidence: 1,
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: reference, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta, precision: 'datetime' },
+      ],
+    }],
+  });
+  return executeTemporalPlanPlannerOutput(
+    plan,
+    { text, calendarContext },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'model-plan-fixture',
+    },
+  );
+}
+
+async function executeModelReferenceClockComposition(
+  text: string,
+  reference: string,
+  clock: string,
+) {
+  const plan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Test fixture representing a model-composed Discord timestamp date and explicit clock.',
+    clarificationQuestion: null,
+    plans: [{
+      format: 'f',
+      label: 'Discord timestamp date with requested clock',
+      rationale: 'Resolve the explicit timestamp as the date anchor, then replace its local clock.',
+      assumptions: [],
+      confidence: 1,
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: reference, precision: 'date' },
+        { op: 'resolve_clock_time', text: clock },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  return executeTemporalPlanPlannerOutput(
+    plan,
+    { text, calendarContext },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'model-plan-fixture',
+    },
+  );
+}
+
 async function main() {
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
+  const referencePromptInput = JSON.parse(formatEndpointInputJson({
+    text: '<t:1785643200:t> 1 hour later',
+    referenceInstant,
+    timeZone,
+  })) as { discordTimestampRouting?: { route?: string; references?: unknown[] } };
+  assert.equal(referencePromptInput.discordTimestampRouting?.route, 'model');
+  assert.equal(referencePromptInput.discordTimestampRouting?.references?.length, 1);
+  const composedReferenceClock = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> day at 12 pm',
+    '<t:1785643200:t>',
+    '12 pm',
+  );
+  assert.equal(composedReferenceClock.status, 'resolved');
+  assert.equal(composedReferenceClock.epoch, 1785686400);
+  assert.equal(composedReferenceClock.method, 'agent+plan');
+  assert.equal(composedReferenceClock.suggestedFormatIndex, 4);
+  const noOpMidnightClockComposition = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> that day at midnight',
+    '<t:1785643200:t>',
+    'midnight',
+  );
+  assert.equal(noOpMidnightClockComposition.status, 'resolved');
+  assert.equal(noOpMidnightClockComposition.epoch, 1785643200);
+  assert.equal(noOpMidnightClockComposition.suggestedFormatIndex, 4);
+  assert.throws(
+    () => parseTemporalPlanPlannerOutput({
+      outcome: 'plans',
+      plans: [{ format: 'not-a-discord-format', label: 'Invalid format', finalStep: 0, steps: [{ op: 'resolve_calendar_query', query: 'tomorrow' }] }],
+    }),
+    /Invalid option/,
+  );
+
+  const selfReferentialPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Invalid model plan fixture.',
+    clarificationQuestion: null,
+    plans: [{
+      label: 'Self-referential plan',
+      confidence: 1,
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'now', baseStep: 0 },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 1 } },
+      ],
+    }],
+  });
+  const selfReferentialResult = await executeTemporalPlanPlannerOutput(
+    selfReferentialPlan,
+    { text: '1 day from now', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(selfReferentialResult.status, 'failed');
+  assert.match(JSON.stringify(selfReferentialResult), /cyclic step dependency/);
 
   const bareSaturday = await parse('Saturday');
   assert.equal(bareSaturday.status, 'resolved');
@@ -62,6 +184,213 @@ async function main() {
   const explicitDiscord = await parse('<t:1776221807:f>');
   assert.equal(explicitDiscord.status, 'resolved');
   assert.equal(explicitDiscord.epoch, 1776221807);
+  assert.equal(explicitDiscord.suggestedFormatIndex, 4);
+  assert.equal(explicitDiscord.debug?.referenceRouting?.route, 'direct_instant');
+
+  const explicitDiscordWithoutStyle = await parse('<t:0>');
+  assert.equal(explicitDiscordWithoutStyle.status, 'resolved');
+  assert.equal(explicitDiscordWithoutStyle.epoch, 0);
+  assert.equal(explicitDiscordWithoutStyle.suggestedFormatIndex, 4);
+
+  const shiftedDiscordSuffix = await parse('<t:1785643200:t> 1 hour later');
+  assert.equal(shiftedDiscordSuffix.status, 'failed');
+  assert.equal(shiftedDiscordSuffix.epoch, undefined);
+  assert.equal(shiftedDiscordSuffix.debug?.referenceRouting?.route, 'model');
+
+  const shiftedDiscordSuffixEarlier = await parse('<t:1785643200:t> 1 day earlier');
+  assert.equal(shiftedDiscordSuffixEarlier.status, 'failed');
+  assert.equal(shiftedDiscordSuffixEarlier.epoch, undefined);
+  assert.equal(shiftedDiscordSuffixEarlier.debug?.referenceRouting?.route, 'model');
+
+  const shiftedDiscordPrefix = await parse('1 hour after <t:1785643200:t>');
+  assert.equal(shiftedDiscordPrefix.status, 'failed');
+  assert.equal(shiftedDiscordPrefix.debug?.referenceRouting?.route, 'model');
+
+  const shiftedDiscordInfix = await parse('one hour earlier than <t:1785643200:t>');
+  assert.equal(shiftedDiscordInfix.status, 'failed');
+  assert.equal(shiftedDiscordInfix.debug?.referenceRouting?.route, 'model');
+
+  const promotedDateOnlyStyle = await parse('<t:1785643200:D> 1 hour later');
+  assert.equal(promotedDateOnlyStyle.status, 'failed');
+  assert.equal(promotedDateOnlyStyle.debug?.referenceRouting?.route, 'model');
+
+  const modelInterpretedShift = await executeModelReferenceShift(
+    '<t:1785643200:t> 1 hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(modelInterpretedShift.status, 'resolved');
+  assert.equal(modelInterpretedShift.epoch, 1785646800);
+  assert.equal(modelInterpretedShift.method, 'agent+plan');
+
+  const unanchoredModelShiftPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Intentionally invalid model plan that shifts relative to now instead of the explicit reference.',
+    clarificationQuestion: null,
+    plans: [{
+      label: 'Unanchored relative shift',
+      rationale: 'Smoke validation backstop.',
+      assumptions: [],
+      confidence: 1,
+      finalStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '1 hour later', precision: 'relative' },
+      ],
+    }],
+  });
+  const unanchoredModelShift = await executeTemporalPlanPlannerOutput(
+    unanchoredModelShiftPlan,
+    {
+      text: '<t:1785643200:t> 1 hour later',
+      calendarContext,
+    },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'invalid-unanchored-reference-smoke',
+    },
+  );
+  assert.equal(unanchoredModelShift.status, 'failed');
+  assert.equal(unanchoredModelShift.epoch, undefined);
+
+  const copiedTimestampProse = await parse('The event starts at <t:1785643200:t>; bring a friend and use the north entrance.');
+  assert.equal(copiedTimestampProse.status, 'resolved');
+  assert.equal(copiedTimestampProse.epoch, 1785643200);
+  assert.equal(copiedTimestampProse.debug?.referenceRouting?.route, 'copied_prose');
+
+  const negatedTimestamp = await parse("Don't use <t:1785643200:t>; that time is wrong.");
+  assert.equal(negatedTimestamp.status, 'needs_clarification');
+  assert.equal(negatedTimestamp.epoch, undefined);
+
+  const unrelatedTimestamps = await parse('<t:1785643200:t> and <t:1785646800:t>');
+  assert.equal(unrelatedTimestamps.status, 'needs_clarification');
+  assert.equal(unrelatedTimestamps.epoch, undefined);
+
+  const transformedTimestampRange = await parse('<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later');
+  assert.equal(transformedTimestampRange.status, 'failed');
+  assert.equal(transformedTimestampRange.range, undefined);
+  assert.equal(transformedTimestampRange.debug?.referenceRouting?.route, 'model');
+
+  const ignoredRangeModifierPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Intentionally invalid smoke candidate that ignores the range modifier.',
+    clarificationQuestion: null,
+    plans: [{
+      kind: 'time_range',
+      label: 'Ignored range modifier',
+      rationale: 'Smoke validation backstop.',
+      assumptions: [],
+      confidence: 1,
+      finalStep: null,
+      startStep: 0,
+      endStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785646800:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  const ignoredRangeModifier = await executeTemporalPlanPlannerOutput(
+    ignoredRangeModifierPlan,
+    {
+      text: '<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later',
+      calendarContext,
+    },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'invalid-range-smoke',
+    },
+  );
+  assert.equal(ignoredRangeModifier.status, 'failed');
+  assert.equal(ignoredRangeModifier.range, undefined);
+
+  const malformedTimestamp = await parse('<t:1785643200:x>');
+  assert.equal(malformedTimestamp.status, 'failed');
+  assert.equal(malformedTimestamp.epoch, undefined);
+
+  const reversedTimestampRange = await parse('<t:1785646800:t> to <t:1785643200:t>');
+  assert.equal(reversedTimestampRange.status, 'needs_clarification');
+  assert.equal(reversedTimestampRange.range, undefined);
+
+  const fuzzyReferenceWithoutModel = await parse('<t:1785643200:t> roughly an hour later');
+  assert.equal(fuzzyReferenceWithoutModel.status, 'failed');
+  assert.equal(fuzzyReferenceWithoutModel.epoch, undefined);
+  assert.equal(fuzzyReferenceWithoutModel.debug?.referenceRouting?.route, 'model');
+
+  const unavailableReferenceModel = await parseTemporalExpression({
+    text: '<t:1785643200:t> roughly an hour later',
+    timeZone,
+    referenceInstant,
+    features: { planIr: true, discordReferenceRouting: true },
+    planIrEndpoint: {
+      baseUrl: 'http://127.0.0.1:1',
+      model: 'unavailable-test-model',
+      instructionPreset: 'minimal',
+      api: 'completions',
+      promptFormat: 'custom',
+      maxTokens: 64,
+      timeoutMs: 100,
+    },
+  });
+  assert.equal(unavailableReferenceModel.status, 'failed');
+  assert.equal(unavailableReferenceModel.epoch, undefined);
+  assert.equal(unavailableReferenceModel.debug?.referenceRouting?.route, 'model');
+
+  const fallBackBase = Temporal.ZonedDateTime.from('2026-11-01T01:30:00-04:00[America/New_York]');
+  const fallBackEpoch = Math.floor(Number(fallBackBase.epochMilliseconds) / 1000);
+  const fallBackHourShift = await executeModelReferenceShift(
+    `<t:${fallBackEpoch}:t> 1 hour later`,
+    `<t:${fallBackEpoch}:t>`,
+    { hours: 1 },
+  );
+  assert.equal(fallBackHourShift.epoch, fallBackEpoch + 3600);
+  assert.match(fallBackHourShift.canonical?.zonedDateTime ?? '', /2026-11-01T01:30:00-05:00/);
+
+  const fallBackDayShift = await executeModelReferenceShift(
+    `<t:${fallBackEpoch}:t> 1 day later`,
+    `<t:${fallBackEpoch}:t>`,
+    { days: 1 },
+  );
+  assert.equal(
+    fallBackDayShift.epoch,
+    Math.floor(Number(fallBackBase.add({ days: 1 }).epochMilliseconds) / 1000),
+  );
+  assert.match(fallBackDayShift.canonical?.zonedDateTime ?? '', /2026-11-02T01:30:00-05:00/);
+
+  const springForwardBase = Temporal.ZonedDateTime.from('2026-03-08T01:30:00-05:00[America/New_York]');
+  const springForwardEpoch = Math.floor(Number(springForwardBase.epochMilliseconds) / 1000);
+  const springForwardHourShift = await executeModelReferenceShift(
+    `<t:${springForwardEpoch}:t> 1 hour later`,
+    `<t:${springForwardEpoch}:t>`,
+    { hours: 1 },
+  );
+  assert.equal(springForwardHourShift.epoch, springForwardEpoch + 3600);
+  assert.match(springForwardHourShift.canonical?.zonedDateTime ?? '', /2026-03-08T03:30:00-04:00/);
+
+  const springForwardDayShift = await executeModelReferenceShift(
+    `<t:${springForwardEpoch}:t> 1 day later`,
+    `<t:${springForwardEpoch}:t>`,
+    { days: 1 },
+  );
+  assert.equal(
+    springForwardDayShift.epoch,
+    Math.floor(Number(springForwardBase.add({ days: 1 }).epochMilliseconds) / 1000),
+  );
+  assert.match(springForwardDayShift.canonical?.zonedDateTime ?? '', /2026-03-09T01:30:00-04:00/);
+
+  const monthEndBase = Temporal.ZonedDateTime.from('2027-01-31T12:00:00-05:00[America/New_York]');
+  const monthEndEpoch = Math.floor(Number(monthEndBase.epochMilliseconds) / 1000);
+  const monthEndShift = await executeModelReferenceShift(
+    `<t:${monthEndEpoch}:f> 1 month later`,
+    `<t:${monthEndEpoch}:f>`,
+    { months: 1 },
+  );
+  assert.equal(
+    monthEndShift.epoch,
+    Math.floor(Number(monthEndBase.add({ months: 1 }).epochMilliseconds) / 1000),
+  );
+  assert.match(monthEndShift.canonical?.zonedDateTime ?? '', /2027-02-28T12:00:00-05:00/);
 
   const explicitIsoInstant = await parse('2026-05-17T10:00:00Z');
   assert.equal(explicitIsoInstant.status, 'resolved');
@@ -105,6 +434,9 @@ async function main() {
   const bareTwentyFourHour = await parse('19');
   assert.equal(bareTwentyFourHour.status, 'resolved');
   assert.equal(bareTwentyFourHour.epoch, 1778886000);
+
+  const negativeEpoch = await parse('-1');
+  assert.equal(negativeEpoch.status, 'failed');
 
   const bareTwentyFourHourRollover = await parseTemporalExpression({
     text: '19',
@@ -197,6 +529,17 @@ async function main() {
   assert.match(deterministicEaster.generationId ?? '', /^tp_[0-9a-f-]+$/);
 
   const tools = createDeterministicTemporalToolImplementations();
+  const bareAnchor = await tools.resolveCalendarQuery({ query: '<t:1785643200:t>', calendarContext });
+  const ignoredResidueValidation = await tools.validateCandidate({
+    originalText: 'Use <t:1785643200:t> adjusted for the launch delay',
+    candidate: bareAnchor.candidates[0]!,
+    calendarContext,
+  });
+  assert.equal(ignoredResidueValidation.passed, false);
+  assert.equal(
+    ignoredResidueValidation.errors.some((error) => error.includes('bare Discord timestamp anchor')),
+    true,
+  );
   const agentContext = collectTemporalAgentContext({ text: 'easter 2026 noon', calendarContext });
   assert.equal(agentContext.reference.localDate, '2026-05-15');
   assert.equal(agentContext.holidays[0]?.name, 'Easter Sunday');

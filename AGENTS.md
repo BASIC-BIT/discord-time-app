@@ -12,7 +12,7 @@ Promotion note: chat-level product targets promoted to repo `AGENTS.md`; current
 
 ## Local Temporal SLM Deployment
 
-- Use `scripts/start-temporal-peft-server.ps1` as the canonical local deployment command. It serves the current local adapter at `http://127.0.0.1:8765/v1`, prewarms by default, and uses the Docker bf16/chat Qwen3.5 path; do not use port `8000` for the local Temporal SLM because other local Python/FastAPI tools can occupy it.
+- Use `scripts/start-temporal-peft-server.ps1` as the canonical local deployment command. It serves the current local adapter at `http://127.0.0.1:8770/v1`, prewarms by default, and uses the Docker bf16/chat Qwen3.5 path. Port `8765` is occupied by the local VRChat MCP service on the primary development machine; do not use port `8000` because other local Python/FastAPI tools can occupy it.
 - Keep `api/.env` aligned with `docs/temporal-local-model-deployment.md` when changing the deployed adapter or endpoint port.
 - Do not open, merge, or release desktop/runtime features that depend on installed-app behavior until they have been smoke-tested in the installed MSI app path, not only in dev or CI. Local SLM runtime changes must verify the Settings UI can find or clearly require the launcher/runtime path from an installed build before PR/release.
 

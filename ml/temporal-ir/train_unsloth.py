@@ -9,6 +9,7 @@ under ml/temporal-ir/outputs by default.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -53,6 +54,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("TEMPORAL_IR_BATCH_SIZE", "2")))
     parser.add_argument("--grad-accum", type=int, default=int(os.environ.get("TEMPORAL_IR_GRAD_ACCUM", "4")))
     parser.add_argument("--learning-rate", type=float, default=float(os.environ.get("TEMPORAL_IR_LR", "2e-4")))
+    parser.add_argument("--seed", type=int, default=int(os.environ.get("TEMPORAL_IR_SEED", "3407")))
+    parser.add_argument("--expected-dataset-sha256", default=os.environ.get("TEMPORAL_IR_EXPECTED_DATASET_SHA256", ""))
     parser.add_argument("--limit", type=int, default=int(os.environ.get("TEMPORAL_IR_TRAIN_LIMIT", "0")))
     parser.add_argument(
         "--prompt-format",
@@ -76,6 +79,13 @@ def main() -> None:
     )
     parser.add_argument("--wandb-project", default=os.environ.get("WANDB_PROJECT", ""))
     args = parser.parse_args()
+
+    dataset_sha256 = sha256_file(args.dataset)
+    if args.expected_dataset_sha256 and dataset_sha256.lower() != args.expected_dataset_sha256.lower():
+        raise ValueError(
+            f"Dataset SHA-256 mismatch for {args.dataset}: expected "
+            f"{args.expected_dataset_sha256.lower()}, got {dataset_sha256.lower()}"
+        )
 
     rows = load_rows(args.dataset)
     if args.limit > 0:
@@ -105,7 +115,7 @@ def main() -> None:
         lora_dropout=0,
         bias="none",
         use_gradient_checkpointing="unsloth",
-        random_state=3407,
+        random_state=args.seed,
     )
 
     report_to = ["wandb"] if args.wandb_project else []
@@ -126,7 +136,7 @@ def main() -> None:
         eval_steps=10,
         save_strategy="epoch",
         report_to=report_to,
-        seed=3407,
+        seed=args.seed,
     )
     trainer = SFTTrainer(
         model=model,
@@ -138,7 +148,7 @@ def main() -> None:
     trainer.train()
     trainer.save_model(str(args.output))
     tokenizer.save_pretrained(str(args.output))
-    write_run_summary(args.output, args, rows)
+    write_run_summary(args.output, args, rows, dataset_sha256)
     print(f"Saved Temporal IR adapter and tokenizer to {args.output}")
 
 
@@ -200,6 +210,14 @@ def is_truthy(value: str) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_dataset(rows: list[dict[str, Any]], tokenizer: Any, instruction_preset: str, prompt_format: str) -> "DatasetDict":
     from datasets import Dataset, DatasetDict
 
@@ -219,7 +237,7 @@ def build_dataset(rows: list[dict[str, Any]], tokenizer: Any, instruction_preset
     return DatasetDict(datasets)
 
 
-def write_run_summary(output_dir: Path, args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
+def write_run_summary(output_dir: Path, args: argparse.Namespace, rows: list[dict[str, Any]], dataset_sha256: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     for row in rows:
@@ -228,12 +246,16 @@ def write_run_summary(output_dir: Path, args: argparse.Namespace, rows: list[dic
     summary = {
         "model": args.model,
         "dataset": str(args.dataset),
+        "datasetSha256": dataset_sha256,
         "rows": len(rows),
         "splits": counts,
         "epochs": args.epochs,
         "batchSize": args.batch_size,
         "gradientAccumulation": args.grad_accum,
         "learningRate": args.learning_rate,
+        "seed": args.seed,
+        "maxSequenceLength": args.max_seq_length,
+        "trainLimit": args.limit,
         "instructionPreset": args.instruction_preset,
         "instruction": instruction_for_preset(args.instruction_preset),
         "promptFormat": args.prompt_format,

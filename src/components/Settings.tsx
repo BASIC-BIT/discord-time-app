@@ -9,6 +9,8 @@ interface AppSettings {
   auto_load_clipboard: boolean;
   use_llm_parsing: boolean;
   deterministic_preflight: boolean;
+  discord_reference_routing: boolean;
+  discord_reference_shadow: boolean;
   theme: string; // "dark", "light", "system"
   local_slm_enabled: boolean;
   local_slm_auto_start: boolean;
@@ -48,14 +50,16 @@ const defaultSettings: AppSettings = {
   auto_load_clipboard: true,
   use_llm_parsing: true,
   deterministic_preflight: false,
+  discord_reference_routing: true,
+  discord_reference_shadow: false,
   theme: "dark",
   local_slm_enabled: false,
   local_slm_auto_start: false,
   local_slm_prewarm: true,
-  local_slm_endpoint_base_url: "http://127.0.0.1:8765/v1",
-  local_slm_model: "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687",
+  local_slm_endpoint_base_url: "http://127.0.0.1:8770/v1",
+  local_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11",
   local_slm_launcher_path: "",
-  local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora",
+  local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora",
   local_slm_docker_image: "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8",
   local_slm_startup_timeout_seconds: 360,
 };
@@ -372,6 +376,23 @@ export function Settings({ onClose }: SettingsProps) {
                 onChange={(e) => handleSettingChange('deterministic_preflight', e.target.checked)}
               />
               <span>Run deterministic preflight before AI parsing</span>
+            </label>
+            <label className="setting-item">
+              <input
+                type="checkbox"
+                checked={settings.discord_reference_routing}
+                onChange={(e) => handleSettingChange('discord_reference_routing', e.target.checked)}
+              />
+              <span>Use safe Discord timestamp reference routing</span>
+            </label>
+            <label className="setting-item">
+              <input
+                type="checkbox"
+                checked={settings.discord_reference_shadow}
+                disabled={!settings.discord_reference_routing}
+                onChange={(e) => handleSettingChange('discord_reference_shadow', e.target.checked)}
+              />
+              <span>Record legacy-versus-safe routing comparisons</span>
             </label>
           </div>
 
