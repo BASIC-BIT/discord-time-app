@@ -150,6 +150,7 @@ type EvalResult = {
   instructionPreset?: string;
   error?: string;
   mismatch?: string;
+  clarificationAlternativeCount?: number;
   metrics?: {
     agentAttempts?: number;
     toolPasses?: number;
@@ -1807,6 +1808,7 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       clientReferenceRouteReason: routeCheck?.clientReason,
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
+      clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
       metrics: metricsFromResponse(parsed, evalCase, durationMs),
     };
   } catch (error) {
@@ -2601,7 +2603,10 @@ async function buildEvaluationBoundary(
     result.runner === 'routed_endpoint'
     && !result.required
     && !result.passed
-    && result.status === 'resolved',
+    && (
+      result.status === 'resolved'
+      || (result.status === 'needs_clarification' && (result.clarificationAlternativeCount ?? 0) > 0)
+    ),
   );
   const gateA = boundaryGate(
     'A',
@@ -2657,7 +2662,7 @@ async function buildEvaluationBoundary(
   }
   if (unsafeRoutedDiagnostics.length > 0) {
     blockers.push(
-      `Diagnostic safety gate found ${unsafeRoutedDiagnostics.length} incorrectly resolved optional case(s): ${unsafeRoutedDiagnostics.map((result) => result.caseId).join(', ')}.`,
+      `Diagnostic safety gate found ${unsafeRoutedDiagnostics.length} optional case(s) exposing incorrect selectable timestamp(s): ${unsafeRoutedDiagnostics.map((result) => result.caseId).join(', ')}.`,
     );
   }
 
@@ -2806,7 +2811,9 @@ async function compareEvaluationBoundaryBaseline(
     result.runner === 'routed_endpoint' && result.required,
   );
   const currentCaseById = new Map(temporalEvalCases.map((evalCase) => [evalCase.id, evalCase]));
-  const removedRequiredCases = allBaselineResults.filter((result) => !currentCaseById.has(result.caseId));
+  const removedRequiredCases = allBaselineResults.filter((result) =>
+    !(currentCaseById.get(result.caseId)?.required ?? false),
+  );
   const baselineResults = allBaselineResults.filter((result) =>
     currentCaseById.has(result.caseId)
     && (currentCaseById.get(result.caseId)?.required ?? true),

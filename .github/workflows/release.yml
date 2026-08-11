@@ -234,7 +234,7 @@ jobs:
           - Discord timestamps now participate in semantic time arithmetic instead of silently discarding meaningful surrounding language.
           - Ambiguous clock composition can return selectable AM/PM alternatives in the overlay.
           - Superseded parse requests are cancelled through the desktop and backend path to avoid wasted local-model work.
-          - The promoted Qwen3.5-0.8B V19 Temporal Plan-IR adapter adds broader timestamp, shift, clock-order, typo, and clarification coverage.
+          - The promoted Qwen3.5-0.8B V22 Temporal Plan-IR adapter adds broader timestamp, shift, clock-order, typo, clarification, range-format, and infix coverage.
 
           ### Installation
           1. Download the MSI installer below.

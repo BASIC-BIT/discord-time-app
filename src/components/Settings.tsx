@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 interface AppSettings {
+  settings_schema_version: number;
   auto_start: boolean;
   global_hotkey: string;
   auto_close_on_focus_loss: boolean;
@@ -44,6 +45,7 @@ interface LocalSlmStatus {
 }
 
 const defaultSettings: AppSettings = {
+  settings_schema_version: 1,
   auto_start: false,
   global_hotkey: "ctrl+shift+h",
   auto_close_on_focus_loss: false,

@@ -58,6 +58,7 @@ const LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8765/v1";
 const LOCAL_SLM_LEGACY_ADAPTER_PATH: &str =
     "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-time-range-2687-lora";
 const LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS: u64 = 360;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
 const LOCAL_SLM_RUNTIME_DIR: &str = "local-slm-runtime";
 const LOCAL_SLM_DEFAULT_DOCKER_IMAGE: &str =
     "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8";
@@ -165,6 +166,8 @@ impl Drop for TimeParserServiceState {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub settings_schema_version: u32,
     pub auto_start: bool,
     pub global_hotkey: String,
     pub auto_close_on_focus_loss: bool,
@@ -188,6 +191,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            settings_schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
             auto_start: false,
             global_hotkey: "ctrl+shift+h".to_string(),
             auto_close_on_focus_loss: false,
@@ -1798,6 +1802,9 @@ async fn parse_time_with_local_service(
 }
 
 fn migrate_local_slm_defaults(settings: &mut AppSettings) {
+    if settings.settings_schema_version >= CURRENT_SETTINGS_SCHEMA_VERSION {
+        return;
+    }
     if settings.local_slm_endpoint_base_url.trim() == LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL {
         settings.local_slm_endpoint_base_url = LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string();
     }
@@ -1817,6 +1824,7 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
     {
         settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
     }
+    settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
 }
 
 #[cfg(test)]
@@ -1826,6 +1834,7 @@ mod local_slm_default_migration_tests {
     #[test]
     fn migrates_the_previous_packaged_adapter_defaults() {
         let mut settings = AppSettings {
+            settings_schema_version: 0,
             local_slm_endpoint_base_url: LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL.to_string(),
             local_slm_model: LOCAL_SLM_LEGACY_MODEL.to_string(),
             local_slm_adapter_path: LOCAL_SLM_LEGACY_ADAPTER_PATH.to_string(),
@@ -1848,6 +1857,7 @@ mod local_slm_default_migration_tests {
     #[test]
     fn migrates_the_v19_packaged_adapter_defaults() {
         let mut settings = AppSettings {
+            settings_schema_version: 0,
             local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
             local_slm_model: LOCAL_SLM_PREVIOUS_MODEL.to_string(),
             local_slm_adapter_path: LOCAL_SLM_PREVIOUS_ADAPTER_PATH.to_string(),
@@ -1868,8 +1878,24 @@ mod local_slm_default_migration_tests {
     }
 
     #[test]
+    fn missing_schema_version_marks_persisted_settings_for_migration() {
+        let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "local_slm_endpoint_base_url": LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL,
+            "local_slm_model": LOCAL_SLM_PREVIOUS_MODEL,
+            "local_slm_adapter_path": LOCAL_SLM_PREVIOUS_ADAPTER_PATH
+        }))
+        .expect("legacy settings should deserialize");
+
+        assert_eq!(settings.settings_schema_version, 0);
+        migrate_local_slm_defaults(&mut settings);
+        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
+    }
+
+    #[test]
     fn migrates_the_v11_packaged_adapter_defaults() {
         let mut settings = AppSettings {
+            settings_schema_version: 0,
             local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
             local_slm_model: LOCAL_SLM_V11_MODEL.to_string(),
             local_slm_adapter_path: LOCAL_SLM_V11_ADAPTER_PATH.to_string(),
@@ -1888,6 +1914,7 @@ mod local_slm_default_migration_tests {
     #[test]
     fn migrates_the_v9_packaged_adapter_defaults() {
         let mut settings = AppSettings {
+            settings_schema_version: 0,
             local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
             local_slm_model: LOCAL_SLM_V9_MODEL.to_string(),
             local_slm_adapter_path: LOCAL_SLM_V9_ADAPTER_PATH.to_string(),
@@ -1920,6 +1947,22 @@ mod local_slm_default_migration_tests {
             "http://127.0.0.1:9999/v1"
         );
         assert_eq!(settings.local_slm_adapter_path, "custom/adapter");
+    }
+
+    #[test]
+    fn preserves_explicit_v19_rollback_after_migration() {
+        let mut settings = AppSettings {
+            settings_schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
+            local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
+            local_slm_model: LOCAL_SLM_PREVIOUS_MODEL.to_string(),
+            local_slm_adapter_path: LOCAL_SLM_PREVIOUS_ADAPTER_PATH.to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings);
+
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_PREVIOUS_MODEL);
+        assert_eq!(settings.local_slm_adapter_path, LOCAL_SLM_PREVIOUS_ADAPTER_PATH);
     }
 }
 
