@@ -1231,6 +1231,17 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     expectedRouteReason: 'semantic_residue_requires_model',
   },
   {
+    id: 'discord-reference-following-day-after-clock',
+    text: 'at 5 use the following day after <t:1785643200:t>',
+    category: 'discord-reference-model-routing',
+    expected: {
+      status: 'needs_clarification',
+      alternativeEpochs: [1785747600, 1785790800],
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
     id: 'discord-reference-exact-range',
     text: '<t:1785643200:t> to <t:1785646800:F>',
     category: 'discord-reference-routing',

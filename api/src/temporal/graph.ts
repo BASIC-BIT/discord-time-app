@@ -3715,7 +3715,7 @@ function canUseForClarification(enriched: EnrichedCandidate): boolean {
   const warnings = enriched.validation?.warnings ?? [];
   return enriched.candidate.precision === 'datetime'
     && warnings.length > 0
-    && warnings.every((warning) => /trailing bare number|unresolved time signal/i.test(warning));
+    && warnings.every((warning) => /trailing bare number|unresolved time signal|bare 1-12 clock/i.test(warning));
 }
 
 function canUseForPlanClarification(enriched: EnrichedCandidate): boolean {
@@ -4852,6 +4852,8 @@ function discordReferenceClockSemanticsError(
       ) {
         return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
       }
+    } else if (requestedKeys.size > 1) {
+      return 'Model range plan clock ownership could not be validated safely for each endpoint.';
     }
   }
   return undefined;
@@ -4984,7 +4986,7 @@ function expectedDiscordReferenceShift(
   if (matchedShift && consumedRanges.length === 0) {
     unconsumedResidue = unconsumedResidue
       .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
-      .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
+      .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
   }
   const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b/iu.test(unconsumedResidue);
   return unconsumedShiftHint ? undefined : result;

@@ -66,7 +66,7 @@ If any of those fail, keep the PR as draft and do not tag a release.
 2026-08-11 V22 model boundary and package preparation:
 
 - Full routed boundary passed `197/197` required cases and `159/159` required model-owned cases; routed median was `1165ms` and p95 was `3111ms`. The transformed-range case is required and passed.
-- That promotion run predates the later Plan-IR safety validators. The latest exact-head boundary, including ordered endpoint binding and the three reinforced range phrasings, passed `200/200` required routed cases and `161/161` required model-owned cases with routed median `1520ms` and p95 `3350ms`; this is the current code-bound result.
+- That promotion run predates the later Plan-IR safety validators. The latest exact-head boundary, including ordered endpoint binding, reinforced range/shift phrasings, and clock-ownership guards, passed `201/201` required routed cases and `162/162` required model-owned cases. Consecutive full samples exposed endpoint variance: the first was correctness-clean but missed the latency gate at p95 `6802ms`; the confirmation passed with routed median `1540ms` and p95 `3931ms`.
 - Focused range/format/infix regression gate passed `5/5` on both routed and direct lanes; the held-out infix case additionally passed `5/5` repeated calls in each lane.
 - V20 and V21 were rejected before promotion: V20 had three source-format regressions; V21 had one infix-duration regression. No deterministic interpretation or format override was added.
 - The V22 adapter ZIP was rebuilt twice with normalized entry metadata and matched byte-for-byte: `145915997` bytes, SHA-256 `fcd12698c93736cfa1a62ec49e93e1c50919a45c42548beb8322f51a1d3a84ce`.

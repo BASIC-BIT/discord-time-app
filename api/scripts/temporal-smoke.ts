@@ -757,6 +757,54 @@ async function main() {
   assert.equal(rejectedWrongRangeClockEndpoint.range, undefined);
   assert.match(rejectedWrongRangeClockEndpoint.validation.warnings.join(' '), /clock.*end endpoint only/);
 
+  const swappedAdjacentRangeClocks = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Swapped clocks adjacent to each range reference',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_calendar_query', query: '<t:1785650400:t>', precision: 'date' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 15, minute: 0 }, precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 1, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedSwappedAdjacentRangeClocks = await executeTemporalPlanPlannerOutput(
+    swappedAdjacentRangeClocks,
+    { text: 'from <t:1785643200:t> at 2 pm to <t:1785650400:t> at 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSwappedAdjacentRangeClocks.status, 'failed');
+  assert.equal(rejectedSwappedAdjacentRangeClocks.range, undefined);
+  assert.match(rejectedSwappedAdjacentRangeClocks.validation.warnings.join(' '), /clock ownership.*each endpoint/);
+
+  const followingDayAfterClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 5 AM or 5 PM?',
+    plans: [{
+      label: 'Following day with a bare clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '5 AM', text: '5 am' },
+          { label: '5 PM', text: '5 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedFollowingDayAfter = await executeTemporalPlanPlannerOutput(
+    followingDayAfterClarification,
+    { text: 'at 5 use the following day after <t:1785643200:t>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedFollowingDayAfter.status, 'needs_clarification');
+  assert.equal(acceptedFollowingDayAfter.clarificationAlternatives?.length, 2);
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
