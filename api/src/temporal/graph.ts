@@ -4655,6 +4655,23 @@ function discordReferencePlanError(
       if (unusedReferences.length > 0) {
         return `Model plan final output did not derive from required Discord timestamp reference operand(s): ${unusedReferences.join(', ')}.`;
       }
+      if (plan.kind === 'time_range' && terminalDependencies.length === 2 && classification.references.length === 2) {
+        const [startReference, endReference] = classification.references;
+        if (startReference!.raw !== endReference!.raw) {
+          const startReferenceIndexes = referenceStepIndexes.get(startReference!.raw)!;
+          const endReferenceIndexes = referenceStepIndexes.get(endReference!.raw)!;
+          const startDependencies = terminalDependencies[0]!;
+          const endDependencies = terminalDependencies[1]!;
+          if (
+            !startReferenceIndexes.some((index) => startDependencies.has(index))
+            || endReferenceIndexes.some((index) => startDependencies.has(index))
+            || !endReferenceIndexes.some((index) => endDependencies.has(index))
+            || startReferenceIndexes.some((index) => endDependencies.has(index))
+          ) {
+            return 'Model range plan did not preserve the requested Discord-reference endpoint order.';
+          }
+        }
+      }
       const semanticsError = discordReferencePlanSemanticsError(
         plan,
         terminalDependencies,
@@ -4778,7 +4795,7 @@ function discordReferenceRangeShiftTargetError(
   if (plan.kind !== 'time_range' || terminalDependencies.length !== 2 || shiftSteps.length === 0) {
     return undefined;
   }
-  const target = /\b(?:move|shift|extend|shorten)\s+(?:the\s+)?(start|end)\b/iu.exec(originalText)?.[1]?.toLowerCase();
+  const target = requestedDiscordRangeEndpoint(originalText);
   if (target === undefined) {
     return 'Model range plan used a shift whose target endpoint could not be validated safely.';
   }
@@ -4841,7 +4858,14 @@ function discordReferenceClockSemanticsError(
 }
 
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
-  return /\b(?:move|shift|extend|shorten|set|change)\s+(?:the\s+)?(start|end)\b/iu.exec(text)?.[1]?.toLowerCase() as 'start' | 'end' | undefined;
+  const targets = new Set<'start' | 'end'>();
+  for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start|end)\b/giu)) {
+    targets.add(match[1]!.toLowerCase() as 'start' | 'end');
+  }
+  for (const match of text.matchAll(/\b(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b/giu)) {
+    targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+  }
+  return targets.size === 1 ? [...targets][0] : undefined;
 }
 
 function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {

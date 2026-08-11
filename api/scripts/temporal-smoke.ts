@@ -670,6 +670,29 @@ async function main() {
   assert.equal(rejectedWrongRangeEndpoint.range, undefined);
   assert.match(rejectedWrongRangeEndpoint.validation.warnings.join(' '), /end endpoint only/);
 
+  const swappedRangeReferences = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Swapped source references while shifting the end',
+      startStep: 1,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785646800:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: 3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedSwappedRangeReferences = await executeTemporalPlanPlannerOutput(
+    swappedRangeReferences,
+    { text: '<t:1785643200:t> to <t:1785646800:t>, move the end three hours later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSwappedRangeReferences.status, 'failed');
+  assert.equal(rejectedSwappedRangeReferences.range, undefined);
+  assert.match(rejectedSwappedRangeReferences.validation.warnings.join(' '), /endpoint order/);
+
   const unrequestedClockOnShift = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

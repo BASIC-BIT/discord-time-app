@@ -1195,6 +1195,42 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     expectedRouteReason: 'semantic_residue_requires_model',
   },
   {
+    id: 'discord-reference-range-pull-end',
+    text: '<t:1785646800:t> to <t:1785650400:t>, but pull the end 45 minutes earlier',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785646800, endEpoch: 1785647700 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-range-push-start',
+    text: '<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785646800, endEpoch: 1785650400 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-range-ending-point-moved',
+    text: '<t:1785646800:t> through <t:1785650400:t>, with the ending point moved 30 minutes later',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785646800, endEpoch: 1785652200 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
     id: 'discord-reference-exact-range',
     text: '<t:1785643200:t> to <t:1785646800:F>',
     category: 'discord-reference-routing',
