@@ -4651,6 +4651,15 @@ function discordReferencePlanError(plans: TemporalPlan[], originalText: string):
       if (unusedReferences.length > 0) {
         return `Model plan final output did not derive from required Discord timestamp reference operand(s): ${unusedReferences.join(', ')}.`;
       }
+      const clockChoiceSemanticsError = discordReferenceClockChoiceSemanticsError(
+        plan,
+        terminalDependencies,
+        originalText,
+        classification.references.map((reference) => reference.raw),
+      );
+      if (clockChoiceSemanticsError !== undefined) {
+        return clockChoiceSemanticsError;
+      }
     }
   }
   return undefined;
@@ -4667,7 +4676,7 @@ function temporalPlanStepDependencies(plan: TemporalPlan, stepIndex: number): Se
       return;
     }
     dependencies.add(index);
-    for (const dependency of [planStep.baseStep, planStep.timeStep, planStep.timeZoneStep]) {
+    for (const dependency of temporalPlanStepConsumedDependencies(planStep)) {
       if (dependency !== null) {
         visit(dependency);
       }
@@ -4675,6 +4684,114 @@ function temporalPlanStepDependencies(plan: TemporalPlan, stepIndex: number): Se
   };
   visit(stepIndex);
   return dependencies;
+}
+
+function temporalPlanStepConsumedDependencies(step: TemporalPlanStep): Array<number | null> {
+  switch (step.operation) {
+    case 'resolve_calendar_query':
+    case 'resolve_weekday_anchor':
+    case 'resolve_holiday':
+    case 'propose_candidate':
+      return [step.timeZoneStep];
+    case 'shift_datetime':
+    case 'set_clock_time':
+    case 'combine_date_time':
+      return [step.baseStep, step.time === null ? step.timeStep : null, step.timeZoneStep];
+    case 'resolve_timezone':
+    case 'resolve_clock_time':
+    case 'interpret_clock_phrase':
+      return [];
+  }
+}
+
+const DISCORD_SHIFT_DELTA_KEYS = ['years', 'months', 'weeks', 'days', 'hours', 'minutes'] as const;
+type DiscordShiftDeltaKey = typeof DISCORD_SHIFT_DELTA_KEYS[number];
+
+function discordReferenceClockChoiceSemanticsError(
+  plan: TemporalPlan,
+  terminalDependencies: Set<number>[],
+  originalText: string,
+  references: string[],
+): string | undefined {
+  if (!plan.steps.some((step) => step.operation === 'resolve_clock_time' && step.options !== null)) {
+    return undefined;
+  }
+  const expectedDelta = expectedDiscordReferenceShift(originalText, references);
+  if (expectedDelta === undefined) {
+    return 'Model clock clarification used surrounding shift language that could not be validated safely.';
+  }
+
+  const terminalIndexes = new Set(terminalDependencies.flatMap((dependencies) => [...dependencies]));
+  const actualDelta = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+  for (const [index, step] of plan.steps.entries()) {
+    if (terminalIndexes.has(index) && step.operation === 'shift_datetime') {
+      for (const key of DISCORD_SHIFT_DELTA_KEYS) {
+        actualDelta[key] += step.delta[key] ?? 0;
+      }
+    }
+  }
+  const mismatch = DISCORD_SHIFT_DELTA_KEYS.some((key) => actualDelta[key] !== expectedDelta[key]);
+  return mismatch
+    ? 'Model clock clarification shift did not match the requested Discord-reference transformation.'
+    : undefined;
+}
+
+function expectedDiscordReferenceShift(
+  originalText: string,
+  references: string[],
+): Record<DiscordShiftDeltaKey, number> | undefined {
+  let residue = originalText.toLowerCase();
+  for (const reference of references) {
+    residue = residue.replace(reference.toLowerCase(), ' ');
+  }
+  const result = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+  const amountUnitDirection = /\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu;
+  let matchedShift = false;
+  for (const match of residue.matchAll(amountUnitDirection)) {
+    const amount = discordShiftAmount(match[1]!);
+    const key = discordShiftDeltaKey(match[2]!);
+    const direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(match[3]!) ? 1 : -1;
+    result[key] += direction * amount;
+    matchedShift = true;
+  }
+
+  if (!matchedShift) {
+    if (/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue)) {
+      result.days = -1;
+      matchedShift = true;
+    } else if (/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue)) {
+      result.days = 1;
+      matchedShift = true;
+    }
+  }
+
+  const shiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b/iu.test(residue);
+  return shiftHint && !matchedShift ? undefined : result;
+}
+
+function discordShiftAmount(value: string): number {
+  switch (value.toLowerCase()) {
+    case 'a':
+    case 'an':
+    case 'one':
+      return 1;
+    case 'two':
+      return 2;
+    case 'three':
+      return 3;
+    default:
+      return Number(value);
+  }
+}
+
+function discordShiftDeltaKey(value: string): DiscordShiftDeltaKey {
+  const normalized = value.toLowerCase();
+  if (normalized.startsWith('min')) return 'minutes';
+  if (normalized.startsWith('hr') || normalized.startsWith('hour')) return 'hours';
+  if (normalized.startsWith('day')) return 'days';
+  if (normalized.startsWith('week')) return 'weeks';
+  if (normalized.startsWith('month')) return 'months';
+  return 'years';
 }
 
 function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {

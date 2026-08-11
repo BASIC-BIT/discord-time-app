@@ -470,6 +470,61 @@ async function main() {
     /final output did not derive from an explicit Discord timestamp reference operand/,
   );
 
+  const unusedReferenceOnIgnoredOperand = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      label: 'Unrelated final date with reference attached to an ignored timezone operand',
+      finalStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_timezone', text: 'UTC', baseStep: 0 },
+        { op: 'resolve_calendar_query', query: 'tomorrow', timeZoneStep: 1, precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 am' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, timeZoneStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedIgnoredOperandReference = await executeTemporalPlanPlannerOutput(
+    unusedReferenceOnIgnoredOperand,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedIgnoredOperandReference.status, 'failed');
+  assert.equal(rejectedIgnoredOperandReference.clarificationAlternatives, undefined);
+  assert.match(
+    rejectedIgnoredOperandReference.validation.warnings.join(' '),
+    /final output did not derive from an explicit Discord timestamp reference operand/,
+  );
+
+  const wrongDiscordReferenceShift = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Wrong three-day shift for a one-day request',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongDiscordReferenceShift = await executeTemporalPlanPlannerOutput(
+    wrongDiscordReferenceShift,
+    { text: '<t:1785643200:t> 1 day earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongDiscordReferenceShift.status, 'failed');
+  assert.equal(rejectedWrongDiscordReferenceShift.clarificationAlternatives, undefined);
+  assert.match(
+    rejectedWrongDiscordReferenceShift.validation.warnings.join(' '),
+    /shift did not match the requested Discord-reference transformation/,
+  );
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
