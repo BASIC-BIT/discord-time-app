@@ -3793,8 +3793,21 @@ function discordReferenceCandidateIsGrounded(
     if (requestedClockKeys.size === 0) {
       return !requiresRequestedClock && candidate.epochMilliseconds === expected.epochMilliseconds;
     }
+    if (!requiresRequestedClock && requestedClockKeys.size !== 1) {
+      return false;
+    }
+    const candidateClock = { hour: candidate.hour, minute: candidate.minute };
+    const requestedWallClock = Temporal.ZonedDateTime.from({
+      timeZone,
+      year: candidate.year,
+      month: candidate.month,
+      day: candidate.day,
+      hour: candidateClock.hour,
+      minute: candidateClock.minute,
+    }, { disambiguation: 'reject' });
     return Temporal.PlainDate.compare(candidate.toPlainDate(), expected.toPlainDate()) === 0
-      && requestedClockKeys.has(clockKey({ hour: candidate.hour, minute: candidate.minute }))
+      && requestedClockKeys.has(clockKey(candidateClock))
+      && requestedWallClock.epochMilliseconds === candidate.epochMilliseconds
       && candidate.second === 0
       && candidate.millisecond === 0
       && candidate.microsecond === 0
@@ -4862,6 +4875,9 @@ function discordReferencePlanSemanticsError(
   references: string[],
   requestTimeZone: string,
 ): string | undefined {
+  if (references.some((reference) => discordReferenceHasUnsupportedCalendarTransform(originalText, reference))) {
+    return 'Model plan used a Discord-reference calendar transformation that could not be validated safely.';
+  }
   const expectedDelta = expectedDiscordReferenceShift(originalText, references);
   if (expectedDelta === undefined) {
     return 'Model plan used surrounding Discord-reference shift language that could not be validated safely.';
@@ -5103,6 +5119,13 @@ function expectedDiscordReferenceShift(
     if (match.index !== undefined) consumedRanges.push({ start: match.index, end: match.index + match[0].length });
   }
 
+  const yesterdayCount = [...residue.matchAll(/\byesterday\b/giu)].length;
+  const tomorrowCount = [...residue.matchAll(/\btomorrow\b/giu)].length;
+  if (yesterdayCount > 0 || tomorrowCount > 0) {
+    result.days += tomorrowCount - yesterdayCount;
+    matchedShift = true;
+  }
+
   if (amountUnitMatches.length !== matchedAmountUnitCount) {
     return undefined;
   }
@@ -5111,10 +5134,10 @@ function expectedDiscordReferenceShift(
   }
 
   if (!matchedShift) {
-    if (/\byesterday\b|\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue)) {
+    if (/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue)) {
       result.days = -1;
       matchedShift = true;
-    } else if (/\btomorrow\b|\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue)) {
+    } else if (/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue)) {
       result.days = 1;
       matchedShift = true;
     }
@@ -5124,9 +5147,9 @@ function expectedDiscordReferenceShift(
   for (const range of consumedRanges.sort((left, right) => right.start - left.start)) {
     unconsumedResidue = `${unconsumedResidue.slice(0, range.start)} ${unconsumedResidue.slice(range.end)}`;
   }
+  unconsumedResidue = unconsumedResidue.replace(/\b(?:yesterday|tomorrow)\b/giu, ' ');
   if (matchedShift && consumedRanges.length === 0) {
     unconsumedResidue = unconsumedResidue
-      .replace(/\b(?:yesterday|tomorrow)\b/giu, ' ')
       .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
       .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
   }

@@ -725,6 +725,37 @@ async function main() {
     { days: 1 },
   );
   assert.equal(tomorrowReferenceShift.status, 'resolved');
+  const underShiftedCompoundRelativeDay = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one day later',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(underShiftedCompoundRelativeDay.status, 'failed');
+  const compoundRelativeDay = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one day later',
+    '<t:1785643200:t>',
+    { days: 2 },
+  );
+  assert.equal(compoundRelativeDay.status, 'resolved');
+
+  const discardedDateMutation = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discarded the requested day-of-month mutation',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
+    discardedDateMutation,
+    { text: '<t:1785643200:t> set the day to 15 at 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedDiscardedDateMutation.status, 'failed');
+  assert.match(rejectedDiscardedDateMutation.validation.warnings.join(' '), /calendar transformation.*validated safely/);
 
   const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

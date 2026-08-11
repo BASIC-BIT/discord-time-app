@@ -2407,6 +2407,9 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
 
   if (evalCase.expected.status === 'resolved') {
     if (evalCase.expected.range !== undefined) {
+      if (parsed.kind !== 'time_range') {
+        return `expected time range kind, got ${parsed.kind ?? 'none'}`;
+      }
       const mismatch = rangeMismatch(evalCase.expected.range, parsed.range);
       if (mismatch !== undefined) {
         return mismatch;
@@ -2795,7 +2798,8 @@ function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: Eval
   if (parsed.status === 'resolved') {
     if (evalCase.expected.status !== 'resolved') return true;
     if (evalCase.expected.range !== undefined) {
-      return parsed.range === undefined
+      return parsed.kind !== 'time_range'
+        || parsed.range === undefined
         || parsed.range.start.epoch !== evalCase.expected.range.startEpoch
         || parsed.range.end.epoch !== evalCase.expected.range.endEpoch;
     }

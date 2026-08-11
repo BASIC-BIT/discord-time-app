@@ -106,8 +106,10 @@ def main() -> None:
     from trl import SFTTrainer, SFTConfig
 
     model_name = str(args.continue_adapter) if args.continue_adapter is not None else args.model
+    continue_adapter_weights_sha256 = None
     if args.continue_adapter is not None:
         validate_continuation_adapter(args.continue_adapter, args.model)
+        continue_adapter_weights_sha256 = sha256_file(args.continue_adapter / "adapter_model.safetensors")
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
@@ -163,7 +165,7 @@ def main() -> None:
     trainer.train()
     trainer.save_model(str(args.output))
     tokenizer.save_pretrained(str(args.output))
-    write_run_summary(args.output, args, rows, dataset_sha256)
+    write_run_summary(args.output, args, rows, dataset_sha256, continue_adapter_weights_sha256)
     print(f"Saved Temporal IR adapter and tokenizer to {args.output}")
 
 
@@ -267,7 +269,13 @@ def build_dataset(rows: list[dict[str, Any]], tokenizer: Any, instruction_preset
     return DatasetDict(datasets)
 
 
-def write_run_summary(output_dir: Path, args: argparse.Namespace, rows: list[dict[str, Any]], dataset_sha256: str) -> None:
+def write_run_summary(
+    output_dir: Path,
+    args: argparse.Namespace,
+    rows: list[dict[str, Any]],
+    dataset_sha256: str,
+    continue_adapter_weights_sha256: str | None,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     for row in rows:
@@ -276,7 +284,7 @@ def write_run_summary(output_dir: Path, args: argparse.Namespace, rows: list[dic
     summary = {
         "model": args.model,
         "continueAdapter": str(args.continue_adapter) if args.continue_adapter is not None else None,
-        "continueAdapterWeightsSha256": sha256_file(args.continue_adapter / "adapter_model.safetensors") if args.continue_adapter is not None else None,
+        "continueAdapterWeightsSha256": continue_adapter_weights_sha256,
         "dataset": str(args.dataset),
         "datasetSha256": dataset_sha256,
         "rows": len(rows),
