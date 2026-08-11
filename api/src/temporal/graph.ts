@@ -574,6 +574,7 @@ export async function executeTemporalPlanPlannerOutput(
   const startedAt = nowMs();
   const trace: TemporalAgentTraceStep[] = [];
   const method = options.method ?? 'agent+plan';
+  planResult = promoteBareClockPlanClarification(planResult, request.text);
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
 
   const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
@@ -609,16 +610,15 @@ export async function executeTemporalPlanPlannerOutput(
     graphOptions.features = options.features;
   }
 
-  const modelOwnedDiscordClarification = planResult.outcome === 'clarification'
-    && classifyDiscordTimestampInput(request.text).route === 'model';
-  if (!modelOwnedDiscordClarification) {
-    const ambiguityPolicyStartedAt = nowMs();
-    const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
-    if (ambiguityPolicyResult !== null) {
-      const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
-      attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
-      return response;
-    }
+  const ambiguityPolicyResponse = await runPlanIrAmbiguityPolicy(
+    planResult,
+    request,
+    options.implementations,
+    options.features,
+  );
+  if (ambiguityPolicyResponse !== null) {
+    attachPlanExecutionDebug(ambiguityPolicyResponse, startedAt, options.modelName, options.planningDurationMs);
+    return ambiguityPolicyResponse;
   }
 
   const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, graphOptions)));
@@ -1362,7 +1362,7 @@ async function runPlanIrPath(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     runName: 'temporal-plan-ir',
   });
-  const planResult = TemporalPlanPlannerSchema.parse({
+  const modelPlanResult = TemporalPlanPlannerSchema.parse({
     ...structuredPlanResult,
     plans: structuredPlanResult.plans.map((plan) => ({
       ...plan,
@@ -1385,10 +1385,20 @@ async function runPlanIrPath(
       totalMessageChars: system.length + human.length,
     },
     output: {
-      planResult: summarizeValue(planResult),
+      planResult: summarizeValue(modelPlanResult),
       usage: summarizeValue(rawMessage.usage_metadata ?? rawMessage.response_metadata),
     },
   });
+
+  const planResult = promoteBareClockPlanClarification(modelPlanResult, request.text);
+  if (planResult !== modelPlanResult) {
+    trace.push({
+      index: trace.length + 1,
+      type: 'router',
+      name: 'plan_ir_ambiguity_guard',
+      output: { outcome: planResult.outcome, clarificationQuestion: planResult.clarificationQuestion },
+    });
+  }
 
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
   const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
@@ -1401,6 +1411,17 @@ async function runPlanIrPath(
     const response = responseFromFailedPlanIr(planResult.reason, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
     attachPlanDebug(response);
     return response;
+  }
+
+  const ambiguityPolicyResponse = await runPlanIrAmbiguityPolicy(
+    planResult,
+    request,
+    options.implementations,
+    options.features,
+  );
+  if (ambiguityPolicyResponse !== null) {
+    attachPlanDebug(ambiguityPolicyResponse);
+    return ambiguityPolicyResponse;
   }
 
   const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, options)));
@@ -3190,6 +3211,81 @@ async function runAmbiguityPolicy(
     return multiClock;
   }
   return null;
+}
+
+async function runPlanIrAmbiguityPolicy(
+  planResult: TemporalPlanPlannerOutput,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
+): Promise<TemporalParseResponse | null> {
+  const modelOwnedDiscordClarification = planResult.outcome === 'clarification'
+    && classifyDiscordTimestampInput(request.text).route === 'model';
+  if (modelOwnedDiscordClarification) {
+    return null;
+  }
+
+  const ambiguityPolicyStartedAt = nowMs();
+  const ambiguityPolicyResult = await runAmbiguityPolicy(request, implementations, features);
+  if (ambiguityPolicyResult !== null) {
+    return responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
+  }
+  if (
+    classifyDiscordTimestampInput(request.text).route === 'model'
+    && ambiguousBareClockMentions(request.text).length > 0
+  ) {
+    return responseFromQuestionOnlyPlanClarification(
+      'Did you mean AM or PM?',
+      'The clock time needs an explicit meridiem.',
+      [],
+      'fallback',
+    );
+  }
+  return null;
+}
+
+function promoteBareClockPlanClarification(
+  planResult: TemporalPlanPlannerOutput,
+  text: string,
+): TemporalPlanPlannerOutput {
+  if (planResult.outcome !== 'plans' || classifyDiscordTimestampInput(text).route !== 'model') {
+    return planResult;
+  }
+
+  const mentions = ambiguousBareClockMentions(text);
+  if (mentions.length !== 1 || planResult.plans.length !== 1) {
+    return planResult;
+  }
+
+  const clockStepIndexes = planResult.plans[0]!.steps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.operation === 'resolve_clock_time' && step.options === null);
+  if (clockStepIndexes.length !== 1) {
+    return planResult;
+  }
+
+  const mention = mentions[0]!;
+  const clockStepIndex = clockStepIndexes[0]!.index;
+  const plans = planResult.plans.map((plan) => ({
+    ...plan,
+    steps: plan.steps.map((step, index) => index === clockStepIndex
+      ? {
+          ...step,
+          query: null,
+          text: null,
+          options: [
+            { label: formatBareMeridiemLabel(mention, 'am'), text: `${mention.replacementBase}am` },
+            { label: formatBareMeridiemLabel(mention, 'pm'), text: `${mention.replacementBase}pm` },
+          ],
+        }
+      : step),
+  }));
+  return {
+    ...planResult,
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean AM or PM?',
+    plans,
+  };
 }
 
 function responseFromAmbiguityPolicy(policy: AmbiguityPolicyResult, durationMs: number): TemporalParseResponse {

@@ -135,6 +135,17 @@ async function main() {
   assert.equal(composedReferenceClock.epoch, 1785686400);
   assert.equal(composedReferenceClock.method, 'agent+plan');
   assert.equal(composedReferenceClock.suggestedFormatIndex, 4);
+  const ambiguousComposedReferenceClock = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> day at 12',
+    '<t:1785643200:t>',
+    '12 pm',
+  );
+  assert.equal(ambiguousComposedReferenceClock.status, 'needs_clarification');
+  assert.deepEqual(
+    ambiguousComposedReferenceClock.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['12 AM', '12 PM'],
+  );
+  assert.equal(ambiguousComposedReferenceClock.validation.checks.includes('plan_ir_clarification'), true);
   const noOpMidnightClockComposition = await executeModelReferenceClockComposition(
     '<t:1785643200:t> that day at midnight',
     '<t:1785643200:t>',
