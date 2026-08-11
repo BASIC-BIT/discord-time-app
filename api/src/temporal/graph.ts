@@ -3727,12 +3727,11 @@ function discordReferenceClarificationCandidateIsGrounded(
   originalText: string,
   timeZone: string,
 ): boolean {
-  const warnings = enriched.validation?.warnings ?? [];
-  if (!warnings.some((warning) => /bare 1-12 clock/i.test(warning))) {
+  const classification = classifyDiscordTimestampInput(originalText);
+  if (classification.route !== 'model') {
     return true;
   }
-  const classification = classifyDiscordTimestampInput(originalText);
-  if (classification.route !== 'model' || classification.references.length !== 1) {
+  if (classification.references.length !== 1) {
     return false;
   }
   const reference = classification.references[0]!;
