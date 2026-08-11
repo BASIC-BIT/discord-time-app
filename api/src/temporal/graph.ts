@@ -4634,17 +4634,47 @@ function discordReferencePlanError(plans: TemporalPlan[], originalText: string):
 
     if (classification.meaningfulResidue) {
       const allReferenceIndexes = new Set([...referenceStepIndexes.values()].flat());
-      const derivesFromReference = plan.steps.some((step) => (
-        step.operation !== 'resolve_calendar_query'
-        && step.baseStep !== null
-        && allReferenceIndexes.has(step.baseStep)
-      ));
-      if (!derivesFromReference) {
-        return 'Model plan did not derive the requested transformation from an explicit Discord timestamp reference operand.';
+      const terminalIndexes = plan.kind === 'time_range'
+        ? [plan.startStep, plan.endStep].filter((index): index is number => index !== null)
+        : [plan.finalStep ?? plan.steps.length - 1];
+      const terminalDependencies = terminalIndexes.map((index) => temporalPlanStepDependencies(plan, index));
+      if (
+        terminalDependencies.length === 0
+        || terminalDependencies.some((dependencies) => ![...dependencies].some((index) => allReferenceIndexes.has(index)))
+      ) {
+        return 'Model plan final output did not derive from an explicit Discord timestamp reference operand.';
+      }
+      const usedReferenceIndexes = new Set(terminalDependencies.flatMap((dependencies) => [...dependencies]));
+      const unusedReferences = [...referenceStepIndexes.entries()]
+        .filter(([, indexes]) => !indexes.some((index) => usedReferenceIndexes.has(index)))
+        .map(([raw]) => raw);
+      if (unusedReferences.length > 0) {
+        return `Model plan final output did not derive from required Discord timestamp reference operand(s): ${unusedReferences.join(', ')}.`;
       }
     }
   }
   return undefined;
+}
+
+function temporalPlanStepDependencies(plan: TemporalPlan, stepIndex: number): Set<number> {
+  const dependencies = new Set<number>();
+  const visit = (index: number): void => {
+    if (dependencies.has(index)) {
+      return;
+    }
+    const planStep = plan.steps[index];
+    if (planStep === undefined) {
+      return;
+    }
+    dependencies.add(index);
+    for (const dependency of [planStep.baseStep, planStep.timeStep, planStep.timeZoneStep]) {
+      if (dependency !== null) {
+        visit(dependency);
+      }
+    }
+  };
+  visit(stepIndex);
+  return dependencies;
 }
 
 function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {

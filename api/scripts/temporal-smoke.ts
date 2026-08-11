@@ -443,6 +443,33 @@ async function main() {
   assert.equal(groundedTwoPlanClockChoice.clarificationQuestion, 'Did you mean AM or PM?');
   assert.equal(groundedTwoPlanClockChoice.clarificationAlternatives, undefined);
 
+  const unusedDiscordReferenceBranch = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      label: 'Unrelated final date with an unused Discord-reference branch',
+      finalStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 1 }, precision: 'date' },
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 am' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnusedDiscordReferenceBranch = await executeTemporalPlanPlannerOutput(
+    unusedDiscordReferenceBranch,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnusedDiscordReferenceBranch.status, 'failed');
+  assert.equal(rejectedUnusedDiscordReferenceBranch.clarificationAlternatives, undefined);
+  assert.match(
+    rejectedUnusedDiscordReferenceBranch.validation.warnings.join(' '),
+    /final output did not derive from an explicit Discord timestamp reference operand/,
+  );
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
