@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyDiscordTimestampInput } from '@hammer-overlay/discord-timestamp-routing';
 import { PLAN_MONTH_NAMES, TemporalPlanPlannerSchema, type PlanPresentationFormat, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from '../src/temporal/plan-ir';
+import { temporalEvalCases } from './temporal-model-eval';
 
 type Split = 'train' | 'validation' | 'holdout';
 
@@ -27,7 +28,21 @@ const timeZone = process.env['TEMPORAL_IR_SYNTHETIC_TZ'] ?? 'America/New_York';
 const randomRowCount = parseNonNegativeInt(process.env['TEMPORAL_IR_SYNTHETIC_RANDOM_COUNT']) ?? 2400;
 
 async function main() {
-  const rows = buildRows().map(validateRow);
+  const requiredEvalTexts = new Set(temporalEvalCases
+    .filter((evalCase) => evalCase.required ?? true)
+    .map((evalCase) => normalizedTrainingText(evalCase.text)));
+  const rows = buildRows()
+    .map((trainingRow) => requiredEvalTexts.has(normalizedTrainingText(trainingRow.input.text))
+      ? { ...trainingRow, split: 'holdout' as const, tags: [...new Set([...trainingRow.tags, 'required-eval-holdout'])] }
+      : trainingRow)
+    .map(validateRow);
+  const leakedRequiredEvalRows = rows.filter((trainingRow) =>
+    trainingRow.split !== 'holdout'
+    && requiredEvalTexts.has(normalizedTrainingText(trainingRow.input.text)),
+  );
+  if (leakedRequiredEvalRows.length > 0) {
+    throw new Error(`Required eval phrases leaked outside holdout: ${leakedRequiredEvalRows.map((trainingRow) => trainingRow.id).join(', ')}`);
+  }
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
 
@@ -459,6 +474,10 @@ function timeRangeReinforcementSeedRows(): TemporalIrTrainingRow[] {
     unsupportedRangeRow('range-reinforce-schedule-block-thru', 'Mon thru Thu 8:30am-10am', 'Repeated schedule blocks are not a single continuous timestamp range.', 'train'),
     unsupportedRangeRow('range-reinforce-schedule-block-validation', 'Saturday through Monday 1pm-4pm', 'Repeated schedule blocks are not a single continuous timestamp range.', 'validation'),
   ];
+}
+
+function normalizedTrainingText(text: string): string {
+  return text.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US');
 }
 
 function timeRangeRow(spec: {
@@ -1949,14 +1968,33 @@ function discordTimestampShiftClockAmbiguityReinforcementRows(): TemporalIrTrain
     '<t:1785733200:F> two days afetr at 11',
     '<t:1785643200:t> 1 day ltaer at 3',
     '<t:1785733200:F> one day afetr at 4:30',
+    '<t:1772951400:D> two days ebefore at 6',
+    '<t:1793511000:R> a day befoer at 9',
+    '<t:1785733200:F> 3 days eariler at 1:15',
+    '<t:1772951400:D> two days befor at 8',
+    '<t:1793511000:R> 3 days ealier at 10:30',
+    '<t:1785733200:F> two days ltaer at 5',
+    '<t:1772951400:D> 3 days afetr at 7:15',
+    '<t:1793511000:R> a day latre at 11',
+    '<t:1785733200:F> two days laetr at 6:30',
+    '<t:1772951400:D> 3 days ater at 9',
   ] as const;
   return variants.flatMap((text, index) => Array.from({ length: 2 }, (_, repetition) => {
     const clock = /\bat\s+(\d{1,2}(?::\d{2})?)\s*$/iu.exec(text)?.[1] ?? '2';
     return row({
       id: `discord-reference-shift-clock-ambiguity-reinforcement-${index + 1}-${repetition + 1}`,
       text,
-      split: index < 14 ? 'train' : 'validation',
-      tags: ['discord-reference', 'offset', 'clock-composition', 'bare-clock', 'ambiguity', 'relative-typo', 'reinforcement'],
+      split: index < 14 || index >= 16 ? 'train' : 'validation',
+      tags: [
+        'discord-reference',
+        'offset',
+        'clock-composition',
+        'bare-clock',
+        'ambiguity',
+        'relative-typo',
+        'reinforcement',
+        ...(index >= 16 ? ['critical-boundary', 'eval-sibling'] : []),
+      ],
       output: planner(
         'clarification',
         'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.',

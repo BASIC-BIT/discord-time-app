@@ -1413,6 +1413,13 @@ async function runPlanIrPath(
     return response;
   }
 
+  const referencePlanError = discordReferencePlanError(plans, request.text);
+  if (referencePlanError !== undefined) {
+    const response = responseFromFailedPlanIr(referencePlanError, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
+
   const ambiguityPolicyResponse = await runPlanIrAmbiguityPolicy(
     planResult,
     request,
