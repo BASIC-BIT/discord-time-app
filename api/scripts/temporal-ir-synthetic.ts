@@ -1814,8 +1814,26 @@ function discordClockClarificationPlan(anchor: string, clockText: string): Tempo
 }
 
 function typoRelativeDayShift(text: string): Partial<TemporalPlanStep['delta']> {
-  const magnitude = /\b(?:2|two)\s+days\b/iu.test(text) ? 2 : 1;
-  const direction = /\b(?:ltaer|afetr)\b/iu.test(text) ? 1 : -1;
+  const magnitudeMatch = /\b(\d+|a|one|two|three)\s+days?\b/iu.exec(text);
+  if (magnitudeMatch === null) {
+    throw new Error(`Unsupported relative-day magnitude in training row: ${text}`);
+  }
+  const magnitudeToken = magnitudeMatch[1]!.toLowerCase();
+  const magnitude = magnitudeToken === 'a' || magnitudeToken === 'one'
+    ? 1
+    : magnitudeToken === 'two'
+      ? 2
+      : magnitudeToken === 'three'
+        ? 3
+        : Number(magnitudeToken);
+  const direction = /\b(?:later|ltaer|afetr|latre|laetr|ater)\b/iu.test(text)
+    ? 1
+    : /\b(?:earlier|before|ebefore|befoer|eariler|befor|ealier)\b/iu.test(text)
+      ? -1
+      : undefined;
+  if (direction === undefined) {
+    throw new Error(`Unsupported relative-day direction in training row: ${text}`);
+  }
   return { days: direction * magnitude };
 }
 

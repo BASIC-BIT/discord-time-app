@@ -2812,9 +2812,10 @@ async function compareEvaluationBoundaryBaseline(
     result.runner === 'routed_endpoint' && result.required,
   );
   const currentCaseById = new Map(temporalEvalCases.map((evalCase) => [evalCase.id, evalCase]));
-  const removedRequiredCases = allBaselineResults.filter((result) =>
-    !(currentCaseById.get(result.caseId)?.required ?? false),
-  );
+  const removedRequiredCases = allBaselineResults.filter((result) => {
+    const currentCase = currentCaseById.get(result.caseId);
+    return currentCase === undefined || currentCase.required === false;
+  });
   const baselineResults = allBaselineResults.filter((result) =>
     currentCaseById.has(result.caseId)
     && (currentCaseById.get(result.caseId)?.required ?? true),

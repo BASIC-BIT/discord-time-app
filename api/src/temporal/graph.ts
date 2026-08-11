@@ -3231,9 +3231,7 @@ async function runPlanIrAmbiguityPolicy(
   implementations: TemporalToolImplementations,
   features?: TemporalFeatureFlags,
 ): Promise<TemporalParseResponse | null> {
-  const modelOwnedDiscordClarification = planResult.outcome === 'clarification'
-    && classifyDiscordTimestampInput(request.text).route === 'model';
-  if (modelOwnedDiscordClarification) {
+  if (hasGroundedBareClockChoice(planResult, request.text)) {
     return null;
   }
 
@@ -3254,6 +3252,37 @@ async function runPlanIrAmbiguityPolicy(
     );
   }
   return null;
+}
+
+function hasGroundedBareClockChoice(
+  planResult: TemporalPlanPlannerOutput,
+  text: string,
+): boolean {
+  if (
+    planResult.outcome !== 'clarification'
+    || classifyDiscordTimestampInput(text).route !== 'model'
+    || planResult.plans.length !== 1
+  ) {
+    return false;
+  }
+
+  const mentions = ambiguousBareClockMentions(text);
+  if (mentions.length !== 1) {
+    return false;
+  }
+
+  const clockSteps = planResult.plans[0]!.steps.filter((step) => step.operation === 'resolve_clock_time');
+  if (clockSteps.length !== 1 || clockSteps[0]!.options === null) {
+    return false;
+  }
+
+  const expectedTexts = new Set([
+    `${mentions[0]!.replacementBase}am`,
+    `${mentions[0]!.replacementBase}pm`,
+  ]);
+  const optionTexts = clockSteps[0]!.options.map((option) => option.text.toLowerCase().replace(/\s+/g, ''));
+  return optionTexts.length === expectedTexts.size
+    && optionTexts.every((optionText) => expectedTexts.has(optionText));
 }
 
 function groundBareClockPlanClarification(
