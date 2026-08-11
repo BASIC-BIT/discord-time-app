@@ -2446,6 +2446,9 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
       return `expected range alternatives ${expectedRanges.join(',')}, got ${actualRanges.join(',') || 'none'}`;
     }
   } else if (evalCase.expected.alternativeEpochs !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range !== undefined)) {
+      return 'expected singular alternatives, got one or more ranges';
+    }
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)
       .sort((a, b) => a - b);
@@ -2533,11 +2536,13 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
       return undefined;
     }
     if (evalCase.expected.range !== undefined) {
-      if (rangeMismatch(evalCase.expected.range, parsed.range) !== undefined) {
+      if (parsed.kind !== 'time_range' || rangeMismatch(evalCase.expected.range, parsed.range) !== undefined) {
         return undefined;
       }
-    } else if (parsed.epoch !== evalCase.expected.epoch) {
-      return undefined;
+    } else {
+      if (parsed.kind === 'time_range' || parsed.range !== undefined || parsed.epoch !== evalCase.expected.epoch) {
+        return undefined;
+      }
     }
     if (parsed.method === 'deterministic') {
       return parsed.debug?.deterministicDurationMs ?? durationMs;

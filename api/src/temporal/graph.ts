@@ -5170,7 +5170,7 @@ function expectedDiscordReferenceShift(
       .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
       .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
   }
-  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b|\blast\s+(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
+  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
   return unconsumedShiftHint ? undefined : result;
 }
 
