@@ -690,6 +690,50 @@ async function main() {
   assert.equal(rejectedUnrequestedClock.epoch, undefined);
   assert.match(rejectedUnrequestedClock.validation.warnings.join(' '), /clock change.*not requested/);
 
+  const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Correct day shift with compact unrequested clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '1p' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedCompactUnrequestedClock = await executeTemporalPlanPlannerOutput(
+    compactUnrequestedClock,
+    { text: '<t:1785643200:t> 1 day earlier', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedCompactUnrequestedClock.status, 'failed');
+  assert.equal(rejectedCompactUnrequestedClock.epoch, undefined);
+  assert.match(rejectedCompactUnrequestedClock.validation.warnings.join(' '), /clock operand.*validated safely/);
+
+  const wrongRangeClockEndpoint = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Moved the start clock instead of the requested end',
+      startStep: 2,
+      endStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785650400:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongRangeClockEndpoint = await executeTemporalPlanPlannerOutput(
+    wrongRangeClockEndpoint,
+    { text: '<t:1785643200:t> to <t:1785650400:t>, move the end to 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongRangeClockEndpoint.status, 'failed');
+  assert.equal(rejectedWrongRangeClockEndpoint.range, undefined);
+  assert.match(rejectedWrongRangeClockEndpoint.validation.warnings.join(' '), /clock.*end endpoint only/);
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',

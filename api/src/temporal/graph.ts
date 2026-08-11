@@ -4745,7 +4745,7 @@ function discordReferencePlanSemanticsError(
   if (rangeTargetError !== undefined) {
     return rangeTargetError;
   }
-  const clockSemanticsError = discordReferenceClockSemanticsError(plan, terminalSteps, originalText);
+  const clockSemanticsError = discordReferenceClockSemanticsError(plan, terminalDependencies, originalText);
   if (clockSemanticsError !== undefined) {
     return clockSemanticsError;
   }
@@ -4794,11 +4794,20 @@ function discordReferenceRangeShiftTargetError(
 
 function discordReferenceClockSemanticsError(
   plan: TemporalPlan,
-  terminalSteps: Array<{ step: TemporalPlanStep; index: number }>,
+  terminalDependencies: Set<number>[],
   originalText: string,
 ): string | undefined {
   const requestedClocks = requestedDiscordReferenceClocks(originalText);
-  const actualClocks = terminalSteps.flatMap(({ step }) => consumedPlanStepClocks(plan, step));
+  const clocksByTerminal = terminalDependencies.map((dependencies) => {
+    const consumed = [...dependencies].map((index) => consumedPlanStepClocks(plan, plan.steps[index]!));
+    return consumed.some((clocks) => clocks === undefined)
+      ? undefined
+      : uniqueClocks(consumed.flatMap((clocks) => clocks ?? []));
+  });
+  if (clocksByTerminal.some((clocks) => clocks === undefined)) {
+    return 'Model plan used a consumed clock operand that could not be validated safely.';
+  }
+  const actualClocks = uniqueClocks(clocksByTerminal.flatMap((clocks) => clocks ?? []));
   const requestedKeys = new Set(requestedClocks.map(clockKey));
   const actualKeys = new Set(actualClocks.map(clockKey));
   if (requestedKeys.size === 0) {
@@ -4812,7 +4821,27 @@ function discordReferenceClockSemanticsError(
   ) {
     return 'Model plan clock did not match the requested Discord-reference clock.';
   }
+  if (plan.kind === 'time_range' && terminalDependencies.length === 2) {
+    const target = requestedDiscordRangeEndpoint(originalText);
+    if (target !== undefined) {
+      const targetIndex = target === 'start' ? 0 : 1;
+      const otherIndex = targetIndex === 0 ? 1 : 0;
+      const targetKeys = new Set(clocksByTerminal[targetIndex]!.map(clockKey));
+      const otherKeys = new Set(clocksByTerminal[otherIndex]!.map(clockKey));
+      if (
+        targetKeys.size !== requestedKeys.size
+        || [...targetKeys].some((key) => !requestedKeys.has(key))
+        || otherKeys.size !== 0
+      ) {
+        return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
+      }
+    }
+  }
   return undefined;
+}
+
+function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
+  return /\b(?:move|shift|extend|shorten|set|change)\s+(?:the\s+)?(start|end)\b/iu.exec(text)?.[1]?.toLowerCase() as 'start' | 'end' | undefined;
 }
 
 function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {
@@ -4839,7 +4868,7 @@ function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; mi
 function consumedPlanStepClocks(
   plan: TemporalPlan,
   step: TemporalPlanStep,
-): Array<{ hour: number; minute: number }> {
+): Array<{ hour: number; minute: number }> | undefined {
   if (!['shift_datetime', 'set_clock_time', 'combine_date_time'].includes(step.operation)) {
     return [];
   }
@@ -4861,7 +4890,10 @@ function consumedPlanStepClocks(
   }
   const texts = timeStep.options?.map((option) => option.text)
     ?? [timeStep.text ?? timeStep.query].filter((value): value is string => value !== null);
-  return uniqueClocks(texts.flatMap(parsePlanClockText));
+  const parsed = texts.map(parsePlanClockText);
+  return parsed.some((clocks) => clocks.length === 0)
+    ? undefined
+    : uniqueClocks(parsed.flat());
 }
 
 function parsePlanClockText(text: string): Array<{ hour: number; minute: number }> {
