@@ -52,6 +52,7 @@ const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|frid
 const AM_PM_CLOCK_MENTION_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
+const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
 const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'] as const;
 const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
 const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
@@ -218,7 +219,11 @@ export async function runTemporalCoalescingGraph(
     referenceRouting.route === 'model'
     || (!referenceRoutingEnabled && referenceRouting.route === 'copied_prose')
   );
-  const useDeterministicPreflight = !forceSemanticReferencePath && (deterministicPreflightEnabled(options.features) || !hasAgentPath);
+  const useDeterministicPreflight = !forceSemanticReferencePath && (
+    deterministicPreflightEnabled(options.features)
+    || !hasAgentPath
+    || isExplicitUnixEpochZero(request.text)
+  );
   let fallback: TemporalParseResponse;
 
   const terminalReferenceResponse = responseFromTerminalReferenceRouting(referenceRouting);
@@ -3441,6 +3446,13 @@ function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
     }
   }
 
+  for (const match of text.matchAll(AMBIGUOUS_OCLOCK_PATTERN)) {
+    const hour = Number(match[1]);
+    if (match.index !== undefined && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length))) {
+      mentions.push({ text: match[0], index: match.index, hour, minute: 0, replacementBase: String(hour) });
+    }
+  }
+
   const trailingHour = trailingBareHourMention(text);
   if (trailingHour !== null && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, trailingHour.index, trailingHour.text.length))) {
     mentions.push(trailingHour);
@@ -4612,6 +4624,10 @@ function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {
 
 function deterministicPreflightEnabled(features: TemporalFeatureFlags | undefined): boolean {
   return features?.deterministicPreflight !== false;
+}
+
+function isExplicitUnixEpochZero(text: string): boolean {
+  return /^\s*0+\s*$/.test(text);
 }
 
 function semanticConsistencyGateEnabled(features: TemporalFeatureFlags | undefined): boolean {

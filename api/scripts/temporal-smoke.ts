@@ -119,6 +119,25 @@ async function executeModelReferenceShiftClockClarification(
 async function main() {
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
+  const epochZeroWithPreflightDisabled = await parseTemporalExpression({
+    text: '0',
+    timeZone,
+    referenceInstant,
+    features: { deterministicPreflight: false, planIr: true },
+    planIrEndpoint: {
+      baseUrl: 'http://127.0.0.1:1/v1',
+      model: 'must-not-be-called-for-explicit-epoch-zero',
+      instructionPreset: 'minimal',
+      api: 'chat',
+      promptFormat: 'chat',
+      maxTokens: 64,
+      timeoutMs: 1,
+    },
+  });
+  assert.equal(epochZeroWithPreflightDisabled.status, 'resolved');
+  assert.equal(epochZeroWithPreflightDisabled.epoch, 0);
+  assert.equal(epochZeroWithPreflightDisabled.method, 'deterministic');
+  assert.equal(epochZeroWithPreflightDisabled.debug?.shortCircuitReason, 'deterministic_resolved_validation_passed');
   const referencePromptInput = JSON.parse(formatEndpointInputJson({
     text: '<t:1785643200:t> 1 hour later',
     referenceInstant,
@@ -292,6 +311,31 @@ async function main() {
   assert.deepEqual(
     selectableCleanShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
     [1785564000, 1785607200],
+  );
+
+  const oclockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Fixture matching a model plan that preserves conventional o-clock wording.',
+    plans: [{
+      label: 'Shifted date at 3 o-clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: "3 o'clock" },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const oclockClarification = await executeTemporalPlanPlannerOutput(
+    oclockPlan,
+    { text: 'make <t:1785643200:t> 3 o\u2019clock on the previous day', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(oclockClarification.status, 'needs_clarification');
+  assert.equal(oclockClarification.clarificationQuestion, 'Did you mean 3 AM or 3 PM?');
+  assert.deepEqual(
+    oclockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785567600, 1785610800],
   );
 
   const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({

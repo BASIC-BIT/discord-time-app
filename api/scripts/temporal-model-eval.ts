@@ -1312,6 +1312,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'direct-epoch-zero',
     text: '0',
     category: 'explicit-epoch',
+    routeOwnership: 'classifier',
     expected: { status: 'resolved', epoch: 0, suggestedFormatIndex: 4 },
   },
   {
