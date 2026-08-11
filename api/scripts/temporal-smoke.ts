@@ -749,6 +749,12 @@ async function main() {
     { months: 2 },
   );
   assert.equal(collapsedRepeatedMonthShift.status, 'failed');
+  const unsupportedLastMonthShift = await executeModelReferenceShift(
+    '<t:1706688000:t> last month',
+    '<t:1706688000:t>',
+    { months: -1 },
+  );
+  assert.equal(unsupportedLastMonthShift.status, 'failed');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

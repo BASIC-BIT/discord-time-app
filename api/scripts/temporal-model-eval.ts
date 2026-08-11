@@ -2846,7 +2846,8 @@ function boundaryGate(
 ): BoundaryGateSummary {
   const cases = results.map(boundaryCaseResult);
   const durations = results
-    .map((result) => result.metrics?.firstCorrectDisplayMs ?? result.durationMs)
+    .map((result) => result.metrics?.firstCorrectDisplayMs)
+    .filter((duration): duration is number => duration !== undefined)
     .sort((left, right) => left - right);
   const medianDurationMs = durations.length === 0 ? undefined : percentile(durations, 0.5);
   const p95DurationMs = durations.length === 0 ? undefined : percentile(durations, 0.95);
