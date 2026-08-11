@@ -85,6 +85,20 @@ V19 passed the expanded focused gate `19/19` in both raw and routed lanes. The f
 
 Decision: promote V19 as the canonical local 0.8B adapter, subject to packaged installed-MSI smoke. Preserve V11 as rollback. Do not add deterministic semantic shims for the diagnostic range-composition case.
 
+### V20-V22 required transformed-range and regression iteration
+
+AI review caught that `discord-reference-range-residue` had been made optional even though V19 emitted the correct shift step but pointed `endStep` at the unshifted endpoint. The case was restored to the required gate. The same review found that model-provided clarification labels could disagree with their resolved clocks; the executor now derives each label from the deterministically resolved clock value.
+
+V20 added held-out-safe transformed-range endpoint mutations and trained fresh from Qwen3.5-0.8B. It fixed the required range case, but the full boundary rejected it at Gate A `194/197` and Gate B `156/159`: three calendar-day shifts regressed from date/time presentation to time-only presentation. Investigation showed that the prior cross-split leak fix had grouped repeated phrases correctly but assigned every calendar-shift presentation family to validation, leaving training imbalanced toward sub-day format preservation.
+
+V21 rebalanced whole presentation families between train and validation with zero phrase crossover. It restored the three format cases and retained the range fix, but the full boundary rejected it at Gate A `196/197` and Gate B `158/159`. The held-out phrase `one hour earlier than <t:1785643200:t>` emitted `hours: -60`; a five-repeat run reproduced the failure in both routed and direct lanes. Executor tracing confirmed the resolver and arithmetic were correct and the miss was entirely in emitted Plan-IR.
+
+V22 added 18 distinct infix-duration rows across anchors, magnitudes, directions, and minute/hour units while keeping the failing sentence holdout-only. The final dataset has `3310` rows with splits `2597/379/334` and SHA-256 `3e81acf76333fbc465ee1c763b3f71f46a2e5e4f68cf09441ccd69a47cd6584e`. Training was fresh Qwen3.5-0.8B bf16/chat LoRA, minimal inference instruction, seed `3407`, and three epochs.
+
+V22 passed the five-case range/format/infix focused gate in both lanes, then passed the held-out infix case `5/5` per lane. The final boundary passed Gate A `197/197` and model-owned Gate B `159/159`; routed median was `1165ms`, p95 `3111ms`, and all V19 required passes were preserved. Diagnostics scored `27/40` and remain non-blocking research signals.
+
+Decision: promote V22 as the canonical local 0.8B adapter, subject to hash-verified package publication and installed-MSI smoke. Preserve V19 as rollback. No deterministic semantic or presentation override was added.
+
 ## Semantic Consistency Gate Results
 
 - Feature flag: `TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE=false` by default.

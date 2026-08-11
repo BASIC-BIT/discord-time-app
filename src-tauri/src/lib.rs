@@ -37,14 +37,18 @@ const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8770/v1";
 const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8771/v1";
 #[cfg(not(feature = "routing-smoke"))]
 const LOCAL_SLM_DEFAULT_MODEL: &str =
-    "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced";
+    "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22";
 #[cfg(feature = "routing-smoke")]
 const LOCAL_SLM_DEFAULT_MODEL: &str =
-    "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced";
+    "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22";
 const LOCAL_SLM_DEFAULT_ADAPTER_PATH: &str =
-    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora";
-const LOCAL_SLM_PREVIOUS_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora";
+const LOCAL_SLM_PREVIOUS_MODEL: &str =
+    "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced";
 const LOCAL_SLM_PREVIOUS_ADAPTER_PATH: &str =
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora";
+const LOCAL_SLM_V11_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
+const LOCAL_SLM_V11_ADAPTER_PATH: &str =
     "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora";
 const LOCAL_SLM_V9_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-discord-reference-v9";
 const LOCAL_SLM_V9_ADAPTER_PATH: &str =
@@ -57,9 +61,9 @@ const LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS: u64 = 360;
 const LOCAL_SLM_RUNTIME_DIR: &str = "local-slm-runtime";
 const LOCAL_SLM_DEFAULT_DOCKER_IMAGE: &str =
     "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8";
-const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-clock-choice-v19/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora.zip";
+const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-range-format-infix-v22/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora.zip";
 const LOCAL_SLM_ADAPTER_PACKAGE_SHA256: &str =
-    "3b36fbaedda523ad139db829785c1d8cf1b6e628047f8bd6b7d87dcb1a2f13e7";
+    "fcd12698c93736cfa1a62ec49e93e1c50919a45c42548beb8322f51a1d3a84ce";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -1800,6 +1804,7 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
     let configured_model = settings.local_slm_model.trim();
     if configured_model == LOCAL_SLM_LEGACY_MODEL
         || configured_model == LOCAL_SLM_PREVIOUS_MODEL
+        || configured_model == LOCAL_SLM_V11_MODEL
         || configured_model == LOCAL_SLM_V9_MODEL
     {
         settings.local_slm_model = LOCAL_SLM_DEFAULT_MODEL.to_string();
@@ -1807,6 +1812,7 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
     let configured_adapter = settings.local_slm_adapter_path.trim();
     if configured_adapter == LOCAL_SLM_LEGACY_ADAPTER_PATH
         || configured_adapter == LOCAL_SLM_PREVIOUS_ADAPTER_PATH
+        || configured_adapter == LOCAL_SLM_V11_ADAPTER_PATH
         || configured_adapter == LOCAL_SLM_V9_ADAPTER_PATH
     {
         settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
@@ -1840,7 +1846,7 @@ mod local_slm_default_migration_tests {
     }
 
     #[test]
-    fn migrates_the_v11_packaged_adapter_defaults() {
+    fn migrates_the_v19_packaged_adapter_defaults() {
         let mut settings = AppSettings {
             local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
             local_slm_model: LOCAL_SLM_PREVIOUS_MODEL.to_string(),
@@ -1855,6 +1861,24 @@ mod local_slm_default_migration_tests {
             settings.local_slm_endpoint_base_url,
             LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
         );
+        assert_eq!(
+            settings.local_slm_adapter_path,
+            LOCAL_SLM_DEFAULT_ADAPTER_PATH
+        );
+    }
+
+    #[test]
+    fn migrates_the_v11_packaged_adapter_defaults() {
+        let mut settings = AppSettings {
+            local_slm_endpoint_base_url: LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
+            local_slm_model: LOCAL_SLM_V11_MODEL.to_string(),
+            local_slm_adapter_path: LOCAL_SLM_V11_ADAPTER_PATH.to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings);
+
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
         assert_eq!(
             settings.local_slm_adapter_path,
             LOCAL_SLM_DEFAULT_ADAPTER_PATH

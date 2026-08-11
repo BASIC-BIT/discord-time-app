@@ -13,7 +13,7 @@ The API should use these local settings:
 ```env
 TEMPORAL_FEATURE_PLAN_IR=true
 TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8770/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -29,7 +29,7 @@ When changing the deployed local adapter, update `scripts/start-temporal-peft-se
 $env:PATH = "C:\ProgramData\nvm\v24.15.0;$env:PATH"
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8770/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
@@ -38,13 +38,13 @@ $env:TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS = "60000"
 npm --prefix api run eval:temporal
 ```
 
-Current local adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora`.
+Current local adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora`.
 
-Current promotion boundary: V19 passed `196/196` required routed cases and `158/158` required model-owned cases with routed p95 `3026ms`. The separate installed-routing smoke passed 13 probes with warmed model-path p95 `2381ms`, including bounded clock-choice clarification and active-request cancellation. One intentionally extreme optional case (a two-timestamp range whose end alone is shifted) failed closed; an incorrect optional resolution would still block promotion. V11 remains the immediate packaged rollback. The production local endpoint moved from `8765` to `8770` after an observed VRChat MCP collision. Keep `TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000`; the five-second product target remains an SLO rather than a hard cutoff.
+Current promotion boundary: V22 passed `197/197` required routed cases and `159/159` required model-owned cases with routed median/p95 `1165ms`/`3111ms`. The two-timestamp transformed-range case is required and passed. V19 is the immediate packaged rollback. The production local endpoint moved from `8765` to `8770` after an observed VRChat MCP collision. Keep `TEMPORAL_PLAN_IR_ENDPOINT_TIMEOUT_MS=15000`; the five-second product target remains an SLO rather than a hard cutoff.
 
 Semantic Consistency Gate validation: local v4h endpoint plus OpenAI-backed gate passed `131/131`. First-correct display median/p95 was `1669ms`/`4851ms`; final verifier median/p95 was `9447ms`/`22329ms`. Keep `TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE=false` for blocking parse mode by default. Product UX should use asynchronous post-display verification through `/parse/verify` so the first correct answer is shown before the verifier finishes.
 
-The current V19 adapter uses a 3,276-row dataset with splits `2568/374/334`, minimal inference instructions, chat formatting, and BF16 LoRA on Qwen3.5-0.8B. It retains V11's presentation behavior and adds systematic same-day and clock-first relative-day composition families plus a bounded `resolve_clock_time.options` clarification operand. V11 remains the immediate packaged rollback.
+The current V22 adapter uses a 3,310-row dataset with splits `2597/379/334`, SHA-256 `3e81acf76333fbc465ee1c763b3f71f46a2e5e4f68cf09441ccd69a47cd6584e`, minimal inference instructions, chat formatting, and BF16 LoRA on Qwen3.5-0.8B. It retains V19's bounded `resolve_clock_time.options` clarification operand, makes transformed ranges required, restores whole-family train/validation isolation for presentation cases, and adds held-out-safe infix-duration coverage. V19 remains the immediate packaged rollback.
 
 Durable adapter/model comparison notes live in `docs/temporal-model-benchmark-log.md`.
 
@@ -68,10 +68,10 @@ Do not switch Qwen3.5 serving to `-NoLoadIn4Bit` based on speed alone. The bf16/
 For current Qwen3.5 bf16/chat adapters, stage on a non-production port with both chat prompt formatting and bf16 loading before changing the canonical launcher. V9 passed the current production-routed boundary at `184/184` required and p95 `2881ms`.
 
 ```powershell
-.\scripts\start-temporal-peft-server-container.ps1 -AdapterPath "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora" -ModelName "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced" -Port 8769 -PromptFormat chat -NoLoadIn4Bit
+.\scripts\start-temporal-peft-server-container.ps1 -AdapterPath "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora" -ModelName "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22" -Port 8769 -PromptFormat chat -NoLoadIn4Bit
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8769/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"

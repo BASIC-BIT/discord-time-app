@@ -3,14 +3,14 @@ param(
     [switch]$Install,
     [switch]$StopProductionForManualSmoke,
     [string]$MsiPath = "",
-    [string]$ExpectedMsiSha256 = "A17729BBB753DC1B46E72F6A768A82B9438BED859BD348E4C0D5CFF761C42937",
+    [string]$ExpectedMsiSha256 = "AAF4F4CDD5ECAB335B0E9140A6F3C9126D6E66517E0A3E1A80F055C03D9DEBF8",
     [string]$ExpectedInstalledExeSha256 = "",
     [string]$InstallRoot = "C:\Program Files\HammerOverlay Routing Smoke",
     [string]$ApiBaseUrl = "http://127.0.0.1:8858",
     [int]$ExpectedApiPort = 8858,
     [string]$ModelBaseUrl = "http://127.0.0.1:8771/v1",
-    [string]$ExpectedModel = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced",
-    [string]$ReportSchema = "discord-reference-v19-installed-routing-smoke-v1",
+    [string]$ExpectedModel = "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
+    [string]$ReportSchema = "discord-reference-v22-installed-routing-smoke-v1",
     [string]$VerificationLabel = "routing-smoke",
     [string]$Output = ""
 )
@@ -20,7 +20,7 @@ if ([string]::IsNullOrWhiteSpace($MsiPath)) {
     $MsiPath = Join-Path $PSScriptRoot "..\src-tauri\target\release\bundle\msi\HammerOverlay Routing Smoke_0.1.0_x64_en-US.msi"
 }
 if ([string]::IsNullOrWhiteSpace($Output)) {
-    $Output = Join-Path $PSScriptRoot "..\api\reports\temporal-ml\discord-reference-v19-installed-routing-smoke.json"
+    $Output = Join-Path $PSScriptRoot "..\api\reports\temporal-ml\discord-reference-v22-installed-routing-smoke.json"
 }
 $expectedEndpoint = $ModelBaseUrl.TrimEnd("/")
 $expectedApiBase = $ApiBaseUrl.TrimEnd("/")

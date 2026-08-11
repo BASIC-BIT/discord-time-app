@@ -1443,6 +1443,7 @@ function discordTimestampReferenceRows(): TemporalIrTrainingRow[] {
       'train',
     ),
     ...discordTimestampShiftPresentationReinforcementRows(),
+    ...discordTimestampInfixShiftReinforcementRows(),
     ...discordTimestampShiftClockCompositionRows(),
     ...discordTimestampClockCompositionRows(),
     ...discordTimestampShiftClockAmbiguityReinforcementRows(),
@@ -1694,13 +1695,41 @@ function discordTimestampShiftPresentationReinforcementRows(): TemporalIrTrainin
     { id: 'fall-time-calendar-week', text: '<t:1793518200:t> one week later', anchor: '<t:1793518200:t>', shift: { weeks: 1 } },
   ];
 
+  const validationSpecIds = new Set([
+    'time-calendar-two-days',
+    'time-calendar-week-typo',
+    'date-calendar-day',
+    'spring-time-calendar-day-before',
+    'fall-time-calendar-two-days-prefix',
+  ]);
+
   return specs.flatMap((spec, specIndex) => Array.from({ length: specIndex < 5 ? 3 : specIndex < 7 ? 2 : 3 }, (_, repetition) =>
     discordTimestampShiftRow(
       `discord-reference-shift-presentation-${spec.id}-${repetition + 1}`,
       spec.text,
       spec.anchor,
       spec.shift,
-      specIndex >= 7 ? 'validation' : 'train',
+      validationSpecIds.has(spec.id) ? 'validation' : 'train',
+    )));
+}
+
+function discordTimestampInfixShiftReinforcementRows(): TemporalIrTrainingRow[] {
+  const specs = [
+    { id: 'hour-earlier-alternate', text: 'an hour earlier than <t:1793511000:t>', anchor: '<t:1793511000:t>', shift: { hours: -1 } },
+    { id: 'three-hours-earlier-long', text: 'three hours earlier than <t:1785733200:F>', anchor: '<t:1785733200:F>', shift: { hours: -3 } },
+    { id: 'two-hours-later-time', text: 'two hours later than <t:1785643200:t>', anchor: '<t:1785643200:t>', shift: { hours: 2 } },
+    { id: 'half-hour-earlier-long', text: '30 minutes earlier than <t:1785733200:F>', anchor: '<t:1785733200:F>', shift: { minutes: -30 } },
+    { id: 'forty-five-later-time', text: '45 minutes later than <t:1793511000:t>', anchor: '<t:1793511000:t>', shift: { minutes: 45 } },
+    { id: 'two-hours-before-spring', text: 'two hours before <t:1772955000:t>', anchor: '<t:1772955000:t>', shift: { hours: -2 } },
+  ];
+
+  return specs.flatMap((spec, specIndex) => Array.from({ length: 3 }, (_, repetition) =>
+    discordTimestampShiftRow(
+      `discord-reference-shift-infix-reinforcement-${spec.id}-${repetition + 1}`,
+      spec.text,
+      spec.anchor,
+      spec.shift,
+      specIndex === specs.length - 1 ? 'validation' : 'train',
     )));
 }
 

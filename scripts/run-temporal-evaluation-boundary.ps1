@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$EndpointBaseUrl = "http://127.0.0.1:8771/v1",
-    [string]$Model = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced",
-    [string]$Output = "reports/temporal-ml/discord-reference-v19-clock-choice-evaluation-boundary.json",
+    [string]$Model = "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
+    [string]$Output = "reports/temporal-ml/discord-reference-v22-evaluation-boundary.json",
     [string]$BaselineReport = "",
 
     [ValidateSet("minimal", "detailed")]

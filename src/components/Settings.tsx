@@ -57,9 +57,9 @@ const defaultSettings: AppSettings = {
   local_slm_auto_start: false,
   local_slm_prewarm: true,
   local_slm_endpoint_base_url: "http://127.0.0.1:8770/v1",
-  local_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced",
+  local_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
   local_slm_launcher_path: "",
-  local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora",
+  local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora",
   local_slm_docker_image: "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8",
   local_slm_startup_timeout_seconds: 360,
 };

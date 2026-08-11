@@ -66,8 +66,8 @@ The Settings window has a **Local SLM Runtime** section for the fine-tuned Tempo
 Default runtime values:
 
 - Endpoint: `http://127.0.0.1:8770/v1`
-- Model: `qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced`
-- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora`
+- Model: `qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora`
 - Docker image: `ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8`
 
 Installed MSI builds use the Settings actions to prepare the local runtime: `Install Runtime Files` copies bundled lightweight launch/server files into app data, `Download Model` retrieves the adapter package, and `Pull Docker Image` installs the serving backend. The model package must be published at the URL configured in `src-tauri/src/lib.rs` before installed-app smoke can pass. The SLM only proposes Temporal Plan-IR; schema validation, calendar arithmetic, and final timestamp rendering stay deterministic.

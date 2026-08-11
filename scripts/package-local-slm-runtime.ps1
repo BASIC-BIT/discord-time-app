@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$AdapterPath = "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora",
+    [string]$AdapterPath = "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora",
     [string]$OutputDir = "artifacts/local-slm-runtime",
     [string]$PackageName = "",
     [string]$DownloadBaseUrl = ""
