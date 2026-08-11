@@ -2553,6 +2553,9 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
     return undefined;
   }
   if (evalCase.expected.alternativeRanges !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range === undefined)) {
+      return undefined;
+    }
     const actualRanges = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.range)
       .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
@@ -2564,7 +2567,7 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
     }
   } else if (evalCase.expected.alternativeEpochs !== undefined) {
     if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range !== undefined)) {
-      return 'expected singular alternatives, got one or more ranges';
+      return undefined;
     }
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)

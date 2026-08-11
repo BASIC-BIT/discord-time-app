@@ -3818,12 +3818,10 @@ function discordReferenceCandidateIsGrounded(
 }
 
 function discordReferenceRequestsRange(text: string, reference: string): boolean {
-  const residue = text.replace(reference, ' ');
+  let residue = text.replace(reference, ' ');
   const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
-  if (new RegExp(String.raw`\b(?:set|change)\s+to\s+${clock}`, 'iu').test(residue)) {
-    return false;
-  }
+  residue = residue.replace(new RegExp(String.raw`\b(?:set|change)\s+to\s+${clock}`, 'giu'), ' ');
   return new RegExp(String.raw`(?:^|\s)${separator}\s*${clock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue);
@@ -5146,6 +5144,9 @@ function expectedDiscordReferenceShift(
     return undefined;
   }
   if (matchedAmountUnitCount > 1 && matchedShiftKeys.size > 1) {
+    return undefined;
+  }
+  if (matchedAmountUnitCount > 1 && (matchedShiftKeys.has('months') || matchedShiftKeys.has('years'))) {
     return undefined;
   }
 

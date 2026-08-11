@@ -743,6 +743,12 @@ async function main() {
     { days: 1, months: 1 },
   );
   assert.equal(mixedUnitRelativeDay.status, 'failed');
+  const collapsedRepeatedMonthShift = await executeModelReferenceShift(
+    '<t:1706688000:t> one month later, then one month later',
+    '<t:1706688000:t>',
+    { months: 2 },
+  );
+  assert.equal(collapsedRepeatedMonthShift.status, 'failed');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -775,6 +781,13 @@ async function main() {
   );
   assert.equal(rejectedInstantForRange.status, 'failed');
   assert.match(rejectedInstantForRange.validation.warnings.join(' '), /instant.*range request/);
+  const rejectedSetterRange = await executeTemporalPlanPlannerOutput(
+    discardedDateMutation,
+    { text: 'change <t:1785643200:t> to 3 pm through 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSetterRange.status, 'failed');
+  assert.equal(rejectedSetterRange.range, undefined);
 
   const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
