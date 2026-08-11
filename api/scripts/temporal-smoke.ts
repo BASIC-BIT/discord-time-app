@@ -790,6 +790,7 @@ async function main() {
     '<t:1785643200:t> set the month to 5 at 2 pm',
     '<t:1785643200:t> set the year to 2027 at 2 pm',
     '<t:1785643200:t> on 2027-05-01 at 2 pm',
+    '<t:1785643200:t> on 5/1 at 2 pm',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,
