@@ -1391,6 +1391,12 @@ async function runPlanIrPath(
   });
 
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
+  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
+  if (clockChoiceContractError !== undefined) {
+    const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
   if (planResult.outcome === 'no_plan' || plans.length === 0) {
     const response = responseFromFailedPlanIr(planResult.reason, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
     attachPlanDebug(response);

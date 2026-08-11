@@ -1660,7 +1660,7 @@ function discordTimestampShiftPresentationReinforcementRows(): TemporalIrTrainin
       spec.text,
       spec.anchor,
       spec.shift,
-      repetition === 0 && specIndex >= 7 ? 'validation' : 'train',
+      specIndex >= 7 ? 'validation' : 'train',
     )));
 }
 

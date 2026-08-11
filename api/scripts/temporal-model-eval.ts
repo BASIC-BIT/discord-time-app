@@ -278,6 +278,20 @@ const CompactTemporalPlanPlannerJsonSchema = {
                 },
                 query: { type: 'string' },
                 text: { type: 'string' },
+                options: {
+                  type: 'array',
+                  minItems: 2,
+                  maxItems: 6,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['label', 'text'],
+                    properties: {
+                      label: { type: 'string', minLength: 1, maxLength: 48 },
+                      text: { type: 'string', minLength: 1, maxLength: 48 },
+                    },
+                  },
+                },
                 holidayName: { type: 'string' },
                 weekday: { type: 'string', enum: PLAN_WEEKDAYS },
                 weekdayAnchor: { type: 'string', enum: ['upcoming', 'this', 'next', 'last', 'next_ambiguous', 'after_next_ambiguous'] },

@@ -4,7 +4,7 @@ param(
     [switch]$StopProductionForManualSmoke,
     [string]$MsiPath = "",
     [string]$ExpectedMsiSha256 = "A17729BBB753DC1B46E72F6A768A82B9438BED859BD348E4C0D5CFF761C42937",
-    [string]$ExpectedInstalledExeSha256 = "08506D5F24080FCF5F0A5A91B6E30AB3C0EF9DD96873DCED4E501DDBFE7C1685",
+    [string]$ExpectedInstalledExeSha256 = "",
     [string]$InstallRoot = "C:\Program Files\HammerOverlay Routing Smoke",
     [string]$ApiBaseUrl = "http://127.0.0.1:8858",
     [int]$ExpectedApiPort = 8858,
@@ -206,6 +206,53 @@ function Stop-ExactProcess {
     }
 }
 
+function Find-ByteSequence {
+    param(
+        [byte[]]$Bytes,
+        [byte[]]$Needle
+    )
+    for ($offset = 0; $offset -le $Bytes.Length - $Needle.Length; $offset++) {
+        $matches = $true
+        for ($index = 0; $index -lt $Needle.Length; $index++) {
+            if ($Bytes[$offset + $index] -ne $Needle[$index]) {
+                $matches = $false
+                break
+            }
+        }
+        if ($matches) {
+            return $offset
+        }
+    }
+    return -1
+}
+
+function Assert-SealedMsiExecutableMatchesRelease {
+    param(
+        [string]$ReleaseExecutable,
+        [string]$SealedExecutable
+    )
+    $releaseBytes = [System.IO.File]::ReadAllBytes($ReleaseExecutable)
+    $sealedBytes = [System.IO.File]::ReadAllBytes($SealedExecutable)
+    Assert-Equal $sealedBytes.Length $releaseBytes.Length "Sealed MSI executable length does not match the current release executable."
+
+    $releaseMarker = [System.Text.Encoding]::ASCII.GetBytes("__TAURI_BUNDLE_TYPE_VAR_UNK")
+    $sealedMarker = [System.Text.Encoding]::ASCII.GetBytes("__TAURI_BUNDLE_TYPE_VAR_MSI")
+    $releaseMarkerOffset = Find-ByteSequence -Bytes $releaseBytes -Needle $releaseMarker
+    $sealedMarkerOffset = Find-ByteSequence -Bytes $sealedBytes -Needle $sealedMarker
+    Assert-True ($releaseMarkerOffset -ge 0) "Current release executable is missing the expected Tauri UNK bundle marker."
+    Assert-Equal $sealedMarkerOffset $releaseMarkerOffset "Sealed MSI executable has an unexpected Tauri bundle marker location."
+
+    $bundleTypeOffset = $releaseMarkerOffset + $releaseMarker.Length - 3
+    for ($index = 0; $index -lt $releaseBytes.Length; $index++) {
+        if ($index -ge $bundleTypeOffset -and $index -lt ($bundleTypeOffset + 3)) {
+            continue
+        }
+        if ($releaseBytes[$index] -ne $sealedBytes[$index]) {
+            throw "Sealed MSI executable differs from the current release executable at byte offset $index outside the expected Tauri bundle marker."
+        }
+    }
+}
+
 $productionExe = "C:\Program Files\HammerOverlay\hammer-overlay.exe"
 if ($Install) {
     $productionProcessesBeforeInstall = @(Get-Process -Name "hammer-overlay" -ErrorAction SilentlyContinue | Where-Object {
@@ -257,9 +304,34 @@ foreach ($requiredPath in @(
     Assert-True (Test-Path -LiteralPath $requiredPath -PathType Leaf) "Required installed-build evidence is missing: $requiredPath"
 }
 
+$msiEvidenceRoot = Join-Path $env:TEMP "hammer-overlay-msi-evidence-$([guid]::NewGuid().ToString('N'))"
+$sealedExe = $null
+try {
+    New-Item -ItemType Directory -Path $msiEvidenceRoot -Force | Out-Null
+    $adminInstallLog = Join-Path $env:TEMP "hammer-overlay-msi-evidence-current.log"
+    $adminArguments = "/a `"$resolvedMsi`" /qn /norestart TARGETDIR=`"$msiEvidenceRoot`" /l*v `"$adminInstallLog`""
+    $adminInstaller = Start-Process `
+        -FilePath "msiexec.exe" `
+        -ArgumentList $adminArguments `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+    Assert-Equal $adminInstaller.ExitCode 0 "MSI administrative extraction failed. See $adminInstallLog."
+    $sealedExecutables = @(Get-ChildItem -LiteralPath $msiEvidenceRoot -Filter "hammer-overlay.exe" -File -Recurse)
+    Assert-Equal $sealedExecutables.Count 1 "Expected exactly one sealed hammer-overlay.exe in the MSI payload."
+    $sealedExe = $sealedExecutables[0].FullName
+    Assert-SealedMsiExecutableMatchesRelease -ReleaseExecutable $releaseExe -SealedExecutable $sealedExe
+    $sealedExecutableHash = (Get-FileHash $sealedExe -Algorithm SHA256).Hash
+} finally {
+    if (Test-Path -LiteralPath $msiEvidenceRoot) {
+        [System.IO.Directory]::Delete($msiEvidenceRoot, $true)
+    }
+}
+
 $artifactHashes = [ordered]@{
     msi = $msiHash
     installedExecutable = (Get-FileHash $installedExe -Algorithm SHA256).Hash
+    sealedMsiExecutable = $sealedExecutableHash
     releaseExecutable = (Get-FileHash $releaseExe -Algorithm SHA256).Hash
     installedEntrypoint = (Get-FileHash $installedEntrypoint -Algorithm SHA256).Hash
     stagedEntrypoint = (Get-FileHash $stagedEntrypoint -Algorithm SHA256).Hash
@@ -267,12 +339,13 @@ $artifactHashes = [ordered]@{
     stagedNode = (Get-FileHash $stagedNode -Algorithm SHA256).Hash
 }
 $expectedInstalledExecutable = if ([string]::IsNullOrWhiteSpace($ExpectedInstalledExeSha256)) {
-    $artifactHashes.releaseExecutable
+    $artifactHashes.sealedMsiExecutable
 } else {
     $ExpectedInstalledExeSha256.ToUpperInvariant()
 }
 $artifactHashes.expectedInstalledExecutable = $expectedInstalledExecutable
 Assert-Equal $artifactHashes.installedExecutable $expectedInstalledExecutable "Installed executable does not match the expected MSI payload."
+Assert-Equal $artifactHashes.installedExecutable $artifactHashes.sealedMsiExecutable "Installed executable does not match the administratively extracted MSI payload."
 Assert-Equal $artifactHashes.installedEntrypoint $artifactHashes.stagedEntrypoint "Installed API entrypoint is not the current staged sidecar."
 Assert-Equal $artifactHashes.installedNode $artifactHashes.stagedNode "Installed Node runtime is not the current staged sidecar runtime."
 
