@@ -2413,6 +2413,9 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
       }
       return undefined;
     }
+    if (parsed.kind === 'time_range' || parsed.range !== undefined) {
+      return 'expected singular instant, got time range';
+    }
     if (parsed.epoch !== evalCase.expected.epoch) {
       return `expected epoch ${evalCase.expected.epoch ?? 'none'}, got ${parsed.epoch ?? 'none'}`;
     }
@@ -2796,7 +2799,9 @@ function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: Eval
         || parsed.range.start.epoch !== evalCase.expected.range.startEpoch
         || parsed.range.end.epoch !== evalCase.expected.range.endEpoch;
     }
-    return parsed.epoch !== evalCase.expected.epoch;
+    return parsed.kind === 'time_range'
+      || parsed.range !== undefined
+      || parsed.epoch !== evalCase.expected.epoch;
   }
   const alternatives = parsed.clarificationAlternatives ?? [];
   if (parsed.status !== 'needs_clarification' || alternatives.length === 0) return false;

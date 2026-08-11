@@ -713,6 +713,19 @@ async function main() {
   assert.equal(rejectedUnrequestedClock.epoch, undefined);
   assert.match(rejectedUnrequestedClock.validation.warnings.join(' '), /clock change.*not requested/);
 
+  const yesterdayReferenceShift = await executeModelReferenceShift(
+    '<t:1785643200:t> yesterday',
+    '<t:1785643200:t>',
+    { days: -1 },
+  );
+  assert.equal(yesterdayReferenceShift.status, 'resolved');
+  const tomorrowReferenceShift = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(tomorrowReferenceShift.status, 'resolved');
+
   const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
@@ -756,6 +769,30 @@ async function main() {
   assert.equal(rejectedWrongRangeClockEndpoint.status, 'failed');
   assert.equal(rejectedWrongRangeClockEndpoint.range, undefined);
   assert.match(rejectedWrongRangeClockEndpoint.validation.warnings.join(' '), /clock.*end endpoint only/);
+
+  const reversedOneReferenceRangeClock = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Applied the trailing range clock to the start',
+      startStep: 1,
+      endStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 15, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  for (const text of ['<t:1785643200:t> to 3 pm', '<t:1785643200:t> ending at 3 pm']) {
+    const rejectedReversedOneReferenceRangeClock = await executeTemporalPlanPlannerOutput(
+      reversedOneReferenceRangeClock,
+      { text, calendarContext },
+      { implementations: createDeterministicTemporalToolImplementations() },
+    );
+    assert.equal(rejectedReversedOneReferenceRangeClock.status, 'failed');
+    assert.equal(rejectedReversedOneReferenceRangeClock.range, undefined);
+    assert.match(rejectedReversedOneReferenceRangeClock.validation.warnings.join(' '), /end endpoint only/);
+  }
 
   const swappedAdjacentRangeClocks = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
