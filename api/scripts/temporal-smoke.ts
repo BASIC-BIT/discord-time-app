@@ -310,6 +310,32 @@ async function main() {
     ['4:30 AM', '4:30 PM'],
   );
 
+  const misleadingClockChoiceLabels = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Model labels disagree with their clock text',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 pm' },
+          { label: '2 PM', text: '2 am' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const groundedClockChoiceLabels = await executeTemporalPlanPlannerOutput(
+    misleadingClockChoiceLabels,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.deepEqual(
+    groundedClockChoiceLabels.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['2 AM', '2 PM'],
+  );
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',

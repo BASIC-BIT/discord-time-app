@@ -2062,7 +2062,7 @@ async function executePlanStep(
             throw new Error(`resolve_clock_time option ${option.label} must resolve to exactly one unique clock.`);
           }
           const clock = uniqueClocks.values().next().value!;
-          return { label: option.label, time: { hour: clock.hour, minute: clock.minute } };
+          return { label: formatClockMentionLabel(clock.hour, clock.minute), time: { hour: clock.hour, minute: clock.minute } };
         }));
         const uniqueClocks = new Set(optionsOutput.map((option) => `${option.time.hour}:${option.time.minute}`));
         if (uniqueClocks.size !== optionsOutput.length) {

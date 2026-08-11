@@ -1185,7 +1185,6 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-range-residue',
     text: '<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later',
     category: 'discord-reference-routing',
-    required: false,
     expected: {
       status: 'resolved',
       kind: 'time_range',

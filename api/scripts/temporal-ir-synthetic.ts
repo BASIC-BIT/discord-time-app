@@ -1589,6 +1589,46 @@ function discordTimestampTransformedRangeReinforcementRows(
       startStep: 2,
       endStep: 1,
     },
+    {
+      text: `${anchor} to ${alternateAnchor}, but move the end two hours later`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ hours: 2 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 2,
+    },
+    {
+      text: `${alternateAnchor} to ${end}, but pull the end 45 minutes earlier`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: end, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ minutes: -45 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 2,
+    },
+    {
+      text: `${anchor} to ${end}, but push the start one hour later`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: anchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: end, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 0, delta: delta({ hours: 1 }), precision: 'datetime' }),
+      ],
+      startStep: 2,
+      endStep: 1,
+    },
+    {
+      text: `${alternateAnchor} through ${end}, with the ending point moved 30 minutes later`,
+      steps: [
+        step({ operation: 'resolve_calendar_query', query: alternateAnchor, precision: 'datetime' }),
+        step({ operation: 'resolve_calendar_query', query: end, precision: 'datetime' }),
+        step({ operation: 'shift_datetime', baseStep: 1, delta: delta({ minutes: 30 }), precision: 'datetime' }),
+      ],
+      startStep: 0,
+      endStep: 2,
+    },
   ];
 
   return variants.flatMap((variant, variantIndex) =>
