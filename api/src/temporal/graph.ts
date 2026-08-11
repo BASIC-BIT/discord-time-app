@@ -574,7 +574,7 @@ export async function executeTemporalPlanPlannerOutput(
   const startedAt = nowMs();
   const trace: TemporalAgentTraceStep[] = [];
   const method = options.method ?? 'agent+plan';
-  planResult = promoteBareClockPlanClarification(planResult, request.text);
+  planResult = groundBareClockPlanClarification(planResult, request.text);
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
 
   const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
@@ -1390,7 +1390,7 @@ async function runPlanIrPath(
     },
   });
 
-  const planResult = promoteBareClockPlanClarification(modelPlanResult, request.text);
+  const planResult = groundBareClockPlanClarification(modelPlanResult, request.text);
   if (planResult !== modelPlanResult) {
     trace.push({
       index: trace.length + 1,
@@ -3244,11 +3244,11 @@ async function runPlanIrAmbiguityPolicy(
   return null;
 }
 
-function promoteBareClockPlanClarification(
+function groundBareClockPlanClarification(
   planResult: TemporalPlanPlannerOutput,
   text: string,
 ): TemporalPlanPlannerOutput {
-  if (planResult.outcome !== 'plans' || classifyDiscordTimestampInput(text).route !== 'model') {
+  if (planResult.outcome === 'no_plan' || classifyDiscordTimestampInput(text).route !== 'model') {
     return planResult;
   }
 
@@ -3259,12 +3259,16 @@ function promoteBareClockPlanClarification(
 
   const clockStepIndexes = planResult.plans[0]!.steps
     .map((step, index) => ({ step, index }))
-    .filter(({ step }) => step.operation === 'resolve_clock_time' && step.options === null);
+    .filter(({ step }) => step.operation === 'resolve_clock_time');
   if (clockStepIndexes.length !== 1) {
     return planResult;
   }
 
   const mention = mentions[0]!;
+  const amLabel = formatBareMeridiemLabel(mention, 'am');
+  const pmLabel = formatBareMeridiemLabel(mention, 'pm');
+  const shouldProduceClarification = planResult.outcome === 'clarification'
+    || clockStepIndexes[0]!.step.options === null;
   const clockStepIndex = clockStepIndexes[0]!.index;
   const plans = planResult.plans.map((plan) => ({
     ...plan,
@@ -3274,16 +3278,18 @@ function promoteBareClockPlanClarification(
           query: null,
           text: null,
           options: [
-            { label: formatBareMeridiemLabel(mention, 'am'), text: `${mention.replacementBase}am` },
-            { label: formatBareMeridiemLabel(mention, 'pm'), text: `${mention.replacementBase}pm` },
+            { label: amLabel, text: `${mention.replacementBase}am` },
+            { label: pmLabel, text: `${mention.replacementBase}pm` },
           ],
         }
       : step),
   }));
   return {
     ...planResult,
-    outcome: 'clarification',
-    clarificationQuestion: 'Did you mean AM or PM?',
+    outcome: shouldProduceClarification ? 'clarification' : planResult.outcome,
+    clarificationQuestion: shouldProduceClarification
+      ? `Did you mean ${amLabel} or ${pmLabel}?`
+      : planResult.clarificationQuestion,
     plans,
   };
 }

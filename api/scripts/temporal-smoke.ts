@@ -347,6 +347,36 @@ async function main() {
     ['2 AM', '2 PM'],
   );
 
+  const hallucinatedClockChoiceTexts = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      label: 'Model option texts disagree with the requested clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3 AM', text: '3 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const groundedClockChoiceTexts = await executeTemporalPlanPlannerOutput(
+    hallucinatedClockChoiceTexts,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.deepEqual(
+    groundedClockChoiceTexts.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['2 AM', '2 PM'],
+  );
+  assert.deepEqual(
+    groundedClockChoiceTexts.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785650400, 1785693600],
+  );
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
