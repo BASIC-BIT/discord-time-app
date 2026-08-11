@@ -2651,10 +2651,7 @@ async function buildEvaluationBoundary(
     result.runner === 'routed_endpoint'
     && !result.required
     && !result.passed
-    && (
-      result.status === 'resolved'
-      || (result.status === 'needs_clarification' && (result.clarificationAlternativeCount ?? 0) > 0)
-    ),
+    && unsafeTimestampDiagnosticMismatch(result),
   );
   const gateA = boundaryGate(
     'A',
@@ -2783,6 +2780,20 @@ async function buildEvaluationBoundary(
     },
     baseline,
   };
+}
+
+function unsafeTimestampDiagnosticMismatch(result: EvalResult): boolean {
+  const mismatch = result.mismatch ?? '';
+  if (result.status === 'resolved') {
+    return /^expected status .* got resolved$/u.test(mismatch)
+      || /^expected epoch\b/u.test(mismatch)
+      || /^expected range (?!start format\b|end format\b)/u.test(mismatch);
+  }
+  if (result.status === 'needs_clarification' && (result.clarificationAlternativeCount ?? 0) > 0) {
+    return /^expected (?:range )?alternatives\b/u.test(mismatch)
+      || /^expected status\b/u.test(mismatch);
+  }
+  return false;
 }
 
 function boundaryGate(

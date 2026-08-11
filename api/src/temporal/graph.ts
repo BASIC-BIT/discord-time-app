@@ -1112,7 +1112,7 @@ async function runAgentGraph(
             return null;
           }
           return alternativeFromEnrichedCandidate(
-            conciseClarificationLabel(alternative.label, enriched),
+            clarificationLabelForCandidate(alternative.label, enriched, request.text),
             enriched,
             'agent+tools',
             0.8,
@@ -3735,6 +3735,9 @@ function discordReferenceClarificationCandidateIsGrounded(
     return false;
   }
   const reference = classification.references[0]!;
+  if (discordReferenceRequestsRange(originalText, reference.raw)) {
+    return false;
+  }
   const expectedDelta = expectedDiscordReferenceShift(originalText, [reference.raw]);
   if (expectedDelta === undefined) {
     return false;
@@ -3745,10 +3748,19 @@ function discordReferenceClarificationCandidateIsGrounded(
     const candidate = Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime).withTimeZone(timeZone);
     const requestedClockKeys = new Set(requestedDiscordReferenceClocks(originalText).map(clockKey));
     return Temporal.PlainDate.compare(candidate.toPlainDate(), expected.toPlainDate()) === 0
-      && requestedClockKeys.has(clockKey({ hour: candidate.hour, minute: candidate.minute }));
+      && requestedClockKeys.has(clockKey({ hour: candidate.hour, minute: candidate.minute }))
+      && candidate.second === 0
+      && candidate.millisecond === 0
+      && candidate.microsecond === 0
+      && candidate.nanosecond === 0;
   } catch {
     return false;
   }
+}
+
+function discordReferenceRequestsRange(text: string, reference: string): boolean {
+  const residue = text.replace(reference, ' ');
+  return /(?:^|\s)(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)/iu.test(residue);
 }
 
 function canUseForPlanClarification(enriched: EnrichedCandidate): boolean {
@@ -4590,6 +4602,14 @@ function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFla
     compact.discordReferenceShadow = features.discordReferenceShadow;
   }
   return compact;
+}
+
+function clarificationLabelForCandidate(label: string, enriched: EnrichedCandidate, originalText: string): string {
+  const classification = classifyDiscordTimestampInput(originalText);
+  if (classification.route === 'model' && classification.references.length > 0) {
+    return formatClockLabel(Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime));
+  }
+  return conciseClarificationLabel(label, enriched);
 }
 
 function temporalClockChoiceContractError(
