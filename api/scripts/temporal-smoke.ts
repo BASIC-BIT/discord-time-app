@@ -761,6 +761,18 @@ async function main() {
     { months: -1 },
   );
   assert.equal(unsupportedLastCalendarMonthShift.status, 'failed');
+  const unsupportedWordAmountAgoShift = await executeModelReferenceShift(
+    '<t:1785643200:t> four days ago at 2 pm',
+    '<t:1785643200:t>',
+    {},
+  );
+  assert.equal(unsupportedWordAmountAgoShift.status, 'failed');
+  const unsupportedFractionalShift = await executeModelReferenceShift(
+    '<t:1785643200:t> half an hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(unsupportedFractionalShift.status, 'failed');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -800,6 +812,13 @@ async function main() {
   );
   assert.equal(rejectedSetterRange.status, 'failed');
   assert.equal(rejectedSetterRange.range, undefined);
+  const rejectedBetweenRange = await executeTemporalPlanPlannerOutput(
+    discardedDateMutation,
+    { text: 'between <t:1785643200:t> and 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedBetweenRange.status, 'failed');
+  assert.equal(rejectedBetweenRange.range, undefined);
 
   const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

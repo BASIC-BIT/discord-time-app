@@ -3824,6 +3824,7 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   residue = residue.replace(new RegExp(String.raw`\b(?:set|change)\s+to\s+${clock}`, 'giu'), ' ');
   return new RegExp(String.raw`(?:^|\s)${separator}\s*${clock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
+    || new RegExp(String.raw`\bbetween\s*(?:${clock}\s*)?and(?:\s*${clock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue);
 }
 
@@ -5112,6 +5113,12 @@ function expectedDiscordReferenceShift(
   for (const reference of references) {
     residue = residue.replace(reference.toLowerCase(), ' ');
   }
+  if (
+    /\b(?:half|quarter)\s+(?:an?\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/iu.test(residue)
+    || /\b\d+(?:\.\d+|\/\d+)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/iu.test(residue)
+  ) {
+    return undefined;
+  }
   const result = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
   const amountUnitMatches = [...residue.matchAll(/\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)];
   const amountUnitDirection = /\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu;
@@ -5170,7 +5177,7 @@ function expectedDiscordReferenceShift(
       .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
       .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
   }
-  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
+  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next|ago)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
   return unconsumedShiftHint ? undefined : result;
 }
 
