@@ -6,6 +6,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 import { TemporalPlanPlannerSchema, type TemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
+import { temporalEvalCases } from './temporal-model-eval';
 
 type Split = 'train' | 'validation' | 'holdout';
 
@@ -78,9 +79,22 @@ async function main() {
     }
   }
 
+  const requiredEvalTexts = new Set(temporalEvalCases
+    .filter((evalCase) => evalCase.required ?? true)
+    .map((evalCase) => normalizedTrainingText(evalCase.text)));
+  const guardedOutputRows = outputRows.map((row) => requiredEvalTexts.has(normalizedTrainingText(row.input.text))
+    ? { ...row, split: 'holdout' as const, tags: unique([...row.tags, 'required-eval-holdout']) }
+    : row);
+  const leakedRequiredEvalRows = guardedOutputRows.filter((row) =>
+    row.split !== 'holdout' && requiredEvalTexts.has(normalizedTrainingText(row.input.text)),
+  );
+  if (leakedRequiredEvalRows.length > 0) {
+    throw new Error(`Required eval phrases leaked outside holdout: ${leakedRequiredEvalRows.map((row) => row.id).join(', ')}`);
+  }
+
   await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${outputRows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
-  console.log(`Wrote ${outputRows.length} Temporal IR rows to ${outputPath}`);
+  await writeFile(outputPath, `${guardedOutputRows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+  console.log(`Wrote ${guardedOutputRows.length} Temporal IR rows to ${outputPath}`);
 }
 
 function systemPrompt(): string {
@@ -125,6 +139,10 @@ function validateRow(row: TemporalIrTrainingRow): TemporalIrTrainingRow {
     ...row,
     output: TemporalPlanPlannerSchema.parse(row.output),
   };
+}
+
+function normalizedTrainingText(text: string): string {
+  return text.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US');
 }
 
 function normalizeReasoningEffort(effort: string): 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' {

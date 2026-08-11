@@ -737,6 +737,12 @@ async function main() {
     { days: 2 },
   );
   assert.equal(compoundRelativeDay.status, 'resolved');
+  const mixedUnitRelativeDay = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one month later',
+    '<t:1785643200:t>',
+    { days: 1, months: 1 },
+  );
+  assert.equal(mixedUnitRelativeDay.status, 'failed');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -749,13 +755,26 @@ async function main() {
       ],
     }],
   });
-  const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
+  for (const text of [
+    '<t:1785643200:t> set the day to 15 at 2 pm',
+    '<t:1785643200:t> set the month to 5 at 2 pm',
+    '<t:1785643200:t> set the year to 2027 at 2 pm',
+  ]) {
+    const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
+      discardedDateMutation,
+      { text, calendarContext },
+      { implementations: createDeterministicTemporalToolImplementations() },
+    );
+    assert.equal(rejectedDiscardedDateMutation.status, 'failed');
+    assert.match(rejectedDiscardedDateMutation.validation.warnings.join(' '), /calendar transformation.*validated safely/);
+  }
+  const rejectedInstantForRange = await executeTemporalPlanPlannerOutput(
     discardedDateMutation,
-    { text: '<t:1785643200:t> set the day to 15 at 2 pm', calendarContext },
+    { text: '<t:1785643200:t> to 3 pm', calendarContext },
     { implementations: createDeterministicTemporalToolImplementations() },
   );
-  assert.equal(rejectedDiscardedDateMutation.status, 'failed');
-  assert.match(rejectedDiscardedDateMutation.validation.warnings.join(' '), /calendar transformation.*validated safely/);
+  assert.equal(rejectedInstantForRange.status, 'failed');
+  assert.match(rejectedInstantForRange.validation.warnings.join(' '), /instant.*range request/);
 
   const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

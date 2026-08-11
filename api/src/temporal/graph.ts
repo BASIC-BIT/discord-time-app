@@ -3821,6 +3821,9 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   const residue = text.replace(reference, ' ');
   const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  if (new RegExp(String.raw`\b(?:set|change)\s+to\s+${clock}`, 'iu').test(residue)) {
+    return false;
+  }
   return new RegExp(String.raw`(?:^|\s)${separator}\s*${clock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue);
@@ -3831,6 +3834,9 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
   residue = residue
     .replace(/\b(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu, ' ')
     .replace(/\b(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next)\b/giu, ' ');
+  if (/\b(?:set|change|move|use)\s+(?:the\s+)?(?:month|year)\s+(?:to|as)\s+\d{1,4}\b/iu.test(residue)) {
+    return true;
+  }
   return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
 }
 
@@ -4878,6 +4884,13 @@ function discordReferencePlanSemanticsError(
   if (references.some((reference) => discordReferenceHasUnsupportedCalendarTransform(originalText, reference))) {
     return 'Model plan used a Discord-reference calendar transformation that could not be validated safely.';
   }
+  if (
+    references.length === 1
+    && discordReferenceRequestsRange(originalText, references[0]!)
+    && plan.kind !== 'time_range'
+  ) {
+    return 'Model plan returned an instant for a Discord-reference range request.';
+  }
   const expectedDelta = expectedDiscordReferenceShift(originalText, references);
   if (expectedDelta === undefined) {
     return 'Model plan used surrounding Discord-reference shift language that could not be validated safely.';
@@ -5122,6 +5135,9 @@ function expectedDiscordReferenceShift(
   const yesterdayCount = [...residue.matchAll(/\byesterday\b/giu)].length;
   const tomorrowCount = [...residue.matchAll(/\btomorrow\b/giu)].length;
   if (yesterdayCount > 0 || tomorrowCount > 0) {
+    if ([...matchedShiftKeys].some((key) => key !== 'days')) {
+      return undefined;
+    }
     result.days += tomorrowCount - yesterdayCount;
     matchedShift = true;
   }

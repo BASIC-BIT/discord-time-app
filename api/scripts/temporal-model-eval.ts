@@ -2433,6 +2433,9 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
   }
 
   if (evalCase.expected.alternativeRanges !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range === undefined)) {
+      return 'expected range alternatives, got one or more singular alternatives';
+    }
     const actualRanges = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.range)
       .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
@@ -2560,6 +2563,9 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
       return undefined;
     }
   } else if (evalCase.expected.alternativeEpochs !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range !== undefined)) {
+      return 'expected singular alternatives, got one or more ranges';
+    }
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)
       .sort((a, b) => a - b);
@@ -2811,6 +2817,7 @@ function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: Eval
   if (parsed.status !== 'needs_clarification' || alternatives.length === 0) return false;
   if (evalCase.expected.status !== 'needs_clarification') return true;
   if (evalCase.expected.alternativeRanges !== undefined) {
+    if (alternatives.some((alternative) => alternative.range === undefined)) return true;
     const actual = alternatives
       .map((alternative) => alternative.range)
       .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
@@ -2819,6 +2826,7 @@ function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: Eval
     return JSON.stringify(actual) !== JSON.stringify(evalCase.expected.alternativeRanges.map(expectedRangeKey).sort());
   }
   if (evalCase.expected.alternativeEpochs !== undefined) {
+    if (alternatives.some((alternative) => alternative.range !== undefined)) return true;
     const actual = alternatives.map((alternative) => alternative.epoch).sort((left, right) => left - right);
     const expected = [...evalCase.expected.alternativeEpochs].sort((left, right) => left - right);
     return JSON.stringify(actual) !== JSON.stringify(expected);
