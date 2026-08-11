@@ -828,6 +828,44 @@ async function main() {
   assert.equal(acceptedFollowingDayAfter.status, 'needs_clarification');
   assert.equal(acceptedFollowingDayAfter.clarificationAlternatives?.length, 2);
 
+  const dstGapClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Spring-forward day at a bare clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1772866800:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const normalizingImplementations = createDeterministicTemporalToolImplementations();
+  const shiftDateTimeWithoutNormalizationGuard = normalizingImplementations.shiftDateTime;
+  normalizingImplementations.shiftDateTime = async (input) => input.time?.hour === 2
+    ? {
+      id: 'normalized-dst-gap',
+      isoInstant: '2026-03-08T07:00:00Z',
+      zonedDateTime: '2026-03-08T03:00:00-04:00[America/New_York]',
+      timeZone: 'America/New_York',
+      precision: 'datetime',
+      assumptions: [],
+      provenance: 'shift_math',
+    }
+    : shiftDateTimeWithoutNormalizationGuard(input);
+  const rejectedDstGapClarification = await executeTemporalPlanPlannerOutput(
+    dstGapClarification,
+    { text: '<t:1772866800:t> one day later at 2', calendarContext },
+    { implementations: normalizingImplementations },
+  );
+  assert.equal(rejectedDstGapClarification.status, 'failed');
+  assert.equal(rejectedDstGapClarification.clarificationAlternatives, undefined);
+  assert.match(rejectedDstGapClarification.validation.warnings.join(' '), /normalized the requested clock/i);
+
   const orderedCompoundShift = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

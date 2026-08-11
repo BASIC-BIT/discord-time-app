@@ -1112,7 +1112,12 @@ async function runAgentGraph(
             return null;
           }
           return alternativeFromEnrichedCandidate(
-            clarificationLabelForCandidate(alternative.label, enriched, request.text),
+            clarificationLabelForCandidate(
+              alternative.label,
+              enriched,
+              request.text,
+              request.calendarContext.timeZone,
+            ),
             enriched,
             'agent+tools',
             0.8,
@@ -2139,9 +2144,13 @@ async function executePlanStep(
         if (timeOption.time !== undefined) {
           shiftInput.time = timeOption.time;
         }
+        const candidate = await options.implementations.shiftDateTime(shiftInput);
+        if (timeOption.time !== undefined && !candidateHasExactClock(candidate, timeOption.time, calendarContext.timeZone)) {
+          throw new Error('shift_datetime normalized the requested clock to a different local time.');
+        }
         return {
           label: timeOption.label ?? baseCandidate.label,
-          candidate: await options.implementations.shiftDateTime(shiftInput),
+          candidate,
         };
       })));
       recordTool(stepIndex, step, candidates, startedAt);
@@ -2157,14 +2166,17 @@ async function executePlanStep(
       if (times.length === 1 && times[0]?.time === undefined) {
         throw new Error('set_clock_time requires either time or timeStep.');
       }
-      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => ({
-        label: timeOption.label ?? baseCandidate.label,
-        candidate: await options.implementations.setClockTime({
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => {
+        const candidate = await options.implementations.setClockTime({
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           time: timeOption.time!,
           calendarContext,
-        }),
-      }))));
+        });
+        if (!candidateHasExactClock(candidate, timeOption.time!, calendarContext.timeZone)) {
+          throw new Error('set_clock_time normalized the requested clock to a different local time.');
+        }
+        return { label: timeOption.label ?? baseCandidate.label, candidate };
+      })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
@@ -2178,14 +2190,17 @@ async function executePlanStep(
       if (times.length === 1 && times[0]?.time === undefined) {
         throw new Error('combine_date_time requires either time or timeStep.');
       }
-      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => ({
-        label: timeOption.label ?? baseCandidate.label,
-        candidate: await options.implementations.setClockTime({
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => {
+        const candidate = await options.implementations.setClockTime({
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           time: timeOption.time!,
           calendarContext,
-        }),
-      }))));
+        });
+        if (!candidateHasExactClock(candidate, timeOption.time!, calendarContext.timeZone)) {
+          throw new Error('combine_date_time normalized the requested clock to a different local time.');
+        }
+        return { label: timeOption.label ?? baseCandidate.label, candidate };
+      })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
@@ -3738,6 +3753,9 @@ function discordReferenceClarificationCandidateIsGrounded(
   if (discordReferenceRequestsRange(originalText, reference.raw)) {
     return false;
   }
+  if (discordReferenceHasUnsupportedCalendarTransform(originalText, reference.raw)) {
+    return false;
+  }
   const expectedDelta = expectedDiscordReferenceShift(originalText, [reference.raw]);
   if (expectedDelta === undefined) {
     return false;
@@ -3760,7 +3778,18 @@ function discordReferenceClarificationCandidateIsGrounded(
 
 function discordReferenceRequestsRange(text: string, reference: string): boolean {
   const residue = text.replace(reference, ' ');
-  return /(?:^|\s)(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)/iu.test(residue);
+  const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
+  const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  return new RegExp(String.raw`(?:^|\s)${separator}\s*${clock}`, 'iu').test(residue)
+    || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue);
+}
+
+function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
+  let residue = text.replace(reference, ' ').toLowerCase();
+  residue = residue
+    .replace(/\b(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu, ' ')
+    .replace(/\b(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next)\b/giu, ' ');
+  return /\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
 }
 
 function canUseForPlanClarification(enriched: EnrichedCandidate): boolean {
@@ -4604,12 +4633,27 @@ function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFla
   return compact;
 }
 
-function clarificationLabelForCandidate(label: string, enriched: EnrichedCandidate, originalText: string): string {
+function clarificationLabelForCandidate(
+  label: string,
+  enriched: EnrichedCandidate,
+  originalText: string,
+  timeZone: string,
+): string {
   const classification = classifyDiscordTimestampInput(originalText);
   if (classification.route === 'model' && classification.references.length > 0) {
-    return formatClockLabel(Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime));
+    return formatClockLabel(Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime).withTimeZone(timeZone));
   }
   return conciseClarificationLabel(label, enriched);
+}
+
+function candidateHasExactClock(candidate: Candidate, clock: { hour: number; minute: number }, timeZone: string): boolean {
+  const zdt = Temporal.ZonedDateTime.from(candidate.zonedDateTime).withTimeZone(timeZone);
+  return zdt.hour === clock.hour
+    && zdt.minute === clock.minute
+    && zdt.second === 0
+    && zdt.millisecond === 0
+    && zdt.microsecond === 0
+    && zdt.nanosecond === 0;
 }
 
 function temporalClockChoiceContractError(

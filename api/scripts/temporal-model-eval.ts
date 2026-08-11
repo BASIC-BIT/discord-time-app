@@ -151,6 +151,7 @@ type EvalResult = {
   error?: string;
   mismatch?: string;
   clarificationAlternativeCount?: number;
+  unsafeDiagnosticMismatch?: boolean;
   metrics?: {
     agentAttempts?: number;
     toolPasses?: number;
@@ -1857,6 +1858,7 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
+      unsafeDiagnosticMismatch: unsafeParsedDiagnosticMismatch(evalCase, parsed),
       metrics: metricsFromResponse(parsed, evalCase, durationMs),
     };
   } catch (error) {
@@ -2783,15 +2785,34 @@ async function buildEvaluationBoundary(
 }
 
 function unsafeTimestampDiagnosticMismatch(result: EvalResult): boolean {
-  const mismatch = result.mismatch ?? '';
-  if (result.status === 'resolved') {
-    return /^expected status .* got resolved$/u.test(mismatch)
-      || /^expected epoch\b/u.test(mismatch)
-      || /^expected range (?!start format\b|end format\b)/u.test(mismatch);
+  return result.unsafeDiagnosticMismatch === true;
+}
+
+function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: EvalParsed): boolean {
+  if (parsed.status === 'resolved') {
+    if (evalCase.expected.status !== 'resolved') return true;
+    if (evalCase.expected.range !== undefined) {
+      return parsed.range === undefined
+        || parsed.range.start.epoch !== evalCase.expected.range.startEpoch
+        || parsed.range.end.epoch !== evalCase.expected.range.endEpoch;
+    }
+    return parsed.epoch !== evalCase.expected.epoch;
   }
-  if (result.status === 'needs_clarification' && (result.clarificationAlternativeCount ?? 0) > 0) {
-    return /^expected (?:range )?alternatives\b/u.test(mismatch)
-      || /^expected status\b/u.test(mismatch);
+  const alternatives = parsed.clarificationAlternatives ?? [];
+  if (parsed.status !== 'needs_clarification' || alternatives.length === 0) return false;
+  if (evalCase.expected.status !== 'needs_clarification') return true;
+  if (evalCase.expected.alternativeRanges !== undefined) {
+    const actual = alternatives
+      .map((alternative) => alternative.range)
+      .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
+      .map(rangeKeyForEval)
+      .sort();
+    return JSON.stringify(actual) !== JSON.stringify(evalCase.expected.alternativeRanges.map(expectedRangeKey).sort());
+  }
+  if (evalCase.expected.alternativeEpochs !== undefined) {
+    const actual = alternatives.map((alternative) => alternative.epoch).sort((left, right) => left - right);
+    const expected = [...evalCase.expected.alternativeEpochs].sort((left, right) => left - right);
+    return JSON.stringify(actual) !== JSON.stringify(expected);
   }
   return false;
 }
