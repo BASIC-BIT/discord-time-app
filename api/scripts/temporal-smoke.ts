@@ -439,9 +439,9 @@ async function main() {
     { text: '<t:1785643200:t> at 2', calendarContext },
     { implementations: createDeterministicTemporalToolImplementations() },
   );
-  assert.equal(groundedTwoPlanClockChoice.status, 'needs_clarification');
-  assert.equal(groundedTwoPlanClockChoice.clarificationQuestion, 'Did you mean AM or PM?');
+  assert.equal(groundedTwoPlanClockChoice.status, 'failed');
   assert.equal(groundedTwoPlanClockChoice.clarificationAlternatives, undefined);
+  assert.match(groundedTwoPlanClockChoice.validation.warnings.join(' '), /clock did not match/);
 
   const unusedDiscordReferenceBranch = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
@@ -622,6 +622,73 @@ async function main() {
   assert.equal(rejectedCancellingShifts.status, 'failed');
   assert.equal(rejectedCancellingShifts.clarificationAlternatives, undefined);
   assert.match(rejectedCancellingShifts.validation.warnings.join(' '), /shift structure did not match/);
+
+  const unmatchedFollowingMonthShift = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Only the first of two shift clauses',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnmatchedFollowingMonth = await executeTemporalPlanPlannerOutput(
+    unmatchedFollowingMonthShift,
+    { text: '<t:1785643200:t> one day earlier, then the following month at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnmatchedFollowingMonth.status, 'failed');
+  assert.equal(rejectedUnmatchedFollowingMonth.clarificationAlternatives, undefined);
+
+  const wrongRangeShiftEndpoint = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Shifted the start instead of the requested end',
+      startStep: 1,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: 1 }, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785650400:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongRangeEndpoint = await executeTemporalPlanPlannerOutput(
+    wrongRangeShiftEndpoint,
+    { text: '<t:1785643200:t> to <t:1785650400:t>, but move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongRangeEndpoint.status, 'failed');
+  assert.equal(rejectedWrongRangeEndpoint.range, undefined);
+  assert.match(rejectedWrongRangeEndpoint.validation.warnings.join(' '), /end endpoint only/);
+
+  const unrequestedClockOnShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Correct day shift with an unrequested clock',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'shift_datetime', baseStep: 0, time: { hour: 5, minute: 0 }, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnrequestedClock = await executeTemporalPlanPlannerOutput(
+    unrequestedClockOnShift,
+    { text: '<t:1785643200:t> 1 day earlier', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnrequestedClock.status, 'failed');
+  assert.equal(rejectedUnrequestedClock.epoch, undefined);
+  assert.match(rejectedUnrequestedClock.validation.warnings.join(' '), /clock change.*not requested/);
 
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',

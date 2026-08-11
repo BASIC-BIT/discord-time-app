@@ -4741,6 +4741,14 @@ function discordReferencePlanSemanticsError(
   }
 
   const shiftSteps = terminalSteps.filter(({ step }) => step.operation === 'shift_datetime');
+  const rangeTargetError = discordReferenceRangeShiftTargetError(plan, terminalDependencies, shiftSteps, originalText);
+  if (rangeTargetError !== undefined) {
+    return rangeTargetError;
+  }
+  const clockSemanticsError = discordReferenceClockSemanticsError(plan, terminalSteps, originalText);
+  if (clockSemanticsError !== undefined) {
+    return clockSemanticsError;
+  }
   const expectedIsZero = DISCORD_SHIFT_DELTA_KEYS.every((key) => expectedDelta[key] === 0);
   if (!expectedIsZero && shiftSteps.length !== 1) {
     return 'Model plan shift structure did not match the requested Discord-reference transformation.';
@@ -4761,6 +4769,120 @@ function discordReferencePlanSemanticsError(
     : undefined;
 }
 
+function discordReferenceRangeShiftTargetError(
+  plan: TemporalPlan,
+  terminalDependencies: Set<number>[],
+  shiftSteps: Array<{ step: TemporalPlanStep; index: number }>,
+  originalText: string,
+): string | undefined {
+  if (plan.kind !== 'time_range' || terminalDependencies.length !== 2 || shiftSteps.length === 0) {
+    return undefined;
+  }
+  const target = /\b(?:move|shift|extend|shorten)\s+(?:the\s+)?(start|end)\b/iu.exec(originalText)?.[1]?.toLowerCase();
+  if (target === undefined) {
+    return 'Model range plan used a shift whose target endpoint could not be validated safely.';
+  }
+  const targetIndex = target === 'start' ? 0 : 1;
+  const otherIndex = targetIndex === 0 ? 1 : 0;
+  const shiftIndexes = new Set(shiftSteps.map(({ index }) => index));
+  const targetHasShift = [...terminalDependencies[targetIndex]!].some((index) => shiftIndexes.has(index));
+  const otherHasShift = [...terminalDependencies[otherIndex]!].some((index) => shiftIndexes.has(index));
+  return targetHasShift && !otherHasShift
+    ? undefined
+    : `Model range plan did not apply the requested shift to the ${target} endpoint only.`;
+}
+
+function discordReferenceClockSemanticsError(
+  plan: TemporalPlan,
+  terminalSteps: Array<{ step: TemporalPlanStep; index: number }>,
+  originalText: string,
+): string | undefined {
+  const requestedClocks = requestedDiscordReferenceClocks(originalText);
+  const actualClocks = terminalSteps.flatMap(({ step }) => consumedPlanStepClocks(plan, step));
+  const requestedKeys = new Set(requestedClocks.map(clockKey));
+  const actualKeys = new Set(actualClocks.map(clockKey));
+  if (requestedKeys.size === 0) {
+    return actualKeys.size === 0
+      ? undefined
+      : 'Model plan applied a clock change that was not requested for the Discord reference.';
+  }
+  if (
+    actualKeys.size !== requestedKeys.size
+    || [...actualKeys].some((key) => !requestedKeys.has(key))
+  ) {
+    return 'Model plan clock did not match the requested Discord-reference clock.';
+  }
+  return undefined;
+}
+
+function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {
+  const clocks: Array<{ hour: number; minute: number }> = explicitAmPmClockMentions(text).map(({ time }) => time);
+  for (const mention of ambiguousBareClockMentions(text)) {
+    clocks.push(
+      { hour: mention.hour % 12, minute: mention.minute },
+      { hour: mention.hour % 12 + 12, minute: mention.minute },
+    );
+  }
+  for (const match of text.matchAll(/\bat\s+(0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)) {
+    const hour = Number(match[1]) % 12;
+    clocks.push({ hour, minute: 0 }, { hour: hour + 12, minute: 0 });
+  }
+  if (/\bmidnight\b/iu.test(text)) clocks.push({ hour: 0, minute: 0 });
+  if (/\bnoon\b/iu.test(text)) clocks.push({ hour: 12, minute: 0 });
+  for (const match of text.matchAll(/(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)) {
+    const hour = Number(match[1]);
+    if (hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[2]) });
+  }
+  return uniqueClocks(clocks);
+}
+
+function consumedPlanStepClocks(
+  plan: TemporalPlan,
+  step: TemporalPlanStep,
+): Array<{ hour: number; minute: number }> {
+  if (!['shift_datetime', 'set_clock_time', 'combine_date_time'].includes(step.operation)) {
+    return [];
+  }
+  if (step.time !== null) {
+    return [step.time];
+  }
+  if (step.timeStep === null) {
+    return [];
+  }
+  const timeStep = plan.steps[step.timeStep];
+  if (timeStep === undefined) {
+    return [];
+  }
+  if (timeStep.operation === 'interpret_clock_phrase' && timeStep.time !== null) {
+    return [timeStep.time];
+  }
+  if (timeStep.operation !== 'resolve_clock_time') {
+    return [];
+  }
+  const texts = timeStep.options?.map((option) => option.text)
+    ?? [timeStep.text ?? timeStep.query].filter((value): value is string => value !== null);
+  return uniqueClocks(texts.flatMap(parsePlanClockText));
+}
+
+function parsePlanClockText(text: string): Array<{ hour: number; minute: number }> {
+  const explicit = explicitAmPmClockMentions(text).map(({ time }) => time);
+  if (explicit.length > 0) return explicit;
+  if (/^\s*midnight\s*$/iu.test(text)) return [{ hour: 0, minute: 0 }];
+  if (/^\s*noon\s*$/iu.test(text)) return [{ hour: 12, minute: 0 }];
+  const twentyFourHour = /^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$/u.exec(text);
+  return twentyFourHour === null
+    ? []
+    : [{ hour: Number(twentyFourHour[1]), minute: Number(twentyFourHour[2]) }];
+}
+
+function uniqueClocks(clocks: Array<{ hour: number; minute: number }>): Array<{ hour: number; minute: number }> {
+  return [...new Map(clocks.map((clock) => [clockKey(clock), clock])).values()];
+}
+
+function clockKey(clock: { hour: number; minute: number }): string {
+  return `${clock.hour}:${clock.minute}`;
+}
+
 function expectedDiscordReferenceShift(
   originalText: string,
   references: string[],
@@ -4774,6 +4896,7 @@ function expectedDiscordReferenceShift(
   const amountUnitDirection = /\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu;
   let matchedShift = false;
   let matchedAmountUnitCount = 0;
+  const consumedRanges: Array<{ start: number; end: number }> = [];
   for (const match of residue.matchAll(amountUnitDirection)) {
     const amount = discordShiftAmount(match[1]!);
     const key = discordShiftDeltaKey(match[2]!);
@@ -4781,6 +4904,7 @@ function expectedDiscordReferenceShift(
     result[key] += direction * amount;
     matchedShift = true;
     matchedAmountUnitCount += 1;
+    if (match.index !== undefined) consumedRanges.push({ start: match.index, end: match.index + match[0].length });
   }
 
   if (amountUnitMatches.length !== matchedAmountUnitCount) {
@@ -4797,8 +4921,17 @@ function expectedDiscordReferenceShift(
     }
   }
 
-  const shiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b/iu.test(residue);
-  return shiftHint && !matchedShift ? undefined : result;
+  let unconsumedResidue = residue;
+  for (const range of consumedRanges.sort((left, right) => right.start - left.start)) {
+    unconsumedResidue = `${unconsumedResidue.slice(0, range.start)} ${unconsumedResidue.slice(range.end)}`;
+  }
+  if (matchedShift && consumedRanges.length === 0) {
+    unconsumedResidue = unconsumedResidue
+      .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
+      .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
+  }
+  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next)\b/iu.test(unconsumedResidue);
+  return unconsumedShiftHint ? undefined : result;
 }
 
 function discordShiftAmount(value: string): number {
