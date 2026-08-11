@@ -525,6 +525,104 @@ async function main() {
     /shift did not match the requested Discord-reference transformation/,
   );
 
+  const wrongExplicitDiscordReferenceShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Wrong explicit-clock shift',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '2 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongExplicitShift = await executeTemporalPlanPlannerOutput(
+    wrongExplicitDiscordReferenceShift,
+    { text: '<t:1785643200:t> 1 day earlier at 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongExplicitShift.status, 'failed');
+  assert.equal(rejectedWrongExplicitShift.epoch, undefined);
+
+  const partiallyParsedCompoundShift = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Only the final component of a compound shift',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedPartialCompoundShift = await executeTemporalPlanPlannerOutput(
+    partiallyParsedCompoundShift,
+    { text: '<t:1785643200:t> two weeks and three days earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedPartialCompoundShift.status, 'failed');
+  assert.equal(rejectedPartialCompoundShift.clarificationAlternatives, undefined);
+
+  const ungroundedConsumedTimeZone = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Correct shift in an unrequested timezone',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'America/Los_Angeles' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 1, timeStep: 2, timeZoneStep: 0, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUngroundedTimeZone = await executeTemporalPlanPlannerOutput(
+    ungroundedConsumedTimeZone,
+    { text: '<t:1785643200:t> 1 day earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUngroundedTimeZone.status, 'failed');
+  assert.equal(rejectedUngroundedTimeZone.clarificationAlternatives, undefined);
+  assert.match(rejectedUngroundedTimeZone.validation.warnings.join(' '), /timezone step.*not grounded/);
+
+  const cancellingDiscordReferenceShifts = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Offsetting shift chain with different calendar semantics',
+      finalStep: 5,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1706504400:t>', precision: 'date' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 1 }, precision: 'date' },
+        { op: 'shift_datetime', baseStep: 1, delta: { months: 1 }, precision: 'date' },
+        { op: 'shift_datetime', baseStep: 2, delta: { days: -1 }, precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 3, timeStep: 4, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedCancellingShifts = await executeTemporalPlanPlannerOutput(
+    cancellingDiscordReferenceShifts,
+    { text: '<t:1706504400:t> one month later at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedCancellingShifts.status, 'failed');
+  assert.equal(rejectedCancellingShifts.clarificationAlternatives, undefined);
+  assert.match(rejectedCancellingShifts.validation.warnings.join(' '), /shift structure did not match/);
+
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
