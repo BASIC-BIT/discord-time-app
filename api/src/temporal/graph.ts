@@ -1104,7 +1104,11 @@ async function runAgentGraph(
       const requestedAlternatives = input.alternatives
         .map((alternative) => {
           const enriched = enrichedCandidates.get(alternative.candidateId);
-          if (!enriched || !canUseForClarification(enriched)) {
+          if (
+            !enriched
+            || !canUseForClarification(enriched)
+            || !discordReferenceClarificationCandidateIsGrounded(enriched, request.text, request.calendarContext.timeZone)
+          ) {
             return null;
           }
           return alternativeFromEnrichedCandidate(
@@ -3718,6 +3722,36 @@ function canUseForClarification(enriched: EnrichedCandidate): boolean {
     && warnings.every((warning) => /trailing bare number|unresolved time signal|bare 1-12 clock/i.test(warning));
 }
 
+function discordReferenceClarificationCandidateIsGrounded(
+  enriched: EnrichedCandidate,
+  originalText: string,
+  timeZone: string,
+): boolean {
+  const warnings = enriched.validation?.warnings ?? [];
+  if (!warnings.some((warning) => /bare 1-12 clock/i.test(warning))) {
+    return true;
+  }
+  const classification = classifyDiscordTimestampInput(originalText);
+  if (classification.route !== 'model' || classification.references.length !== 1) {
+    return false;
+  }
+  const reference = classification.references[0]!;
+  const expectedDelta = expectedDiscordReferenceShift(originalText, [reference.raw]);
+  if (expectedDelta === undefined) {
+    return false;
+  }
+  try {
+    const anchor = Temporal.Instant.fromEpochMilliseconds(reference.epochSeconds * 1000).toZonedDateTimeISO(timeZone);
+    const expected = anchor.add(expectedDelta);
+    const candidate = Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime).withTimeZone(timeZone);
+    const requestedClockKeys = new Set(requestedDiscordReferenceClocks(originalText).map(clockKey));
+    return Temporal.PlainDate.compare(candidate.toPlainDate(), expected.toPlainDate()) === 0
+      && requestedClockKeys.has(clockKey({ hour: candidate.hour, minute: candidate.minute }));
+  } catch {
+    return false;
+  }
+}
+
 function canUseForPlanClarification(enriched: EnrichedCandidate): boolean {
   if (canUseForClarification(enriched)) {
     return true;
@@ -4852,7 +4886,7 @@ function discordReferenceClockSemanticsError(
       ) {
         return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
       }
-    } else if (requestedKeys.size > 1) {
+    } else if (requestedClocks.length > 1) {
       return 'Model range plan clock ownership could not be validated safely for each endpoint.';
     }
   }
@@ -4888,7 +4922,7 @@ function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; mi
     const hour = Number(match[1]);
     if (hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[2]) });
   }
-  return uniqueClocks(clocks);
+  return clocks;
 }
 
 function consumedPlanStepClocks(
@@ -4954,6 +4988,7 @@ function expectedDiscordReferenceShift(
   const amountUnitDirection = /\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu;
   let matchedShift = false;
   let matchedAmountUnitCount = 0;
+  const matchedShiftKeys = new Set<DiscordShiftDeltaKey>();
   const consumedRanges: Array<{ start: number; end: number }> = [];
   for (const match of residue.matchAll(amountUnitDirection)) {
     const amount = discordShiftAmount(match[1]!);
@@ -4962,10 +4997,14 @@ function expectedDiscordReferenceShift(
     result[key] += direction * amount;
     matchedShift = true;
     matchedAmountUnitCount += 1;
+    matchedShiftKeys.add(key);
     if (match.index !== undefined) consumedRanges.push({ start: match.index, end: match.index + match[0].length });
   }
 
   if (amountUnitMatches.length !== matchedAmountUnitCount) {
+    return undefined;
+  }
+  if (matchedAmountUnitCount > 1 && matchedShiftKeys.size > 1) {
     return undefined;
   }
 

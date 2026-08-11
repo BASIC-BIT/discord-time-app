@@ -781,6 +781,29 @@ async function main() {
   assert.equal(rejectedSwappedAdjacentRangeClocks.range, undefined);
   assert.match(rejectedSwappedAdjacentRangeClocks.validation.warnings.join(' '), /clock ownership.*each endpoint/);
 
+  const missingDuplicateRangeClock = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Applied duplicate requested clock to only one endpoint',
+      startStep: 2,
+      endStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_calendar_query', query: '<t:1785729600:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMissingDuplicateRangeClock = await executeTemporalPlanPlannerOutput(
+    missingDuplicateRangeClock,
+    { text: 'from <t:1785643200:t> at 2 pm to <t:1785729600:t> at 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMissingDuplicateRangeClock.status, 'failed');
+  assert.equal(rejectedMissingDuplicateRangeClock.range, undefined);
+  assert.match(rejectedMissingDuplicateRangeClock.validation.warnings.join(' '), /clock ownership.*each endpoint/);
+
   const followingDayAfterClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 5 AM or 5 PM?',
@@ -804,6 +827,26 @@ async function main() {
   );
   assert.equal(acceptedFollowingDayAfter.status, 'needs_clarification');
   assert.equal(acceptedFollowingDayAfter.clarificationAlternatives?.length, 2);
+
+  const orderedCompoundShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Collapsed an ordered compound calendar shift',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1706688000:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: -1, months: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedOrderedCompoundShift = await executeTemporalPlanPlannerOutput(
+    orderedCompoundShift,
+    { text: '<t:1706688000:t> one day earlier, then one month later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedOrderedCompoundShift.status, 'failed');
+  assert.equal(rejectedOrderedCompoundShift.epoch, undefined);
+  assert.match(rejectedOrderedCompoundShift.validation.warnings.join(' '), /could not be validated safely/);
 
   const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
