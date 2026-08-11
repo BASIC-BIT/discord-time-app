@@ -3839,6 +3839,9 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
   if (/\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b|\b\d{1,2}[-/]\d{1,2}\b|\b(?:on|for|date)\s+\d{1,2}\.\d{1,2}\b/iu.test(residue)) {
     return true;
   }
+  if (/\b(?:christmas|thanksgiving|easter|new\s+year(?:'s)?|memorial\s+day|labor\s+day|independence\s+day|halloween|hanukkah|kwanzaa|ramadan|eid(?:\s+al[- ](?:fitr|adha))?|valentine(?:'s)?\s+day|martin\s+luther\s+king(?:\s+jr\.?)?\s+day|presidents?\s+day|veterans?\s+day)\b/iu.test(residue)) {
+    return true;
+  }
   return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
 }
 
@@ -4972,6 +4975,11 @@ function discordReferenceClockSemanticsError(
   originalText: string,
 ): string | undefined {
   const requestedClocks = requestedDiscordReferenceClocks(originalText);
+  const singularClockMentionCount = explicitAmPmClockMentions(originalText).length
+    + ambiguousBareClockMentions(originalText).length;
+  if (plan.kind !== 'time_range' && singularClockMentionCount > 1) {
+    return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
+  }
   const clocksByTerminal = terminalDependencies.map((dependencies) => {
     const consumed = [...dependencies].map((index) => consumedPlanStepClocks(plan, plan.steps[index]!));
     return consumed.some((clocks) => clocks === undefined)
@@ -5156,6 +5164,9 @@ function expectedDiscordReferenceShift(
     return undefined;
   }
   if (matchedAmountUnitCount > 1 && matchedShiftKeys.size > 1) {
+    return undefined;
+  }
+  if (matchedAmountUnitCount > 1 && /\b(?:actually|instead|rather|change|correct|make\s+it|was)\b/iu.test(residue)) {
     return undefined;
   }
   if (matchedAmountUnitCount > 1 && (matchedShiftKeys.has('months') || matchedShiftKeys.has('years'))) {

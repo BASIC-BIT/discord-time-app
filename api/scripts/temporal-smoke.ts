@@ -773,6 +773,18 @@ async function main() {
     { hours: 1 },
   );
   assert.equal(unsupportedFractionalShift.status, 'failed');
+  const unsupportedSupersededShift = await executeModelReferenceShift(
+    '<t:1785643200:t> was one day later; actually make it two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedSupersededShift.status, 'failed');
+  const unsupportedMultiClockCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at 2 pm; change it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(unsupportedMultiClockCorrection.status, 'failed');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -791,6 +803,7 @@ async function main() {
     '<t:1785643200:t> set the year to 2027 at 2 pm',
     '<t:1785643200:t> on 2027-05-01 at 2 pm',
     '<t:1785643200:t> on 5/1 at 2 pm',
+    '<t:1785643200:t> on Christmas at 2 pm',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,

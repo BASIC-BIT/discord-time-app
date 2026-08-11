@@ -1809,19 +1809,17 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
         settings.local_slm_endpoint_base_url = LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string();
     }
     let configured_model = settings.local_slm_model.trim();
-    if configured_model == LOCAL_SLM_LEGACY_MODEL
-        || configured_model == LOCAL_SLM_PREVIOUS_MODEL
-        || configured_model == LOCAL_SLM_V11_MODEL
-        || configured_model == LOCAL_SLM_V9_MODEL
-    {
-        settings.local_slm_model = LOCAL_SLM_DEFAULT_MODEL.to_string();
-    }
     let configured_adapter = settings.local_slm_adapter_path.trim();
-    if configured_adapter == LOCAL_SLM_LEGACY_ADAPTER_PATH
-        || configured_adapter == LOCAL_SLM_PREVIOUS_ADAPTER_PATH
-        || configured_adapter == LOCAL_SLM_V11_ADAPTER_PATH
-        || configured_adapter == LOCAL_SLM_V9_ADAPTER_PATH
-    {
+    let is_packaged_pair = (configured_model == LOCAL_SLM_LEGACY_MODEL
+        && configured_adapter == LOCAL_SLM_LEGACY_ADAPTER_PATH)
+        || (configured_model == LOCAL_SLM_PREVIOUS_MODEL
+            && configured_adapter == LOCAL_SLM_PREVIOUS_ADAPTER_PATH)
+        || (configured_model == LOCAL_SLM_V11_MODEL
+            && configured_adapter == LOCAL_SLM_V11_ADAPTER_PATH)
+        || (configured_model == LOCAL_SLM_V9_MODEL
+            && configured_adapter == LOCAL_SLM_V9_ADAPTER_PATH);
+    if is_packaged_pair {
+        settings.local_slm_model = LOCAL_SLM_DEFAULT_MODEL.to_string();
         settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
     }
     settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
@@ -1946,6 +1944,21 @@ mod local_slm_default_migration_tests {
             settings.local_slm_endpoint_base_url,
             "http://127.0.0.1:9999/v1"
         );
+        assert_eq!(settings.local_slm_adapter_path, "custom/adapter");
+    }
+
+    #[test]
+    fn preserves_v11_model_identity_with_a_custom_adapter() {
+        let mut settings = AppSettings {
+            settings_schema_version: 0,
+            local_slm_model: LOCAL_SLM_V11_MODEL.to_string(),
+            local_slm_adapter_path: "custom/adapter".to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings);
+
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_V11_MODEL);
         assert_eq!(settings.local_slm_adapter_path, "custom/adapter");
     }
 
