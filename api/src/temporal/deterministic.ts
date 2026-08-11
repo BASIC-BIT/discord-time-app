@@ -1363,7 +1363,11 @@ function resolveClockTimeCandidates(text: string): ResolveClockTimeOutput['candi
   }
 
   const twentyFourHour = TWENTY_FOUR_HOUR_TIME_PATTERN.exec(text);
-  if (twentyFourHour?.[1] && twentyFourHour[2]) {
+  const overlapsTwelveHour = twentyFourHour !== null
+    && twelveHour !== null
+    && twentyFourHour.index < twelveHour.index + twelveHour[0].length
+    && twelveHour.index < twentyFourHour.index + twentyFourHour[0].length;
+  if (twentyFourHour?.[1] && twentyFourHour[2] && !overlapsTwelveHour) {
     const hour = Number(twentyFourHour[1]);
     const minute = Number(twentyFourHour[2]);
     addCandidate({ hour, minute, normalized: formatRequestedTime({ hour, minute }), assumptions: [`Interpreted ${twentyFourHour[0]} as a 24-hour clock time.`], confidence: 0.95 });

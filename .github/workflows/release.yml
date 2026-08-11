@@ -231,10 +231,10 @@ jobs:
           ## HammerOverlay ${{ env.VERSION }}
 
           ### What's New
-          - Supervised local parser sidecar for desktop builds.
-          - Timezone-aware deterministic Temporal parsing with first-class time ranges.
-          - Range-aware overlay copy options for Discord timestamp pairs.
-          - Local Temporal SLM training, serving, and evaluation tooling.
+          - Discord timestamps now participate in semantic time arithmetic instead of silently discarding meaningful surrounding language.
+          - Ambiguous clock composition can return selectable AM/PM alternatives in the overlay.
+          - Superseded parse requests are cancelled through the desktop and backend path to avoid wasted local-model work.
+          - The promoted Qwen3.5-0.8B V19 Temporal Plan-IR adapter adds broader timestamp, shift, clock-order, typo, and clarification coverage.
 
           ### Installation
           1. Download the MSI installer below.

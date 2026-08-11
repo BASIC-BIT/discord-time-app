@@ -452,6 +452,12 @@ function timeRangeReinforcementSeedRows(): TemporalIrTrainingRow[] {
     unsupportedRangeRow('range-reinforce-date-span-to', 'Friday to Sunday', 'A date span without exact endpoint times is not a single timestamp range.', 'train'),
     unsupportedRangeRow('range-reinforce-date-span-noise', 'tues thru thurs maybe 3-5', 'Ambiguous schedule blocks are not a single continuous timestamp range.', 'train'),
     unsupportedRangeRow('range-reinforce-recurring-range', 'every friday 3pm-5pm', 'Recurring time ranges are outside the first range target.', 'train'),
+    unsupportedRangeRow('range-reinforce-schedule-block-weekdays', 'Monday through Wednesday 9am-11am', 'Repeated schedule blocks are not a single continuous timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-schedule-block-weekend', 'Friday through Sunday 6pm-8pm', 'Repeated schedule blocks are not a single continuous timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-schedule-block-each-day', 'Wednesday to Friday, each day from 3pm to 5pm', 'Repeated schedule blocks are not a single continuous timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-schedule-block-daily', 'daily Tuesday through Thursday 14:00-16:00', 'Repeated schedule blocks are not a single continuous timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-schedule-block-thru', 'Mon thru Thu 8:30am-10am', 'Repeated schedule blocks are not a single continuous timestamp range.', 'train'),
+    unsupportedRangeRow('range-reinforce-schedule-block-validation', 'Saturday through Monday 1pm-4pm', 'Repeated schedule blocks are not a single continuous timestamp range.', 'validation'),
   ];
 }
 
@@ -1436,10 +1442,13 @@ function discordTimestampReferenceRows(): TemporalIrTrainingRow[] {
       { hours: 1 },
       'train',
     ),
+    ...discordTimestampShiftPresentationReinforcementRows(),
     ...discordTimestampShiftClockCompositionRows(),
     ...discordTimestampClockCompositionRows(),
     ...discordTimestampShiftClockAmbiguityReinforcementRows(),
+    ...discordTimestampShiftClockPrefixAmbiguityRows(),
     ...discordTimestampClockAmbiguityRows(),
+    ...discordTimestampShiftClockLanguageVariationRows(),
     row({
       id: 'discord-reference-copied-prose-train',
       text: `The event starts at ${anchor}; bring a friend and use the north entrance.`,
@@ -1616,6 +1625,45 @@ function discordTimestampShiftRow(
   });
 }
 
+function discordTimestampShiftPresentationReinforcementRows(): TemporalIrTrainingRow[] {
+  const specs: ReadonlyArray<{
+    id: string;
+    text: string;
+    anchor: string;
+    shift: Partial<TemporalPlanStep['delta']>;
+  }> = [
+    { id: 'time-suffix-hours', text: '<t:1785643200:t> two hours later', anchor: '<t:1785643200:t>', shift: { hours: 2 } },
+    { id: 'time-prefix-minutes', text: '45 minutes after <t:1785643200:t>', anchor: '<t:1785643200:t>', shift: { minutes: 45 } },
+    { id: 'time-infix-before', text: 'an hour before <t:1793511000:t>', anchor: '<t:1793511000:t>', shift: { hours: -1 } },
+    { id: 'time-typo-after', text: '3 hours afetr <t:1785733200:t>', anchor: '<t:1785733200:t>', shift: { hours: 3 } },
+    { id: 'time-fallback-minutes', text: '<t:1793511000:t> 30 minutes later', anchor: '<t:1793511000:t>', shift: { minutes: 30 } },
+    { id: 'long-datetime-subday', text: '<t:1785733200:F> 90 minutes later', anchor: '<t:1785733200:F>', shift: { minutes: 90 } },
+    { id: 'date-subday-needs-clock', text: '<t:1772951400:D> one hour later', anchor: '<t:1772951400:D>', shift: { hours: 1 } },
+    { id: 'time-calendar-day', text: '<t:1785643200:t> one day later', anchor: '<t:1785643200:t>', shift: { days: 1 } },
+    { id: 'time-calendar-week', text: 'one week before <t:1785643200:t>', anchor: '<t:1785643200:t>', shift: { weeks: -1 } },
+    { id: 'time-calendar-two-days', text: '<t:1793511000:t> two days earlier', anchor: '<t:1793511000:t>', shift: { days: -2 } },
+    { id: 'time-calendar-month', text: 'one month after <t:1785643200:t>', anchor: '<t:1785643200:t>', shift: { months: 1 } },
+    { id: 'time-calendar-week-typo', text: '<t:1785733200:t> one week ltaer', anchor: '<t:1785733200:t>', shift: { weeks: 1 } },
+    { id: 'long-datetime-calendar-day', text: '<t:1785733200:F> one day later', anchor: '<t:1785733200:F>', shift: { days: 1 } },
+    { id: 'date-calendar-day', text: '<t:1772951400:D> one day earlier', anchor: '<t:1772951400:D>', shift: { days: -1 } },
+    { id: 'spring-time-calendar-two-days', text: '<t:1772955000:t> two days later', anchor: '<t:1772955000:t>', shift: { days: 2 } },
+    { id: 'spring-time-calendar-week-prefix', text: 'one week after <t:1772947800:t>', anchor: '<t:1772947800:t>', shift: { weeks: 1 } },
+    { id: 'spring-time-calendar-day-before', text: 'the day before <t:1772958600:t>', anchor: '<t:1772958600:t>', shift: { days: -1 } },
+    { id: 'fall-time-calendar-day', text: '<t:1793511000:t> one day later', anchor: '<t:1793511000:t>', shift: { days: 1 } },
+    { id: 'fall-time-calendar-two-days-prefix', text: 'two days before <t:1793514600:t>', anchor: '<t:1793514600:t>', shift: { days: -2 } },
+    { id: 'fall-time-calendar-week', text: '<t:1793518200:t> one week later', anchor: '<t:1793518200:t>', shift: { weeks: 1 } },
+  ];
+
+  return specs.flatMap((spec, specIndex) => Array.from({ length: specIndex < 5 ? 3 : specIndex < 7 ? 2 : 3 }, (_, repetition) =>
+    discordTimestampShiftRow(
+      `discord-reference-shift-presentation-${spec.id}-${repetition + 1}`,
+      spec.text,
+      spec.anchor,
+      spec.shift,
+      repetition === 0 && specIndex >= 7 ? 'validation' : 'train',
+    )));
+}
+
 function discordTimestampSourceFormat(anchor: string): PlanPresentationFormat {
   const format = /:([dDtTfFR])>$/u.exec(anchor)?.[1];
   return (format ?? 'f') as PlanPresentationFormat;
@@ -1636,6 +1684,51 @@ function presentationFormatForShift(
 
 function presentationFormatForClockComposition(anchor: string): PlanPresentationFormat {
   return discordTimestampSourceFormat(anchor) === 'F' ? 'F' : 'f';
+}
+
+function clockClarificationOptions(clockText: string): TemporalPlanStep['options'] {
+  return (['am', 'pm'] as const).map((meridiem) => ({
+    label: `${clockText} ${meridiem.toUpperCase()}`,
+    text: `${clockText} ${meridiem}`,
+  }));
+}
+
+function shiftedDiscordClockClarificationPlan(
+  anchor: string,
+  shift: Partial<TemporalPlanStep['delta']>,
+  clockText: string,
+): TemporalPlan {
+  return plan(
+    `Shifted date at ${clockText}`,
+    [
+      step({ operation: 'resolve_calendar_query', query: anchor, precision: 'date' }),
+      step({ operation: 'resolve_clock_time', options: clockClarificationOptions(clockText) }),
+      step({ operation: 'shift_datetime', baseStep: 0, timeStep: 1, delta: delta(shift), precision: 'datetime' }),
+    ],
+    2,
+    0.85,
+    'f',
+  );
+}
+
+function discordClockClarificationPlan(anchor: string, clockText: string): TemporalPlan {
+  return plan(
+    `Timestamp date at ${clockText}`,
+    [
+      step({ operation: 'resolve_calendar_query', query: anchor, precision: 'date' }),
+      step({ operation: 'resolve_clock_time', options: clockClarificationOptions(clockText) }),
+      step({ operation: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' }),
+    ],
+    2,
+    0.85,
+    'f',
+  );
+}
+
+function typoRelativeDayShift(text: string): Partial<TemporalPlanStep['delta']> {
+  const magnitude = /\b(?:2|two)\s+days\b/iu.test(text) ? 2 : 1;
+  const direction = /\b(?:ltaer|afetr)\b/iu.test(text) ? 1 : -1;
+  return { days: direction * magnitude };
 }
 
 function discordTimestampShiftClockCompositionRows(): TemporalIrTrainingRow[] {
@@ -1705,7 +1798,7 @@ function discordTimestampShiftClockCompositionRows(): TemporalIrTrainingRow[] {
     output: planner(
       'clarification',
       'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.',
-      [],
+      [shiftedDiscordClockClarificationPlan(anchor, shift.delta, clock.text)],
       clock.question,
     ),
   })));
@@ -1738,6 +1831,8 @@ function discordTimestampClockCompositionRows(): TemporalIrTrainingRow[] {
     { id: 'change-time-to', split: 'train', render: (anchor, clock) => `change the time of ${anchor} to ${clock}` },
     { id: 'but-at-that-day', split: 'train', render: (anchor, clock) => `${anchor}, but at ${clock} that day` },
     { id: 'use-date-from', split: 'train', render: (anchor, clock) => `use the date from ${anchor} at ${clock}` },
+    { id: 'clock-first-keep-day', split: 'train', render: (anchor, clock) => `${clock}, keeping the same calendar day as ${anchor}` },
+    { id: 'same-day-use-clock', split: 'train', render: (anchor, clock) => `on the same day as ${anchor}, use ${clock}` },
     { id: 'same-day-prefix', split: 'validation', render: (anchor, clock) => `${clock} on the same day as ${anchor}` },
     { id: 'same-date-prefix', split: 'validation', render: (anchor, clock) => `same date as ${anchor}, at ${clock}` },
     { id: 'keep-date', split: 'holdout', render: (anchor, clock) => `keep ${anchor}'s date and use ${clock}` },
@@ -1779,6 +1874,10 @@ function discordTimestampShiftClockAmbiguityReinforcementRows(): TemporalIrTrain
     '<t:1785733200:F> one day earlier at 10',
     '<t:1772951400:D> one day ebefore at 11',
     '<t:1793511000:R> one day befor at 6:15',
+    '<t:1785733200:F> one day ltaer at 4',
+    '<t:1772951400:D> a day afetr at 6',
+    '<t:1793511000:R> one day ltaer at 9:30',
+    '<t:1785733200:F> two days afetr at 11',
     '<t:1785643200:t> 1 day ltaer at 3',
     '<t:1785733200:F> one day afetr at 4:30',
   ] as const;
@@ -1787,16 +1886,48 @@ function discordTimestampShiftClockAmbiguityReinforcementRows(): TemporalIrTrain
     return row({
       id: `discord-reference-shift-clock-ambiguity-reinforcement-${index + 1}-${repetition + 1}`,
       text,
-      split: index < 10 ? 'train' : 'validation',
+      split: index < 14 ? 'train' : 'validation',
       tags: ['discord-reference', 'offset', 'clock-composition', 'bare-clock', 'ambiguity', 'relative-typo', 'reinforcement'],
       output: planner(
         'clarification',
         'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.',
-        [],
+        [shiftedDiscordClockClarificationPlan(
+          /<t:\d+:[dDtTfFR]>/u.exec(text)?.[0] ?? '<t:1785643200:t>',
+          typoRelativeDayShift(text),
+          clock,
+        )],
         `Did you mean ${clock} AM or ${clock} PM?`,
       ),
     });
   }));
+}
+
+function discordTimestampShiftClockPrefixAmbiguityRows(): TemporalIrTrainingRow[] {
+  const anchors = [
+    { id: 'summer-short-time', text: '<t:1785643200:t>' },
+    { id: 'summer-long-date-time', text: '<t:1785733200:F>' },
+    { id: 'spring-forward-date', text: '<t:1772951400:D>' },
+    { id: 'fall-back-relative', text: '<t:1793511000:R>' },
+  ] as const;
+  const clocks = ['2', '4:30', '9'] as const;
+  const templates = [
+    { id: 'previous-day', delta: { days: -1 }, render: (anchor: string, clock: string) => `at ${clock}, use the previous day from ${anchor}` },
+    { id: 'day-before', delta: { days: -1 }, render: (anchor: string, clock: string) => `${clock} on the date one day before ${anchor}` },
+    { id: 'following-day', delta: { days: 1 }, render: (anchor: string, clock: string) => `make it ${clock} on the following day relative to ${anchor}` },
+  ] as const;
+
+  return templates.flatMap((template) => anchors.flatMap((anchor) => clocks.map((clock) => row({
+    id: `discord-reference-shift-clock-prefix-ambiguity-${template.id}-${anchor.id}-${clock.replace(':', '-')}`,
+    text: template.render(anchor.text, clock),
+    split: 'train',
+    tags: ['discord-reference', 'offset', 'clock-composition', 'bare-clock', 'ambiguity', 'clock-prefix', 'reinforcement'],
+    output: planner(
+      'clarification',
+      'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.',
+      [shiftedDiscordClockClarificationPlan(anchor.text, template.delta, clock)],
+      `Did you mean ${clock} AM or ${clock} PM?`,
+    ),
+  }))));
 }
 
 function discordTimestampClockAmbiguityRows(): TemporalIrTrainingRow[] {
@@ -1819,6 +1950,8 @@ function discordTimestampClockAmbiguityRows(): TemporalIrTrainingRow[] {
     { id: 'day-at', split: 'train', render: (anchor, clock) => `${anchor} day at ${clock}` },
     { id: 'that-day-at', split: 'train', render: (anchor, clock) => `${anchor} that day at ${clock}` },
     { id: 'set-to', split: 'train', render: (anchor, clock) => `set ${anchor} to ${clock}` },
+    { id: 'clock-first-keep-day', split: 'train', render: (anchor, clock) => `${clock}, keeping the same calendar day as ${anchor}` },
+    { id: 'same-day-use-clock', split: 'train', render: (anchor, clock) => `on the same day as ${anchor}, use ${clock}` },
     { id: 'same-date-prefix', split: 'validation', render: (anchor, clock) => `same date as ${anchor}, at ${clock}` },
     { id: 'keep-date', split: 'holdout', render: (anchor, clock) => `keep ${anchor}'s date and use ${clock}` },
   ];
@@ -1837,10 +1970,62 @@ function discordTimestampClockAmbiguityRows(): TemporalIrTrainingRow[] {
     output: planner(
       'clarification',
       'The timestamp supplies a date anchor, but the requested 1-12 clock does not specify AM or PM.',
-      [],
+      [discordClockClarificationPlan(anchor.text, clock.text)],
       clock.question,
     ),
   }))));
+}
+
+function discordTimestampShiftClockLanguageVariationRows(): TemporalIrTrainingRow[] {
+  const variants: ReadonlyArray<{
+    id: string;
+    text: string;
+    anchor: string;
+    clock: string;
+    shift: Partial<TemporalPlanStep['delta']>;
+    split: Split;
+    explicit?: boolean;
+  }> = [
+    { id: 'clock-prefix-before', text: 'at 2, use the day before <t:1785643200:t>', anchor: '<t:1785643200:t>', clock: '2', shift: { days: -1 }, split: 'train' },
+    { id: 'clock-prefix-after', text: 'at 4:30 use the day after <t:1785733200:F>', anchor: '<t:1785733200:F>', clock: '4:30', shift: { days: 1 }, split: 'train' },
+    { id: 'previous-day-infix', text: 'make <t:1785643200:t> 3 o’clock on the previous day', anchor: '<t:1785643200:t>', clock: '3', shift: { days: -1 }, split: 'train' },
+    { id: 'following-day-infix', text: 'make <t:1785733200:F> 8 on the following day', anchor: '<t:1785733200:F>', clock: '8', shift: { days: 1 }, split: 'train' },
+    { id: 'two-days-before-prefix', text: 'at 7 on the date two days before <t:1772951400:D>', anchor: '<t:1772951400:D>', clock: '7', shift: { days: -2 }, split: 'train' },
+    { id: 'typo-prefix-before', text: 'at 5 use a day ebefore <t:1793511000:R>', anchor: '<t:1793511000:R>', clock: '5', shift: { days: -1 }, split: 'train' },
+    { id: 'typo-infix-after', text: 'make <t:1785643200:t> 9:30 one day afetr', anchor: '<t:1785643200:t>', clock: '9:30', shift: { days: 1 }, split: 'train' },
+    { id: 'explicit-prefix-before', text: 'at 2 pm, use the day before <t:1785643200:t>', anchor: '<t:1785643200:t>', clock: '2 pm', shift: { days: -1 }, split: 'train', explicit: true },
+    { id: 'explicit-infix-after', text: 'make <t:1785733200:F> 7:30 am on the following day', anchor: '<t:1785733200:F>', clock: '7:30 am', shift: { days: 1 }, split: 'train', explicit: true },
+    { id: 'validation-prefix', text: '2 o’clock, on the day preceding <t:1772951400:D>', anchor: '<t:1772951400:D>', clock: '2', shift: { days: -1 }, split: 'validation' },
+    { id: 'validation-suffix', text: '<t:1793511000:R>, but use 6:15 on the next day', anchor: '<t:1793511000:R>', clock: '6:15', shift: { days: 1 }, split: 'validation' },
+    { id: 'validation-explicit-prefix', text: 'noon on the day before <t:1785643200:t>', anchor: '<t:1785643200:t>', clock: 'noon', shift: { days: -1 }, split: 'validation', explicit: true },
+    { id: 'holdout-prefix', text: 'use 11 on the prior day relative to <t:1785733200:F>', anchor: '<t:1785733200:F>', clock: '11', shift: { days: -1 }, split: 'holdout' },
+    { id: 'holdout-infix', text: 'take <t:1772951400:D>, go forward one day, and make it 6', anchor: '<t:1772951400:D>', clock: '6', shift: { days: 1 }, split: 'holdout' },
+    { id: 'holdout-explicit', text: 'the previous day from <t:1793511000:R> at midnight', anchor: '<t:1793511000:R>', clock: 'midnight', shift: { days: -1 }, split: 'holdout', explicit: true },
+    { id: 'prefix-after-five', text: 'at 5 use the following day after <t:1785643200:t>', anchor: '<t:1785643200:t>', clock: '5', shift: { days: 1 }, split: 'train' },
+    { id: 'prefix-after-nine-thirty', text: '9:30 on the next day relative to <t:1785733200:F>', anchor: '<t:1785733200:F>', clock: '9:30', shift: { days: 1 }, split: 'train' },
+    { id: 'prefix-before-six', text: "6 o'clock on the day before <t:1772951400:D>", anchor: '<t:1772951400:D>', clock: '6', shift: { days: -1 }, split: 'train' },
+    { id: 'prefix-preceding-ten', text: 'at 10, take the date preceding <t:1793511000:R>', anchor: '<t:1793511000:R>', clock: '10', shift: { days: -1 }, split: 'train' },
+    { id: 'infix-following-seven', text: 'make <t:1772951400:D> 7 on the following day', anchor: '<t:1772951400:D>', clock: '7', shift: { days: 1 }, split: 'train' },
+    { id: 'validation-prefix-after-one', text: 'at 1:30 use the day following <t:1793511000:R>', anchor: '<t:1793511000:R>', clock: '1:30', shift: { days: 1 }, split: 'validation' },
+  ];
+
+  return variants.map((variant) => row({
+    id: `discord-reference-shift-clock-language-${variant.id}`,
+    text: variant.text,
+    split: variant.split,
+    tags: ['discord-reference', 'offset', 'clock-composition', 'language-order-variation', ...(variant.explicit ? ['explicit-clock'] : ['bare-clock', 'ambiguity'])],
+    output: variant.explicit
+      ? planner('plans', 'Resolve the Discord timestamp, apply the requested calendar shift, and set the explicit clock on the shifted date.', [
+        plan('Shifted Discord timestamp with requested clock', [
+          step({ operation: 'resolve_calendar_query', query: variant.anchor, precision: 'date' }),
+          step({ operation: 'resolve_clock_time', text: variant.clock }),
+          step({ operation: 'shift_datetime', baseStep: 0, timeStep: 1, delta: delta(variant.shift), precision: 'datetime' }),
+        ], 2, 0.9, 'f'),
+      ])
+      : planner('clarification', 'The timestamp and relative shift identify a date, but the requested 1-12 clock does not specify AM or PM.', [
+        shiftedDiscordClockClarificationPlan(variant.anchor, variant.shift, variant.clock),
+      ], `Did you mean ${variant.clock} AM or ${variant.clock} PM?`),
+  }));
 }
 
 function unsupportedEpochRow(id: string, text: string, split: Split): TemporalIrTrainingRow {
@@ -3030,6 +3215,7 @@ function step(overrides: Partial<TemporalPlanStep> & Pick<TemporalPlanStep, 'ope
     operation: overrides.operation,
     query: overrides.query ?? null,
     text: overrides.text ?? null,
+    options: overrides.options ?? null,
     holidayName: overrides.holidayName ?? null,
     weekday: overrides.weekday ?? null,
     weekdayAnchor: overrides.weekdayAnchor ?? null,
@@ -3059,10 +3245,20 @@ function delta(overrides: Partial<TemporalPlanStep['delta']>): TemporalPlanStep[
 }
 
 function validateRow(row: TemporalIrTrainingRow): TemporalIrTrainingRow {
-  return {
+  const validated = {
     ...row,
     output: TemporalPlanPlannerSchema.parse(row.output),
   };
+  for (const plan of validated.output.plans) {
+    for (const [stepIndex, planStep] of plan.steps.entries()) {
+      for (const dependency of [planStep.baseStep, planStep.timeStep, planStep.timeZoneStep]) {
+        if (dependency !== null && dependency >= stepIndex) {
+          throw new Error(`${row.id} is not in canonical dependency-first order at step ${stepIndex}.`);
+        }
+      }
+    }
+  }
+  return validated;
 }
 
 function countBy(values: string[]): Record<string, number> {

@@ -4,6 +4,8 @@ Goal: fine-tune a small model that maps user temporal text to HammerOverlay Temp
 
 Instant plans may include the compact optional `format` operand with one Discord presentation code: `d`, `D`, `t`, `T`, `f`, `F`, or `R`. This is semantic model output, not arithmetic: the executor validates the code and renders the already-validated instant accordingly. Standalone timestamp fast paths preserve their exact source style deterministically; model-owned surrounding language may select a different presentation when the transformation makes date, time, or relative context more useful.
 
+For a clarification whose interpretations share one program and differ only by a clock, one `resolve_clock_time` step may contain two to six bounded `options` instead of `text`. The executor resolves every explicit option and fans the shared downstream algebra into selectable alternatives. Training targets keep dependency-first canonical step order; vary input wording rather than emitting equivalent step permutations.
+
 ## Hardware
 
 Local preflight has confirmed:
@@ -64,6 +66,20 @@ python ml/temporal-ir/train_unsloth.py \
   --output ml/temporal-ir/outputs/qwen-temporal-ir-lora \
   --epochs 3
 ```
+
+Continue an existing adapter conservatively without stacking a second LoRA:
+
+```bash
+python ml/temporal-ir/train_unsloth.py \
+  --continue-adapter ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora \
+  --model Qwen/Qwen3.5-0.8B \
+  --dataset api/reports/temporal-ml/temporal-ir-seeds.jsonl \
+  --output ml/temporal-ir/outputs/qwen-temporal-ir-v13-continuation-lora \
+  --epochs 1 \
+  --learning-rate 2e-5
+```
+
+Continuation validates the adapter's recorded base model, loads its existing weights as trainable, asserts that trainable parameters remain, and records the source-adapter hash in the run summary.
 
 Training validates the tagged train-split mix before importing the GPU stack. The default target is documented in `docs/temporal-permutation-data-strategy.md`: enough standard rows to keep the model grounded, plus bounded messy, ambiguity, and hard-boundary buckets. Run only the guard with `--check-mix-only`. For tiny debugging subsets only, bypass it with `--skip-mix-check` or `TEMPORAL_IR_SKIP_MIX_CHECK=1`.
 

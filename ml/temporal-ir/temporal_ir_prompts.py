@@ -141,6 +141,7 @@ def compact_step(step: dict[str, Any]) -> dict[str, Any]:
     for key in [
         "query",
         "text",
+        "options",
         "holidayName",
         "weekday",
         "weekdayAnchor",

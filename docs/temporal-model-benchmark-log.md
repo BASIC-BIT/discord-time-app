@@ -47,6 +47,44 @@ The V9 promotion supersedes the earlier `Promoted` label on `time-range-2687`: u
 
 V11 evaluation exposed two oracle/validation lessons. First, a day-scale transformation of a source `:t` timestamp may correctly choose `:f`; V9's raw Plan-IR already did so, while the old production executor overwrote it with source style. Second, an explicit clock transform can legitimately produce the same epoch as its anchor (for example, setting an already-midnight timestamp to midnight). The executor now accepts equality only when the final Plan-IR operation explicitly sets or combines a clock, while a bare anchor or zero-shift plan still fails closed. The clean bare-hour ambiguity case remains classifier-owned and returns clarification without paying model latency; its typo variant is model-owned.
 
+### V12 selectable-clarification follow-up (not promoted)
+
+The observed `<t:1785643200:t> 1 day ebefore at 2` response exposed a cross-layer contract gap: V11 correctly returned `needs_clarification`, but its Plan-IR contained no executable alternatives, the installed smoke asserted only the HTTP status, and the overlay rendered question-only clarification as a red error. The follow-up teaches Discord-reference AM/PM clarifications as two executable Plan-IR plans and makes the overlay render question-only clarification neutrally when alternatives are unavailable. It also prevents the pre-model ambiguity policy from replacing model-owned Discord clarification plans with alternatives anchored to the request reference date instead of the explicit Discord timestamp.
+
+Three controlled candidates were evaluated and rejected for default promotion:
+
+- V12a (`3083` rows, SHA-256 `fbe5550cf6335344e0ae36964d6c87b60e0edd00c0594a3cca13e5d5f1852927`) passed the exact screenshot holdout but scored `3/5` on the focused routed gate. A clean phrase was preempted by the deterministic ambiguity policy, and forward typo examples were validation-only.
+- V12b (`3091` rows, SHA-256 `f946e1f332826a1747435cb6f343bb18d0309d1dd62f08f15e4956f0d5c2e6e7`; runtime `1563s`; final eval loss `0.08924`) fixed both issues and passed the focused gate `5/5`, p95 `3994ms`. Its full routed boundary scored `189/192`, regressing three model-selected presentation formats.
+- V12c (`3123` rows, SHA-256 `587827efe4ad6366a20301a6a7efc08cbfd7351f4bffb49aec16639c0aa464e5`; runtime `1594s`; final eval loss `0.08817`) added sub-day presentation reinforcement and passed the combined focused gate `8/8`, p95 `4106ms`. Its full routed boundary scored `188/192`, with four pass-to-fail regressions in two same-day ranges, unsupported schedule-block rejection, and one explicit clock composition. The two-epoch checkpoint preserved the target behavior but still failed three of those cases.
+
+Decision: keep V11 as the production default and retain these candidates as research artifacts. Do not add a deterministic source-format override or AM/PM typo shim. The experiment demonstrates the desired picker contract is learnable within the latency target, but the current 0.8B single-seed retraining approach is not stable enough to clear the complete no-regression boundary.
+
+### V13-V16 compact clock-choice follow-up (not promoted)
+
+The selectable-clarification contract was reduced from duplicated AM/PM plans to one canonical plan containing a bounded `resolve_clock_time.options` operand. The deterministic executor fans that clock choice through one shared date/shift program, preserves labels for the overlay picker, and rejects choices outside a clarification outcome. Training data varies input word order while keeping dependency-first Plan-IR canonical. The executor also exposed and fixed a pre-existing clock-parser overlap where `4:30 pm` produced both 16:30 and a spurious bare-24-hour 04:30 candidate.
+
+The final generated dataset has `3176` rows with splits `2468/374/334` and SHA-256 `fd93bc4a850cd972a2d79271d27ec288edf781a02f588af62ee941dd66bfbe95`. It includes `118` compact clock-choice rows plus bounded word-order, schedule-block rejection, contextual presentation, and DST-anchor reinforcement.
+
+Controlled results:
+
+- V13 one-epoch continuation from V11 (`3106` rows; SHA-256 `a5663086e4b5c62f63c103d16dc8573afaf26003a5995d7478476170cae05eeb`; LR `2e-5`; runtime `596.7s`) scored `11/17` on the focused routed gate. It learned the suffix picker cases but missed reordered wording and retained range regressions.
+- V13 fresh-from-base with the same dataset (`3` epochs; LR `2e-4`; runtime `1548s`) also scored `11/17`, with a different failure mix: reordered wording improved, while three sub-day presentation cases and schedule-block rejection regressed.
+- V14 balanced fresh (`3141` rows; SHA-256 `a4dd39afa894da03eb8c27706c2852834ba30666dae07d7c82c2585b6d8e2959`; runtime `1420s`) passed the original focused gate `17/17` after the clock-parser overlap fix. Its full boundary was `196/197` routed and `158/159` model-owned, median `1108ms`, p95 `3434ms`, with one V11 pass-to-fail regression: a one-day spring-forward shift chose time-only presentation instead of date/time.
+- V15 conservative continuation from V14 (`3158` rows; SHA-256 `592d1073f73c0b5d357d75933cdd66d385d5dcbfe8e49e771e4e3d8594b242f1`; one epoch; LR `2e-5`; runtime `522.7s`) remained `17/18` on the expanded focused gate with the same spring-forward presentation miss.
+- V16 DST-balanced fresh (`3176` rows; final dataset hash above; runtime `1442s`) passed the expanded focused gate `18/18`, p95 `3056ms`. Its full boundary again scored `196/197` routed and `158/159` model-owned, median `975ms`, p95 `2650ms`, but the single shared regression moved to `discord-reference-clock-composition-same-day-prefix`, where the model emitted an invalid fractional-hour shift rather than clock composition.
+
+Decision: do not package, install, or promote V13-V16. Keep V11 canonical. Three successive full/relevant gates reached the target behavior but could not achieve zero shared regressions; the moving miss indicates 0.8B single-seed stability/capacity rather than another isolated phrase gap. The next owner decision is either (1) run the same fixed dataset/contract against Qwen3.5-2B as the recommended quality experiment, or (2) explicitly redefine presentation correctness to allow multiple acceptable formats where product semantics truly permit it. Do not silently relax the oracle or add a runtime presentation override.
+
+### V17-V19 bounded 0.8B iteration and promotion
+
+The owner chose to keep the 0.8B latency/cost profile and treat deliberately extreme combinatorics separately from realistic required behavior. V17 changed only the seed on the frozen V16 dataset and scored `17/19` on an expanded focused gate, including a wrong one-day shift for same-day clock composition, so it was rejected without a full run. V18 added 64 systematic same-day clock-composition rows while keeping the exact failing sentence held out; it fixed that semantic regression and scored `18/19`, but silently chose one meridiem on a clock-first DST ambiguity case.
+
+V19 added 36 general clock-first relative-day ambiguity rows across four Discord anchor styles, three bare clocks, and previous/following-day language. The final dataset has `3276` rows with splits `2568/374/334` and SHA-256 `3ebd078bcda81588fbd84eaa58e81efc6df375a77952fe234c054ca1be8eae38`. Training was fresh Qwen3.5-0.8B bf16/chat LoRA, minimal inference instruction, seed `3407`, three epochs, runtime `1593s`, train loss `0.1427`, and final validation loss `0.08312`.
+
+V19 passed the expanded focused gate `19/19` in both raw and routed lanes. The final full boundary passed Gate A `196/196` and model-owned Gate B `158/158`; routed median was `1061ms` and p95 `3083ms`. The prior two-timestamp range-plus-endpoint-shift stress case is now explicitly diagnostic: fail/clarify is acceptable, but an incorrectly resolved optional case remains blocking through the diagnostic safety gate. V19 failed that case closed, produced no unsafe diagnostic resolution, and had zero required regressions against V11.
+
+Decision: promote V19 as the canonical local 0.8B adapter, subject to packaged installed-MSI smoke. Preserve V11 as rollback. Do not add deterministic semantic shims for the diagnostic range-composition case.
+
 ## Semantic Consistency Gate Results
 
 - Feature flag: `TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE=false` by default.

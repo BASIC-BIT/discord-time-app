@@ -37,6 +37,11 @@ export const TimeOfDaySchema = z.object({
   minute: z.number().int().min(0).max(59),
 });
 
+export const ClockChoiceOptionSchema = z.object({
+  label: z.string().trim().min(1).max(48),
+  text: z.string().trim().min(1).max(48),
+});
+
 export const PlanDeltaSchema = z.object({
   years: z.number().int().nullable(),
   months: z.number().int().nullable(),
@@ -61,6 +66,7 @@ export const TemporalPlanStepSchema = z.object({
   ]),
   query: z.string().nullable(),
   text: z.string().nullable(),
+  options: z.array(ClockChoiceOptionSchema).min(2).max(6).nullable(),
   holidayName: z.string().nullable(),
   weekday: z.enum(PLAN_WEEKDAYS).nullable(),
   weekdayAnchor: z.enum(['upcoming', 'this', 'next', 'last', 'next_ambiguous', 'after_next_ambiguous']).nullable(),
@@ -121,6 +127,7 @@ export const CompactTemporalPlanStepSchema = z.object({
   ]),
   query: z.string().optional(),
   text: z.string().optional(),
+  options: z.array(ClockChoiceOptionSchema).min(2).max(6).optional(),
   holidayName: z.string().optional(),
   weekday: z.enum(PLAN_WEEKDAYS).optional(),
   weekdayAnchor: z.enum(['upcoming', 'this', 'next', 'last', 'next_ambiguous', 'after_next_ambiguous']).optional(),
@@ -191,6 +198,7 @@ export function expandCompactTemporalPlanPlannerOutput(input: unknown): Temporal
         operation: step.op,
         query: step.query ?? null,
         text: step.text ?? null,
+        options: step.options ?? null,
         holidayName: step.holidayName ?? null,
         weekday: step.weekday ?? null,
         weekdayAnchor: step.weekdayAnchor ?? null,

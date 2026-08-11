@@ -36,15 +36,15 @@ const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8770/v1";
 #[cfg(feature = "routing-smoke")]
 const LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8771/v1";
 #[cfg(not(feature = "routing-smoke"))]
-const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
+const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced";
 #[cfg(feature = "routing-smoke")]
-const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
+const LOCAL_SLM_DEFAULT_MODEL: &str = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced";
 const LOCAL_SLM_DEFAULT_ADAPTER_PATH: &str =
-    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora";
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora";
 const LOCAL_SLM_PREVIOUS_MODEL: &str =
-    "qwen-temporal-ir-qwen35-08b-bf16-chat-discord-reference-v9";
+    "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11";
 const LOCAL_SLM_PREVIOUS_ADAPTER_PATH: &str =
-    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-discord-reference-v9-lora";
+    "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora";
 const LOCAL_SLM_LEGACY_MODEL: &str = "qwen-temporal-ir-qwen35-bf16-chat-time-range-2687";
 const LOCAL_SLM_LEGACY_ENDPOINT_BASE_URL: &str = "http://127.0.0.1:8765/v1";
 const LOCAL_SLM_LEGACY_ADAPTER_PATH: &str =
@@ -53,9 +53,9 @@ const LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS: u64 = 360;
 const LOCAL_SLM_RUNTIME_DIR: &str = "local-slm-runtime";
 const LOCAL_SLM_DEFAULT_DOCKER_IMAGE: &str =
     "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8";
-const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-presentation-v11/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora.zip";
+const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-clock-choice-v19/qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced-lora.zip";
 const LOCAL_SLM_ADAPTER_PACKAGE_SHA256: &str =
-    "557122cd75dc6708369eec575916790379275812b26fbe1ab63056947b3d7665";
+    "3b36fbaedda523ad139db829785c1d8cf1b6e628047f8bd6b7d87dcb1a2f13e7";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;

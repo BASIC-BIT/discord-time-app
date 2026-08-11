@@ -498,9 +498,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setConfidence(1);
           if (isFromClipboard && !hasDiscordReference) {
             setError(null);
-          } else if (apiError instanceof TimeParserAPIError && apiError.alternatives && apiError.alternatives.length > 0) {
+          } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
             setClarificationQuestion(apiError.message);
-            setClarificationAlternatives(apiError.alternatives);
+            setClarificationAlternatives(apiError.alternatives ?? []);
             setSelectedAlternativeIndex(0);
             setError(null);
           } else if (apiError instanceof TimeParserUnavailableError || apiError instanceof TimeParserTimeoutError) {
@@ -570,7 +570,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     }
   };
 
-  const hasClarification = clarificationQuestion !== null && clarificationAlternatives.length > 0;
+  const hasClarification = clarificationQuestion !== null;
+  const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
   const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
@@ -591,8 +592,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             : hasResolvedResult
               ? 'ready'
               : 'idle';
-  const footerHint = hasClarification
+  const footerHint = hasSelectableClarification
     ? '←→/Tab or 1-9/0 to choose • Enter to use • Esc to close'
+    : hasClarification
+      ? 'Edit the expression to clarify • Esc to close'
     : verifying
       ? 'Verifying before copy • Esc to close'
     : range !== null
@@ -646,7 +649,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     if (e.key === 'Escape') {
       void recordParserOutcome('dismissed');
       onClose();
-    } else if (hasClarification) {
+    } else if (hasSelectableClarification) {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const alternative = clarificationAlternatives[selectedAlternativeIndex];
@@ -672,6 +675,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           handleClarificationAlternative(alternative);
         }
       }
+    } else if (hasClarification) {
+      return;
     } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (hasResolvedResult) {
@@ -775,9 +780,11 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>
-                <div className="clarification-help">Use ←/→, Tab, or number keys to choose, then Enter.</div>
-                <div className="clarification-options">
-                  {clarificationAlternatives.map((alternative, index) => (
+                {hasSelectableClarification ? (
+                  <>
+                    <div className="clarification-help">Use ←/→, Tab, or number keys to choose, then Enter.</div>
+                    <div className="clarification-options">
+                      {clarificationAlternatives.map((alternative, index) => (
                     <button
                       key={`${alternative.label}-${alternative.range?.start.epoch ?? alternative.epoch}-${alternative.range?.end.epoch ?? 'instant'}`}
                       type="button"
@@ -791,8 +798,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
                       <span className="clarification-label">{alternative.label}</span>
                       <span className="clarification-preview">{alternative.range ? getRangeLabel(alternative.range) : getFormatLabel(alternative.epoch, alternative.suggestedFormatIndex)}</span>
                     </button>
-                  ))}
-                </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="clarification-help">Add the missing detail in the expression above.</div>
+                )}
               </div>
             )}
             {showLowConfidence && (

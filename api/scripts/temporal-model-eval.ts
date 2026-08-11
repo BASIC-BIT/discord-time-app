@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Temporal } from '@js-temporal/polyfill';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
@@ -1003,7 +1003,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-clock-composition-ambiguous-bare-hour',
     text: '<t:1785643200:t> day at 12',
     category: 'discord-reference-clock-composition',
-    expected: { status: 'needs_clarification' },
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785643200, 1785686400] },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1027,8 +1027,63 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-shift-clock-ambiguity-clean',
     text: '<t:1785643200:t> 1 day earlier at 2',
     category: 'discord-reference-shift-clock-composition',
-    routeOwnership: 'classifier',
-    expected: { status: 'needs_clarification' },
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785564000, 1785607200] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-typo-ebefore-three',
+    text: '<t:1785643200:t> a day ebefore at 3',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785567600, 1785610800] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-typo-later-three',
+    text: '<t:1785643200:t> 1 day ltaer at 3',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785740400, 1785783600] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clock-prefix-before',
+    text: 'at 2, use the day before <t:1785643200:t>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785564000, 1785607200] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clock-infix-before',
+    text: 'make <t:1785643200:t> 3 o’clock on the previous day',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785567600, 1785610800] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clock-prefix-after',
+    text: 'at 4:30 use the day after <t:1785733200:F>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785832200, 1785875400] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-explicit-clock-prefix-before',
+    text: 'at 2 pm, use the day before <t:1785643200:t>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'resolved', epoch: 1785607200, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-spring-before',
+    text: '2 o’clock, on the day preceding <t:1772951400:D>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1772866800, 1772910000] },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1036,7 +1091,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-shift-clock-ambiguity-typo-ebefore',
     text: '<t:1785643200:t> 1 day ebefore at 2',
     category: 'discord-reference-shift-clock-composition',
-    expected: { status: 'needs_clarification' },
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785564000, 1785607200] },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1116,6 +1171,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-range-residue',
     text: '<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later',
     category: 'discord-reference-routing',
+    required: false,
     expected: {
       status: 'resolved',
       kind: 'time_range',
@@ -2528,6 +2584,12 @@ async function buildEvaluationBoundary(
     result.runner === 'endpoint_plan'
     && (result.routeOwnership === 'classifier' || !result.required),
   );
+  const unsafeRoutedDiagnostics = results.filter((result) =>
+    result.runner === 'routed_endpoint'
+    && !result.required
+    && !result.passed
+    && result.status === 'resolved',
+  );
   const gateA = boundaryGate(
     'A',
     true,
@@ -2578,6 +2640,11 @@ async function buildEvaluationBoundary(
   if (classifierAgreementCount !== classifierExpected.length) {
     blockers.push(
       `Gate A client/server classifier agreement is ${classifierAgreementCount}/${classifierExpected.length}.`,
+    );
+  }
+  if (unsafeRoutedDiagnostics.length > 0) {
+    blockers.push(
+      `Diagnostic safety gate found ${unsafeRoutedDiagnostics.length} incorrectly resolved optional case(s): ${unsafeRoutedDiagnostics.map((result) => result.caseId).join(', ')}.`,
     );
   }
 
@@ -2722,8 +2789,14 @@ async function compareEvaluationBoundaryBaseline(
     };
   }
   const parsed = JSON.parse(await readFile(path, 'utf8')) as { results?: EvalResult[] };
-  const baselineResults = (parsed.results ?? []).filter((result) =>
+  const allBaselineResults = (parsed.results ?? []).filter((result) =>
     result.runner === 'routed_endpoint' && result.required,
+  );
+  const currentCaseById = new Map(temporalEvalCases.map((evalCase) => [evalCase.id, evalCase]));
+  const removedRequiredCases = allBaselineResults.filter((result) => !currentCaseById.has(result.caseId));
+  const baselineResults = allBaselineResults.filter((result) =>
+    currentCaseById.has(result.caseId)
+    && (currentCaseById.get(result.caseId)?.required ?? true),
   );
   if (baselineResults.length === 0) {
     return {
@@ -2732,7 +2805,7 @@ async function compareEvaluationBoundaryBaseline(
       comparedCases: 0,
       regressions: [],
       improvements: [],
-      missingCandidateCases: [],
+      missingCandidateCases: removedRequiredCases.map((result) => result.caseId).sort(),
       addedCandidateCases: [],
     };
   }
@@ -2740,7 +2813,7 @@ async function compareEvaluationBoundaryBaseline(
   const baselineById = new Map(baselineResults.map((result) => [result.caseId, result]));
   const regressions: string[] = [];
   const improvements: string[] = [];
-  const missingCandidateCases: string[] = [];
+  const missingCandidateCases: string[] = removedRequiredCases.map((result) => result.caseId);
   for (const [caseId, baseline] of baselineById) {
     const candidate = candidateById.get(caseId);
     if (candidate === undefined) {
@@ -3220,8 +3293,12 @@ function nonBlank(value: string | undefined): string | undefined {
   return value;
 }
 
-const invokedAsMain = process.argv[1] !== undefined
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invokedModulePath = process.argv[1] === undefined ? undefined : resolve(process.argv[1]);
+const currentModulePath = fileURLToPath(import.meta.url);
+const invokedAsMain = invokedModulePath !== undefined
+  && (process.platform === 'win32'
+    ? invokedModulePath.toLocaleLowerCase('en-US') === currentModulePath.toLocaleLowerCase('en-US')
+    : invokedModulePath === currentModulePath);
 
 if (invokedAsMain) {
   main().catch((error: unknown) => {

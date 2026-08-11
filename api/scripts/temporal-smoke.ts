@@ -80,6 +80,42 @@ async function executeModelReferenceClockComposition(
   );
 }
 
+async function executeModelReferenceShiftClockClarification(
+  text: string,
+  reference: string,
+) {
+  const clarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    reason: 'Test fixture representing selectable AM/PM alternatives after a Discord-reference shift.',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      format: 'f',
+      label: 'Shifted date at 2',
+      rationale: 'Resolve the reference date, set an explicit meridiem, and apply the requested day shift.',
+      assumptions: [],
+      confidence: 0.85,
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: reference, precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  return executeTemporalPlanPlannerOutput(
+    clarification,
+    { text, calendarContext },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'model-plan-clarification-fixture',
+    },
+  );
+}
+
 async function main() {
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
@@ -222,6 +258,130 @@ async function main() {
   assert.equal(modelInterpretedShift.status, 'resolved');
   assert.equal(modelInterpretedShift.epoch, 1785646800);
   assert.equal(modelInterpretedShift.method, 'agent+plan');
+
+  const selectableShiftClockClarification = await executeModelReferenceShiftClockClarification(
+    '<t:1785643200:t> 1 day ebefore at 2',
+    '<t:1785643200:t>',
+  );
+  assert.equal(selectableShiftClockClarification.status, 'needs_clarification');
+  assert.equal(selectableShiftClockClarification.clarificationQuestion, 'Did you mean 2 AM or 2 PM?');
+  assert.deepEqual(
+    selectableShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785564000, 1785607200],
+  );
+  assert.deepEqual(
+    selectableShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['2 AM', '2 PM'],
+  );
+
+  const selectableCleanShiftClockClarification = await executeModelReferenceShiftClockClarification(
+    '<t:1785643200:t> 1 day earlier at 2',
+    '<t:1785643200:t>',
+  );
+  assert.deepEqual(
+    selectableCleanShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785564000, 1785607200],
+  );
+
+  const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 4:30 AM or 4:30 PM?',
+    plans: [{
+      label: 'Shifted date at 4:30',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785733200:F>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '4:30 AM', text: '4:30 am' },
+          { label: '4:30 PM', text: '4:30 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const selectableMinuteClockResult = await executeTemporalPlanPlannerOutput(
+    selectableMinuteClockClarification,
+    { text: 'at 4:30 use the day after <t:1785733200:F>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(selectableMinuteClockResult.status, 'needs_clarification');
+  assert.deepEqual(
+    selectableMinuteClockResult.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['4:30 AM', '4:30 PM'],
+  );
+
+  const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Forward-referenced equivalent plan',
+      finalStep: 0,
+      steps: [
+        { op: 'shift_datetime', baseStep: 1, timeStep: 2, delta: { days: -1 }, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+      ],
+    }],
+  });
+  const forwardReferencedResult = await executeTemporalPlanPlannerOutput(
+    forwardReferencedClarification,
+    { text: '<t:1785643200:t> 1 day earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.deepEqual(
+    forwardReferencedResult.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    selectableCleanShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+  );
+
+  const invalidNonClarificationChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Invalid choice usage',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const invalidNonClarificationResult = await executeTemporalPlanPlannerOutput(
+    invalidNonClarificationChoices,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(invalidNonClarificationResult.status, 'failed');
+  assert.match(invalidNonClarificationResult.ambiguity.join(' '), /require a clarification outcome/i);
+
+  const duplicateClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which clock?',
+    plans: [{
+      label: 'Duplicate resolved clocks',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 PM', text: '2 pm' },
+          { label: 'Fourteen hundred', text: '14:00' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const duplicateClockChoiceResult = await executeTemporalPlanPlannerOutput(
+    duplicateClockChoices,
+    { text: '<t:1785643200:t> at either 2 pm or 14:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(duplicateClockChoiceResult.status, 'failed');
+  assert.match(duplicateClockChoiceResult.ambiguity.join(' '), /distinct clocks/i);
 
   const unanchoredModelShiftPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -576,6 +736,12 @@ async function main() {
   const clock = await tools.resolveClockTime({ text: '13:37', calendarContext });
   assert.equal(clock.candidates[0]?.hour, 13);
   assert.equal(clock.candidates[0]?.minute, 37);
+
+  const meridiemClock = await tools.resolveClockTime({ text: '4:30 pm', calendarContext });
+  assert.deepEqual(
+    meridiemClock.candidates.map(({ hour, minute }) => ({ hour, minute })),
+    [{ hour: 16, minute: 30 }],
+  );
 
   const compactClock = await tools.resolveClockTime({ text: '5p', calendarContext });
   assert.equal(compactClock.candidates[0]?.hour, 17);

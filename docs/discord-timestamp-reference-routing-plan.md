@@ -1,6 +1,6 @@
 # Discord Timestamp Reference Routing Plan
 
-Status: implemented locally on 2026-07-27 behind independent routing and shadow flags. Not committed, released, or enabled in production. Live-model promotion, installed-MSI smoke, canarying, and release remain owner-gated.
+Status: V19 release candidate implemented and evaluated locally; the hash-verified model package is published, and production desktop v0.1.5 is moving through PR and installed-MSI release gates. Production remains unchanged until those gates complete.
 
 Owner correction (2026-07-27): deterministic code may recognize explicit Discord timestamp syntax and execute validated Plan-IR, but it must not interpret transformation language such as “1 hour later.” All meaningful transformations route to model interpretation and fail closed when that path is unavailable.
 

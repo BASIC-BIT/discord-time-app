@@ -3,24 +3,24 @@ param(
     [switch]$Install,
     [switch]$StopProductionForManualSmoke,
     [string]$MsiPath = "",
-    [string]$ExpectedMsiSha256 = "9FC320CADF6A3C7B1D7578DEF2802A4719039AB94A77B9BB73862E22D52F01E1",
-    [string]$ExpectedInstalledExeSha256 = "",
+    [string]$ExpectedMsiSha256 = "A17729BBB753DC1B46E72F6A768A82B9438BED859BD348E4C0D5CFF761C42937",
+    [string]$ExpectedInstalledExeSha256 = "08506D5F24080FCF5F0A5A91B6E30AB3C0EF9DD96873DCED4E501DDBFE7C1685",
     [string]$InstallRoot = "C:\Program Files\HammerOverlay Routing Smoke",
     [string]$ApiBaseUrl = "http://127.0.0.1:8858",
     [int]$ExpectedApiPort = 8858,
     [string]$ModelBaseUrl = "http://127.0.0.1:8771/v1",
-    [string]$ExpectedModel = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11",
-    [string]$ReportSchema = "discord-reference-v11-installed-routing-smoke-v1",
+    [string]$ExpectedModel = "qwen-temporal-ir-qwen35-08b-bf16-chat-clock-choice-v19-prefix-ambiguity-balanced",
+    [string]$ReportSchema = "discord-reference-v19-installed-routing-smoke-v1",
     [string]$VerificationLabel = "routing-smoke",
     [string]$Output = ""
 )
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($MsiPath)) {
-    $MsiPath = Join-Path $PSScriptRoot "..\src-tauri\target\release\bundle\msi\HammerOverlay Routing Smoke_0.1.0_x64_en-US.current.msi"
+    $MsiPath = Join-Path $PSScriptRoot "..\src-tauri\target\release\bundle\msi\HammerOverlay Routing Smoke_0.1.0_x64_en-US.msi"
 }
 if ([string]::IsNullOrWhiteSpace($Output)) {
-    $Output = Join-Path $PSScriptRoot "..\api\reports\temporal-ml\discord-reference-v11-installed-routing-smoke.json"
+    $Output = Join-Path $PSScriptRoot "..\api\reports\temporal-ml\discord-reference-v19-installed-routing-smoke.json"
 }
 $expectedEndpoint = $ModelBaseUrl.TrimEnd("/")
 $expectedApiBase = $ApiBaseUrl.TrimEnd("/")
@@ -159,11 +159,20 @@ function Assert-Resolved {
 function Assert-Clarification {
     param(
         [string]$Id,
-        [string]$Text
+        [string]$Text,
+        [long[]]$ExpectedEpochs = @()
     )
     $result = Invoke-Parse -Text $Text
     Assert-Equal $result.StatusCode 400 "$Id should return HTTP 400."
     Assert-Equal ([string]$result.Body.error) "needs_clarification" "$Id should request clarification."
+    if ($ExpectedEpochs.Count -gt 0) {
+        $actualEpochs = @($result.Body.alternatives | ForEach-Object { [long]$_.epoch } | Sort-Object)
+        $expectedSorted = @($ExpectedEpochs | Sort-Object)
+        Assert-Equal $actualEpochs.Count $expectedSorted.Count "$Id alternative count mismatch."
+        for ($index = 0; $index -lt $expectedSorted.Count; $index++) {
+            Assert-Equal $actualEpochs[$index] $expectedSorted[$index] "$Id alternative epoch mismatch at index $index."
+        }
+    }
     $script:probeResults.Add([pscustomobject]@{
         id = $Id
         text = $Text
@@ -409,7 +418,8 @@ Assert-Clarification `
 
 Assert-Clarification `
     -Id "typo-shift-clock-ambiguous" `
-    -Text "<t:1785643200:t> 1 day ebefore at 2"
+    -Text "<t:1785643200:t> 1 day ebefore at 2" `
+    -ExpectedEpochs @(1785564000, 1785607200)
 
 $modelDurations.Add((Assert-Resolved `
     -Id "typo-shift-clock-explicit" `

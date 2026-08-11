@@ -49,6 +49,12 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path, default=Path(os.environ.get("TEMPORAL_IR_DATASET", DEFAULT_DATASET)))
     parser.add_argument("--output", type=Path, default=Path(os.environ.get("TEMPORAL_IR_OUTPUT_DIR", DEFAULT_OUTPUT)))
     parser.add_argument("--model", default=os.environ.get("TEMPORAL_IR_BASE_MODEL", DEFAULT_MODEL))
+    parser.add_argument(
+        "--continue-adapter",
+        type=Path,
+        default=Path(value) if (value := os.environ.get("TEMPORAL_IR_CONTINUE_ADAPTER", "")).strip() else None,
+        help="Continue training an existing LoRA adapter instead of creating a fresh adapter.",
+    )
     parser.add_argument("--max-seq-length", type=int, default=int(os.environ.get("TEMPORAL_IR_MAX_SEQ_LENGTH", "4096")))
     parser.add_argument("--epochs", type=float, default=float(os.environ.get("TEMPORAL_IR_EPOCHS", "3")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("TEMPORAL_IR_BATCH_SIZE", "2")))
@@ -99,24 +105,33 @@ def main() -> None:
     from unsloth import FastLanguageModel
     from trl import SFTTrainer, SFTConfig
 
+    model_name = str(args.continue_adapter) if args.continue_adapter is not None else args.model
+    if args.continue_adapter is not None:
+        validate_continuation_adapter(args.continue_adapter, args.model)
+
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=args.model,
+        model_name=model_name,
         max_seq_length=args.max_seq_length,
         dtype=None,
         load_in_4bit=not args.no_load_in_4bit,
     )
     dataset = build_dataset(rows, tokenizer, args.instruction_preset, args.prompt_format)
 
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=16,
-        lora_dropout=0,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=args.seed,
-    )
+    if args.continue_adapter is None:
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=16,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            lora_alpha=16,
+            lora_dropout=0,
+            bias="none",
+            use_gradient_checkpointing="unsloth",
+            random_state=args.seed,
+        )
+    trainable_parameters = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    if trainable_parameters <= 0:
+        raise ValueError(f"Loaded model {model_name} has no trainable parameters.")
+    print(f"Training mode: {'adapter continuation' if args.continue_adapter is not None else 'fresh LoRA'}; trainable parameters={trainable_parameters}")
 
     report_to = ["wandb"] if args.wandb_project else []
     if args.wandb_project:
@@ -162,6 +177,21 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError(f"Dataset is empty: {path}")
     return rows
+
+
+def validate_continuation_adapter(adapter: Path, expected_base_model: str) -> None:
+    if not adapter.is_dir():
+        raise ValueError(f"Continuation adapter directory does not exist: {adapter}")
+    config_path = adapter / "adapter_config.json"
+    weights_path = adapter / "adapter_model.safetensors"
+    if not config_path.is_file() or not weights_path.is_file():
+        raise ValueError(f"Continuation adapter must contain adapter_config.json and adapter_model.safetensors: {adapter}")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    actual_base_model = config.get("base_model_name_or_path")
+    if actual_base_model != expected_base_model:
+        raise ValueError(
+            f"Continuation adapter base model mismatch: expected {expected_base_model}, got {actual_base_model}"
+        )
 
 
 def validate_dataset_mix(rows: list[dict[str, Any]]) -> None:
@@ -245,6 +275,8 @@ def write_run_summary(output_dir: Path, args: argparse.Namespace, rows: list[dic
         counts[split] = counts.get(split, 0) + 1
     summary = {
         "model": args.model,
+        "continueAdapter": str(args.continue_adapter) if args.continue_adapter is not None else None,
+        "continueAdapterWeightsSha256": sha256_file(args.continue_adapter / "adapter_model.safetensors") if args.continue_adapter is not None else None,
         "dataset": str(args.dataset),
         "datasetSha256": dataset_sha256,
         "rows": len(rows),

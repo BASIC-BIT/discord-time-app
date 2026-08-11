@@ -96,8 +96,10 @@ type RawTemporalPlan = {
 type TemporalPlanStepOutput =
   | { kind: 'candidates'; candidates: PlanCandidateOutput[] }
   | { kind: 'time'; time: { hour: number; minute: number } }
+  | { kind: 'time_options'; options: PlanTimeOptionOutput[] }
   | { kind: 'timezone'; timeZone: TimeZoneResolutionCandidate };
 type PlanCandidateOutput = { candidate: Candidate; label?: string | undefined };
+type PlanTimeOptionOutput = { label: string; time: { hour: number; minute: number } };
 type PlanCandidateResult = { enriched: EnrichedCandidate; label?: string | undefined };
 type PlanRangeResult = {
   start: PlanCandidateResult;
@@ -240,14 +242,16 @@ export async function runTemporalCoalescingGraph(
     return directResult;
   }
 
-  const ambiguityPolicyStartedAt = nowMs();
-  throwIfCancelled(options.signal);
-  const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
-  if (ambiguityPolicyResult !== null) {
-    const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
-    attachReferenceRoutingDebug(response, referenceRouting, options.features);
-    attachTopLevelTiming(response, totalStartedAt, undefined, undefined, options.features);
-    return response;
+  if (!forceSemanticReferencePath) {
+    const ambiguityPolicyStartedAt = nowMs();
+    throwIfCancelled(options.signal);
+    const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
+    if (ambiguityPolicyResult !== null) {
+      const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
+      attachReferenceRoutingDebug(response, referenceRouting, options.features);
+      attachTopLevelTiming(response, totalStartedAt, undefined, undefined, options.features);
+      return response;
+    }
   }
 
   if (forceSemanticReferencePath) {
@@ -572,6 +576,13 @@ export async function executeTemporalPlanPlannerOutput(
   const method = options.method ?? 'agent+plan';
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
 
+  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
+  if (clockChoiceContractError !== undefined) {
+    const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 0);
+    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+    return response;
+  }
+
   if (planResult.outcome === 'clarification' && plans.length === 0 && planResult.clarificationQuestion !== null) {
     const response = responseFromQuestionOnlyPlanClarification(planResult.clarificationQuestion, planResult.reason, trace, method);
     attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
@@ -598,12 +609,16 @@ export async function executeTemporalPlanPlannerOutput(
     graphOptions.features = options.features;
   }
 
-  const ambiguityPolicyStartedAt = nowMs();
-  const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
-  if (ambiguityPolicyResult !== null) {
-    const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
-    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
-    return response;
+  const modelOwnedDiscordClarification = planResult.outcome === 'clarification'
+    && classifyDiscordTimestampInput(request.text).route === 'model';
+  if (!modelOwnedDiscordClarification) {
+    const ambiguityPolicyStartedAt = nowMs();
+    const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
+    if (ambiguityPolicyResult !== null) {
+      const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
+      attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+      return response;
+    }
   }
 
   const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, graphOptions)));
@@ -2033,6 +2048,23 @@ async function executePlanStep(
       return { kind: 'timezone', timeZone };
     }
     case 'resolve_clock_time': {
+      if (step.options !== null) {
+        const optionsOutput = await Promise.all(step.options.map(async (option) => {
+          const resolved = await options.implementations.resolveClockTime({ text: option.text, calendarContext: request.calendarContext });
+          const uniqueClocks = new Map(resolved.candidates.map((clock) => [`${clock.hour}:${clock.minute}`, clock]));
+          if (uniqueClocks.size !== 1) {
+            throw new Error(`resolve_clock_time option ${option.label} must resolve to exactly one unique clock.`);
+          }
+          const clock = uniqueClocks.values().next().value!;
+          return { label: option.label, time: { hour: clock.hour, minute: clock.minute } };
+        }));
+        const uniqueClocks = new Set(optionsOutput.map((option) => `${option.time.hour}:${option.time.minute}`));
+        if (uniqueClocks.size !== optionsOutput.length) {
+          throw new Error('resolve_clock_time options must resolve to distinct clocks.');
+        }
+        recordTool(stepIndex, step, optionsOutput, startedAt);
+        return { kind: 'time_options', options: optionsOutput };
+      }
       const text = requirePlanString(step.text ?? step.query, step, 'text');
       const resolved = await options.implementations.resolveClockTime({ text, calendarContext: request.calendarContext });
       const clock = resolved.candidates[0];
@@ -2051,66 +2083,66 @@ async function executePlanStep(
     case 'shift_datetime': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
       const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
-      const [base, time] = await Promise.all([
+      const [base, times] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
-        timeFromPlanStep(step, executeStep),
+        timeOptionsFromPlanStep(step, executeStep),
       ]);
-      const candidates = await Promise.all(base.map(async (baseCandidate) => {
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => {
         const shiftInput: Parameters<TemporalToolImplementations['shiftDateTime']>[0] = {
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           delta: cleanDelta(step.delta),
           calendarContext,
         };
-        if (time !== undefined) {
-          shiftInput.time = time;
+        if (timeOption.time !== undefined) {
+          shiftInput.time = timeOption.time;
         }
         return {
-          label: baseCandidate.label,
+          label: timeOption.label ?? baseCandidate.label,
           candidate: await options.implementations.shiftDateTime(shiftInput),
         };
-      }));
+      })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
     case 'set_clock_time': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
       const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
-      const [base, time] = await Promise.all([
+      const [base, times] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
-        timeFromPlanStep(step, executeStep),
+        timeOptionsFromPlanStep(step, executeStep),
       ]);
-      if (time === undefined) {
+      if (times.length === 1 && times[0]?.time === undefined) {
         throw new Error('set_clock_time requires either time or timeStep.');
       }
-      const candidates = await Promise.all(base.map(async (baseCandidate) => ({
-        label: baseCandidate.label,
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => ({
+        label: timeOption.label ?? baseCandidate.label,
         candidate: await options.implementations.setClockTime({
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
-          time,
+          time: timeOption.time!,
           calendarContext,
         }),
-      })));
+      }))));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
     case 'combine_date_time': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
       const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
-      const [base, time] = await Promise.all([
+      const [base, times] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
-        timeFromPlanStep(step, executeStep),
+        timeOptionsFromPlanStep(step, executeStep),
       ]);
-      if (time === undefined) {
+      if (times.length === 1 && times[0]?.time === undefined) {
         throw new Error('combine_date_time requires either time or timeStep.');
       }
-      const candidates = await Promise.all(base.map(async (baseCandidate) => ({
-        label: baseCandidate.label,
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => ({
+        label: timeOption.label ?? baseCandidate.label,
         candidate: await options.implementations.setClockTime({
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
-          time,
+          time: timeOption.time!,
           calendarContext,
         }),
-      })));
+      }))));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
@@ -2140,21 +2172,26 @@ async function candidateOutputsFromPlanStep(
   return output.candidates;
 }
 
-async function timeFromPlanStep(
+async function timeOptionsFromPlanStep(
   step: TemporalPlanStep,
   executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
-): Promise<{ hour: number; minute: number } | undefined> {
+): Promise<Array<{ label?: string; time?: { hour: number; minute: number } }>> {
   if (step.time !== null) {
-    return step.time;
+    return [{ time: step.time }];
   }
   if (step.timeStep === null) {
-    return undefined;
+    return [{}];
   }
   const output = await executeStep(step.timeStep);
-  if (output.kind !== 'time') {
+  if (output.kind === 'time') {
+    return [{ time: output.time }];
+  }
+  if (output.kind === 'time_options') {
+    return output.options;
+  }
+  {
     throw new Error(`Step ${step.timeStep} produced ${output.kind}, not a time.`);
   }
-  return output.time;
 }
 
 async function calendarContextForPlanStep(
@@ -2306,6 +2343,11 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
       parts.push(...optionalPlanText(step.query));
       break;
     case 'resolve_clock_time':
+      if (step.options !== null) {
+        parts.push(...step.options.map((option) => option.text));
+      }
+      parts.push(...optionalPlanText(step.text));
+      break;
     case 'interpret_clock_phrase':
     case 'resolve_timezone':
       parts.push(...optionalPlanText(step.text));
@@ -4359,6 +4401,40 @@ function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFla
     compact.discordReferenceShadow = features.discordReferenceShadow;
   }
   return compact;
+}
+
+function temporalClockChoiceContractError(
+  planResult: TemporalPlanPlannerOutput,
+  plans: TemporalPlan[],
+): string | undefined {
+  const choiceSteps = plans.flatMap((plan) => plan.steps
+    .map((step, stepIndex) => ({ plan, step, stepIndex }))
+    .filter(({ step }) => step.options !== null));
+  if (choiceSteps.length === 0) {
+    return undefined;
+  }
+  if (planResult.outcome !== 'clarification' || planResult.clarificationQuestion === null) {
+    return 'Clock options require a clarification outcome and question.';
+  }
+  if (plans.length !== 1 || choiceSteps.length !== 1) {
+    return 'Compact clock clarification requires exactly one plan and one choice-bearing step.';
+  }
+  if (plans[0]!.kind === 'time_range') {
+    return 'Compact clock clarification does not support time-range plans.';
+  }
+  const step = choiceSteps[0]!.step;
+  if (step.operation !== 'resolve_clock_time') {
+    return 'Only resolve_clock_time may contain clock options.';
+  }
+  if (step.text !== null || step.query !== null) {
+    return 'resolve_clock_time must use either text or options, not both.';
+  }
+  const labels = new Set(step.options!.map((option) => option.label.trim().toLocaleLowerCase('en-US')));
+  const texts = new Set(step.options!.map((option) => option.text.trim().toLocaleLowerCase('en-US')));
+  if (labels.size !== step.options!.length || texts.size !== step.options!.length) {
+    return 'Clock option labels and texts must be unique.';
+  }
+  return undefined;
 }
 
 function planFinalStepExecutesExplicitClockTransform(plan: TemporalPlan): boolean {
