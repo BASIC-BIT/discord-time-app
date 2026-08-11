@@ -789,6 +789,7 @@ async function main() {
     '<t:1785643200:t> set the day to 15 at 2 pm',
     '<t:1785643200:t> set the month to 5 at 2 pm',
     '<t:1785643200:t> set the year to 2027 at 2 pm',
+    '<t:1785643200:t> on 2027-05-01 at 2 pm',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,
@@ -887,6 +888,13 @@ async function main() {
     assert.equal(rejectedReversedOneReferenceRangeClock.range, undefined);
     assert.match(rejectedReversedOneReferenceRangeClock.validation.warnings.join(' '), /end endpoint only/);
   }
+  const rejectedReversedBetweenRangeClock = await executeTemporalPlanPlannerOutput(
+    reversedOneReferenceRangeClock,
+    { text: 'between <t:1785643200:t> and 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedReversedBetweenRangeClock.status, 'failed');
+  assert.equal(rejectedReversedBetweenRangeClock.range, undefined);
 
   const swappedAdjacentRangeClocks = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

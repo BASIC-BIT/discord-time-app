@@ -3836,6 +3836,9 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
   if (/\b(?:set|change|move|use)\s+(?:the\s+)?(?:month|year)\s+(?:to|as)\s+\d{1,4}\b/iu.test(residue)) {
     return true;
   }
+  if (/\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/iu.test(residue)) {
+    return true;
+  }
   return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
 }
 
@@ -5022,6 +5025,8 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   if (referenceCount === 1) {
     if (new RegExp(String.raw`${reference}\s*${separator}\s*${clock}`, 'iu').test(text)) targets.add('end');
     if (new RegExp(String.raw`${clock}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
+    if (new RegExp(String.raw`\bbetween\s+${reference}\s+and\s+${clock}`, 'iu').test(text)) targets.add('end');
+    if (new RegExp(String.raw`\bbetween\s+${clock}\s+and\s+${reference}`, 'iu').test(text)) targets.add('start');
   }
   if (new RegExp(String.raw`\bstart(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bend(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
