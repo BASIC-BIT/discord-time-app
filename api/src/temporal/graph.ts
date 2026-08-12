@@ -5105,7 +5105,7 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
   const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
   const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   const rangeSeparator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
-  const endpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?)`;
+  const endpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)`;
   return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:(?:(?:the|that|same)\s+)?(?:day|date)\s+)?at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+${shift}\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+${reference}\s+(?:to|at)\s+${clock}`, 'iu').test(text)
@@ -5140,7 +5140,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
     if (new RegExp(String.raw`\bbetween\s+${clock}\s+and\s+${reference}`, 'iu').test(text)) targets.add('start');
   }
   if (new RegExp(String.raw`\bstart(?:s|ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
-  if (new RegExp(String.raw`\bend(?:s|ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
@@ -5160,7 +5160,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+(?:to|at)|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at))`;
+  const setter = String.raw`(?:\b(?:set|change|move|make|use|keep)(?:\s+(?:reference|it))?\s+(?:to|at)|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at))`;
   const setterClock = new RegExp(
     String.raw`${setter}\s+(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',

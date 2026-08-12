@@ -278,6 +278,49 @@ async function main() {
   assert.equal(rejectedMalformedAtSetter.status, 'failed');
   assert.equal(rejectedMalformedAtSetter.epoch, undefined);
   assert.match(rejectedMalformedAtSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedChangeSetter = await executeTemporalPlanPlannerOutput(
+    parseTemporalPlanPlannerOutput({
+      outcome: 'plans',
+      plans: [{
+        label: 'Ignored malformed change setter',
+        finalStep: 0,
+        steps: [{ op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' }],
+      }],
+    }),
+    { text: 'change <t:1785643200:t> to 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedChangeSetter.status, 'failed');
+  assert.equal(rejectedMalformedChangeSetter.epoch, undefined);
+  const rejectedFinishClockSingularRange = await executeModelReferenceClockComposition(
+    'starts at <t:1785643200:t>, finishes at 5 pm',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(rejectedFinishClockSingularRange.status, 'failed');
+  assert.equal(rejectedFinishClockSingularRange.epoch, undefined);
+  const finishClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Finish-clock range',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t>, finishes at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedFinishClockRange.status, 'resolved');
+  assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
+  assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',
