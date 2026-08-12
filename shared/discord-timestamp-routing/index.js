@@ -15,6 +15,11 @@ const EXACT_RANGE = new RegExp(
 const HARMLESS_WRAPPER = /^[\s`'"“”‘’()[\]{}*_~>|.\\-]*$/u;
 const AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const UNIT_SOURCE = String.raw`(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
+const CLOCK_SOURCE = String.raw`(?:\d{1,2}(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d|midnight|noon)`;
+const AFFIRMATIVE_CLOCK_CHANGE = new RegExp(
+  String.raw`\bchange\s+(?:the\s+)?time\s+of\s+${TIMESTAMP_SOURCE}\s+to\s+${CLOCK_SOURCE}\b`,
+  "gi",
+);
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;
 const CONDITIONAL_OR_UNCERTAIN = /\b(?:if|unless|maybe|perhaps|possibly|probably|tentative|tbd|unknown|unsure|might|could|would)\b|\?/i;
 const COMPARISON = /\b(?:compare|versus|vs\.?|difference|between|earlier\s+of|later\s+of|which\s+(?:is\s+)?(?:first|earlier|later))\b/i;
@@ -235,7 +240,8 @@ function aggregateContext(references) {
 
 function semanticSignals(text) {
   const signals = [];
-  if (NEGATION_OR_CORRECTION.test(text)) signals.push("negation_or_correction");
+  const correctionText = text.replace(AFFIRMATIVE_CLOCK_CHANGE, " ");
+  if (NEGATION_OR_CORRECTION.test(correctionText)) signals.push("negation_or_correction");
   if (CONDITIONAL_OR_UNCERTAIN.test(text)) signals.push("conditional_or_uncertain");
   if (COMPARISON.test(text)) signals.push("comparison");
   if (SCHEDULING.test(text)) signals.push("scheduling");

@@ -47,6 +47,9 @@ test('routes temporal transformation language to model interpretation', () => {
     '2 days before <t:1785643200:D>',
     '<t:1785643200:D> 1 hour later',
     '<t:1785643200:R> 1 hour later',
+    'change the time of <t:1785643200:t> to 3 pm',
+    'change time of <t:1785643200:t> to 15:00',
+    'move <t:1785643200:t> to 6:30pm without changing the day',
   ]) {
     const result = classify(input);
     assert.equal(result.route, 'model');

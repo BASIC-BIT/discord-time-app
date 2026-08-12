@@ -3822,7 +3822,9 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
   const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
-  residue = residue.replace(new RegExp(String.raw`\b(?:set|change)\s+to\s+${clock}`, 'giu'), ' ');
+  residue = residue
+    .replace(new RegExp(String.raw`\b(?:set|move)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
+    .replace(new RegExp(String.raw`\bchange\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
   return new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)

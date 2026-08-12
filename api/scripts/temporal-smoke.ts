@@ -972,12 +972,20 @@ async function main() {
     '3 pm',
   );
   assert.equal(unsupportedBareHourCorrection.status, 'failed');
-  const supportedSameDayComposition = await executeModelReferenceClockComposition(
+  for (const text of [
     'use <t:1785643200:t> for the same day at 3 pm',
-    '<t:1785643200:t>',
-    '3 pm',
-  );
-  assert.equal(supportedSameDayComposition.status, 'resolved');
+    'set <t:1785643200:t> to 3 pm',
+    'change the time of <t:1785643200:t> to 3 pm',
+    'move <t:1785643200:t> to 3 pm without changing the day',
+    '<t:1785643200:t> move it to 3 pm without changing the day',
+  ]) {
+    const supportedSameDayComposition = await executeModelReferenceClockComposition(
+      text,
+      '<t:1785643200:t>',
+      '3 pm',
+    );
+    assert.equal(supportedSameDayComposition.status, 'resolved', `${text}: ${supportedSameDayComposition.validation.warnings.join(' | ')}`);
+  }
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
