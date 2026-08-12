@@ -58,6 +58,9 @@ test('routes temporal transformation language to model interpretation', () => {
   const fuzzyShift = classify('<t:1785643200:D> about one hour later');
   assert.equal(fuzzyShift.route, 'model');
   assert.equal(fuzzyShift.signals.includes('subday_duration'), true);
+  const invalidClockChange = classify('change the time of <t:1785643200:t> to 99 pm');
+  assert.equal(invalidClockChange.route, 'clarify');
+  assert.equal(invalidClockChange.reason, 'negated_or_corrected_reference');
 });
 
 test('preserves a narrow affirmative copied-prose route and rejects semantic hazards', () => {

@@ -49,7 +49,7 @@ const CalendarContextSchema = z.object({
 const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TOP_LEVEL_NEXT_WEEKDAY_PATTERN = new RegExp(`^\\s*next\\s+(?:${PLAN_WEEKDAYS.join('|')})(?:\\b[\\s\\S]*)?$`, 'i');
 const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?\b/i;
-const AM_PM_CLOCK_MENTION_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/gi;
+const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*(am|pm)\b/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
@@ -3819,7 +3819,7 @@ function discordReferenceCandidateIsGrounded(
 
 function discordReferenceRequestsRange(text: string, reference: string): boolean {
   let residue = text.replace(reference, ' ');
-  const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   residue = residue
@@ -5050,7 +5050,7 @@ function discordReferenceClockSemanticsError(
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
   const targets = new Set<'start' | 'end'>();
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
-  const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const shift = String.raw`(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
   const referenceCount = [...text.matchAll(new RegExp(reference, 'giu'))].length;

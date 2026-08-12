@@ -383,6 +383,13 @@ async function main() {
     oclockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
     [1785567600, 1785610800],
   );
+  const rejectedInstantForOclockRange = await executeModelReferenceClockComposition(
+    "<t:1785643200:t> to 3 o'clock",
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedInstantForOclockRange.status, 'failed');
+  assert.match(rejectedInstantForOclockRange.validation.warnings.join(' '), /instant.*range request/);
 
   const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
