@@ -909,6 +909,16 @@ async function main() {
       delta: { hours: 4 },
     },
     {
+      text: 'starts at <t:1785643200:t>, ends four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'begins at <t:1785643200:t> and ends four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
       text: '<t:1785643200:t> through 30 minutes before <t:1785650400:t>',
       target: 'end' as const,
       delta: { minutes: -30 },
@@ -962,6 +972,8 @@ async function main() {
     'starting at <t:1785643200:t> and then ending four hours later',
     'beginning at <t:1785643200:t>, ending four hours later',
     'begin at <t:1785643200:t> and then end four hours later',
+    'starts at <t:1785643200:t>, ends four hours later',
+    'begins at <t:1785643200:t> and ends four hours later',
   ]) {
     const rejectedSingularPunctuatedRelationalRange = await executeModelReferenceShift(
       text,
@@ -1186,6 +1198,16 @@ async function main() {
     );
     assert.equal(supportedSameDayComposition.status, 'resolved', `${text}: ${supportedSameDayComposition.validation.warnings.join(' | ')}`);
   }
+  const rejectedUnscopedCopiedProseClock = await executeModelReferenceClockComposition(
+    'I copied <t:1785643200:t> at 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedUnscopedCopiedProseClock.status, 'failed');
+  assert.match(
+    rejectedUnscopedCopiedProseClock.validation.warnings.join(' '),
+    /clock relationship could not be validated safely/,
+  );
   const unchangedMalformedClockSetter = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

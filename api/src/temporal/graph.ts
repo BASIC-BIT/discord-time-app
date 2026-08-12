@@ -3868,7 +3868,7 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
-    || new RegExp(String.raw`\b(?:start(?:ing)?|begin(?:ning)?)\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+)?|\band(?:\s+then)?\s+)end(?:ing)?\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+)?|\band(?:\s+then)?\s+)end(?:s|ing)?\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\bfrom\s+)<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
 }
 
@@ -5064,6 +5064,9 @@ function discordReferenceClockSemanticsError(
   const actualClocks = uniqueClocks(clocksByTerminal.flatMap((clocks) => clocks ?? []));
   const requestedKeys = new Set(requestedClocks.map(clockKey));
   const actualKeys = new Set(actualClocks.map(clockKey));
+  if (requestedKeys.size > 0 && !discordReferenceHasSupportedClockRelationship(originalText)) {
+    return 'Discord-reference clock relationship could not be validated safely.';
+  }
   if (requestedKeys.size === 0) {
     return actualKeys.size === 0
       ? undefined
@@ -5096,6 +5099,18 @@ function discordReferenceClockSemanticsError(
   return undefined;
 }
 
+function discordReferenceHasSupportedClockRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const clockWord = String.raw`(?:at\b|noon\b|midnight\b|\d{1,2}\s+o['\u2019]clock\b|\d{1,2}(?::|\.)\d{2}|\d{3,4}\b|\d{1,2}\s*[ap](?:\.?m\.?)?\b)`;
+  const rangeSeparator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)[\s\S]*\b${clockWord}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\b[\s\S]*${reference}[\s\S]*\b${clockWord}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${clockWord}[\s\S]*\b(?:same\s+(?:day|date)|day|date)\b[\s\S]*${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}[\s\S]*\b(?:same\s+(?:day|date)|day|date)\b[\s\S]*\b${clockWord}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clockWord}`, 'iu').test(text)
+    || new RegExp(String.raw`${clockWord}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text);
+}
+
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
   const targets = new Set<'start' | 'end'>();
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
@@ -5115,8 +5130,8 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
-  if (new RegExp(String.raw`\bend(?:ing)?\s+${shift}\b`, 'iu').test(text)) targets.add('end');
-  if (new RegExp(String.raw`\bstart(?:ing)?\s+${shift}\b`, 'iu').test(text)) targets.add('start');
+  if (new RegExp(String.raw`\bend(?:s|ing)?\s+${shift}\b`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+${shift}\b`, 'iu').test(text)) targets.add('start');
   for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\b/giu)) {
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
