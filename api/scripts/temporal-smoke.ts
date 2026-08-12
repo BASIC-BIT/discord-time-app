@@ -401,8 +401,8 @@ async function main() {
       steps: [
         { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
         { op: 'resolve_clock_time', options: [
-          { label: 'Morning', text: '3 am' },
-          { label: 'Afternoon', text: '3 pm' },
+          { label: '3 PM', text: '3 am' },
+          { label: '3 AM', text: '3 pm' },
         ] },
         { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
       ],
@@ -419,6 +419,34 @@ async function main() {
     oclockRangeClarification.clarificationAlternatives?.map((alternative) => alternative.range?.end.epoch),
     [1785654000, 1785697200],
   );
+
+  const independentRangeChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which Saturday and which 3 oclock?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Ambiguous Saturday range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_weekday_anchor', weekday: 'saturday', weekdayAnchor: 'next_ambiguous', precision: 'date' },
+        { op: 'resolve_clock_time', text: 'midnight' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3 AM', text: '3 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const independentRangeClarification = await executeTemporalPlanPlannerOutput(
+    independentRangeChoices,
+    { text: "next Saturday from midnight to 3 o'clock", calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(independentRangeClarification.status, 'needs_clarification', JSON.stringify(independentRangeClarification, null, 2));
+  assert.equal(independentRangeClarification.clarificationAlternatives?.length, 4);
 
   const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',

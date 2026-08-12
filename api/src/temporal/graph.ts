@@ -53,6 +53,7 @@ const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*([ap])\
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
+const AMBIGUOUS_BOUNDED_BARE_HOUR_PATTERN = /\b(0?[1-9]|1[0-2])\b(?=\s*,?\s*(?:keeping\s+the\s+same\s+calendar\s+day|on\s+(?:the\s+)?(?:following|previous|prior|next)\s+day))/gi;
 const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'] as const;
 const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
 const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
@@ -2417,10 +2418,9 @@ function planStepValidationText(
       break;
     case 'resolve_clock_time':
       if (step.options !== null) {
-        const matchingOption = step.options.find((option) =>
-          choiceLabel !== undefined && option.label.toLocaleLowerCase('en-US') === choiceLabel.toLocaleLowerCase('en-US')
-          || choiceClock !== undefined && parsePlanClockText(option.text).some((clock) => clockKey(clock) === clockKey(choiceClock)),
-        );
+        const matchingOption = choiceClock !== undefined
+          ? step.options.find((option) => parsePlanClockText(option.text).some((clock) => clockKey(clock) === clockKey(choiceClock)))
+          : step.options.find((option) => choiceLabel !== undefined && option.label.toLocaleLowerCase('en-US') === choiceLabel.toLocaleLowerCase('en-US'));
         parts.push(...(matchingOption === undefined ? step.options.map((option) => option.text) : [matchingOption.text]));
       }
       parts.push(...optionalPlanText(step.text));
@@ -2484,6 +2484,14 @@ function pairRangeCandidateOutputs(
   }
   if (ends.length === 1) {
     return starts.map((start) => ({ start, end: ends[0]!, label: start.label ?? ends[0]!.label }));
+  }
+  const localDate = (output: PlanCandidateOutput) => Temporal.ZonedDateTime.from(output.candidate.zonedDateTime).toPlainDate().toString();
+  const startsCovered = starts.every((start) => ends.some((end) => localDate(start) === localDate(end)));
+  const endsCovered = ends.every((end) => starts.some((start) => localDate(start) === localDate(end)));
+  if (startsCovered && endsCovered) {
+    return starts.flatMap((start) => ends
+      .filter((end) => localDate(start) === localDate(end))
+      .map((end) => ({ start, end, label: end.label ?? start.label })));
   }
   throw new Error(`Cannot pair ${starts.length} range starts with ${ends.length} range ends.`);
 }
@@ -3514,6 +3522,13 @@ function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
   }
 
   for (const match of text.matchAll(AMBIGUOUS_OCLOCK_PATTERN)) {
+    const hour = Number(match[1]);
+    if (match.index !== undefined && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length))) {
+      mentions.push({ text: match[0], index: match.index, hour, minute: 0, replacementBase: String(hour) });
+    }
+  }
+
+  for (const match of text.matchAll(AMBIGUOUS_BOUNDED_BARE_HOUR_PATTERN)) {
     const hour = Number(match[1]);
     if (match.index !== undefined && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length))) {
       mentions.push({ text: match[0], index: match.index, hour, minute: 0, replacementBase: String(hour) });
