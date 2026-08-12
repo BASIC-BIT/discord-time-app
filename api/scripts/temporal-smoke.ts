@@ -87,7 +87,19 @@ async function executeModelReferenceRangeShift(
   target: 'start' | 'end',
   delta: Record<string, number>,
 ) {
-  const baseStep = target === 'start' ? 0 : 1;
+  const sharedReference = startReference === endReference;
+  const baseStep = sharedReference ? 0 : (target === 'start' ? 0 : 1);
+  const shiftedStep = sharedReference ? 1 : 2;
+  const steps = sharedReference
+    ? [
+      { op: 'resolve_calendar_query' as const, query: startReference, precision: 'datetime' as const },
+      { op: 'shift_datetime' as const, baseStep, delta, precision: 'datetime' as const },
+    ]
+    : [
+      { op: 'resolve_calendar_query' as const, query: startReference, precision: 'datetime' as const },
+      { op: 'resolve_calendar_query' as const, query: endReference, precision: 'datetime' as const },
+      { op: 'shift_datetime' as const, baseStep, delta, precision: 'datetime' as const },
+    ];
   const plan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     reason: 'Test fixture representing a model-interpreted Discord reference range transformation.',
@@ -98,13 +110,9 @@ async function executeModelReferenceRangeShift(
       rationale: 'Resolve both exact endpoints and shift only the requested endpoint.',
       assumptions: [],
       confidence: 1,
-      startStep: target === 'start' ? 2 : 0,
-      endStep: target === 'end' ? 2 : 1,
-      steps: [
-        { op: 'resolve_calendar_query', query: startReference, precision: 'datetime' },
-        { op: 'resolve_calendar_query', query: endReference, precision: 'datetime' },
-        { op: 'shift_datetime', baseStep, delta, precision: 'datetime' },
-      ],
+      startStep: target === 'start' ? shiftedStep : 0,
+      endStep: target === 'end' ? shiftedStep : (sharedReference ? 0 : 1),
+      steps,
     }],
   });
   return executeTemporalPlanPlannerOutput(
@@ -723,17 +731,54 @@ async function main() {
       target: 'start' as const,
       delta: { hours: -2 },
     },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, extend the start by two hours',
+      target: 'start' as const,
+      delta: { hours: -2 },
+    },
+    {
+      text: 'from <t:1785643200:t> until one hour after <t:1785643200:t>',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
+      text: 'starting at <t:1785643200:t> and ending two hours later',
+      target: 'end' as const,
+      delta: { hours: 2 },
+    },
+    {
+      text: '<t:1785643200:t> through 30 minutes before <t:1785650400:t>',
+      target: 'end' as const,
+      delta: { minutes: -30 },
+    },
+    {
+      text: '15 minutes before <t:1785643200:t> until <t:1785650400:t>',
+      target: 'start' as const,
+      delta: { minutes: -15 },
+    },
   ]) {
     const supportedRangeShift = await executeModelReferenceRangeShift(
       rangeCase.text,
       '<t:1785643200:t>',
-      '<t:1785650400:t>',
+      rangeCase.text.includes('<t:1785650400:t>') ? '<t:1785650400:t>' : '<t:1785643200:t>',
       rangeCase.target,
       rangeCase.delta,
     );
-    assert.equal(supportedRangeShift.status, 'resolved');
+    assert.equal(
+      supportedRangeShift.status,
+      'resolved',
+      `${rangeCase.text}: ${supportedRangeShift.validation.warnings.join(' ')}`,
+    );
     assert.notEqual(supportedRangeShift.range, undefined);
   }
+  const rejectedShrinkingStartExtension = await executeModelReferenceRangeShift(
+    '<t:1785643200:t> to <t:1785650400:t>, extend the start by two hours',
+    '<t:1785643200:t>',
+    '<t:1785650400:t>',
+    'start',
+    { hours: 2 },
+  );
+  assert.equal(rejectedShrinkingStartExtension.status, 'failed');
 
   const swappedRangeReferences = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -868,6 +913,12 @@ async function main() {
     { days: 3 },
   );
   assert.equal(supportedExplicitAdditiveShift.status, 'resolved');
+  const unsupportedCorrectionAfterAdditiveShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later, then no, two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedCorrectionAfterAdditiveShift.status, 'failed');
   const unsupportedRoundingTransform = await executeModelReferenceShift(
     '<t:1785644100:t> rounded to the nearest hour',
     '<t:1785644100:t>',
@@ -925,6 +976,7 @@ async function main() {
     '<t:1785643200:t> on Christmas at 2 pm',
     '<t:1785643200:t> on Juneteenth at 2 pm',
     "<t:1785643200:t> on St. Patrick's Day at 2 pm",
+    '<t:1785643200:t> on Martin Luther King, Jr. Day at 2 pm',
     '<t:1785643200:t> move it to Juneteenth at 2 pm',
     '<t:1785643200:t> move it to Juneteenth',
   ]) {

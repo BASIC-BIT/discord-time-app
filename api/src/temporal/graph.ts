@@ -3846,10 +3846,10 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
     /\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+(?:the\s+)?same\s+(?:day|date)\s+(?:at|by|around)\b/giu,
     ' ',
   );
-  if (/\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+[a-z][a-z.'’-]*(?:\s+[a-z][a-z.'’-]*){0,3}\s+(?:at|by|around)\b/iu.test(namedCalendarResidue)) {
+  if (/\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+[a-z][a-z.,'’-]*(?:\s+[a-z][a-z.,'’-]*){0,5}\s+(?:at|by|around)\b/iu.test(namedCalendarResidue)) {
     return true;
   }
-  if (/\b(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as)\s+(?!the\s+same\s+(?:day|date)\b)[a-z][a-z.'’-]*(?:\s+[a-z][a-z.'’-]*){0,3}(?:\s*$|\s*[,.!?;])/iu.test(namedCalendarResidue)) {
+  if (/\b(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as)\s+(?!the\s+same\s+(?:day|date)\b)[a-z][a-z.,'’-]*(?:\s+[a-z][a-z.,'’-]*){0,5}(?:\s*$|\s*[,.!?;])/iu.test(namedCalendarResidue)) {
     return true;
   }
   return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
@@ -5048,6 +5048,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
   const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const shift = String.raw`(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
   const referenceCount = [...text.matchAll(new RegExp(reference, 'giu'))].length;
   if (referenceCount === 1) {
     if (new RegExp(String.raw`${reference}\s*${separator}\s*${clock}`, 'iu').test(text)) targets.add('end');
@@ -5057,6 +5058,10 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   }
   if (new RegExp(String.raw`\bstart(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bend(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
+  if (new RegExp(String.raw`\bending\s+${shift}\b`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\bstarting\s+${shift}\b`, 'iu').test(text)) targets.add('start');
   for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start|end)\b/giu)) {
     targets.add(match[1]!.toLowerCase() as 'start' | 'end');
   }
@@ -5174,7 +5179,10 @@ function expectedDiscordReferenceShift(
     const direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(match[3]!) ? 1 : -1;
     recordShift(match, 1, 2, direction);
   }
-  for (const match of residue.matchAll(/\b(?:extend|push)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+  for (const match of residue.matchAll(/\bextend\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+by\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+    recordShift(match, 2, 3, match[1]!.toLowerCase() === 'start' ? -1 : 1);
+  }
+  for (const match of residue.matchAll(/\bpush\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
     recordShift(match, 1, 2, 1);
   }
   for (const match of residue.matchAll(/\badd\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(?:start|end)\b/giu)) {
@@ -5207,7 +5215,7 @@ function expectedDiscordReferenceShift(
     const orderedRanges = [...consumedRanges].sort((left, right) => left.start - right.start);
     const explicitlyAdditive = orderedRanges.slice(1).every((range, index) => {
       const gap = residue.slice(orderedRanges[index]!.end, range.start);
-      return /(?:\b(?:and\s+)?then\b|\bplus\b|\bfollowed\s+by\b|\bafter\s+that\b)/iu.test(gap);
+      return /^\s*(?:[,;:–—-]\s*)?(?:(?:and\s+)?then|plus|followed\s+by|after\s+that)\s*[,;:]?\s*$/iu.test(gap);
     });
     if (!explicitlyAdditive) {
       return undefined;
