@@ -785,6 +785,18 @@ async function main() {
     { days: 3 },
   );
   assert.equal(unsupportedMakeThatShift.status, 'failed');
+  const unsupportedNoCorrectionShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later—no, two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedNoCorrectionShift.status, 'failed');
+  const unsupportedRoundingTransform = await executeModelReferenceShift(
+    '<t:1785644100:t> rounded to the nearest hour',
+    '<t:1785644100:t>',
+    {},
+  );
+  assert.equal(unsupportedRoundingTransform.status, 'failed');
   const unsupportedMultiClockCorrection = await executeModelReferenceClockComposition(
     '<t:1785643200:t> was at 2 pm; change it to 3 pm',
     '<t:1785643200:t>',
@@ -803,6 +815,12 @@ async function main() {
     '15:00',
   );
   assert.equal(unsupportedTwentyFourHourCorrection.status, 'failed');
+  const unsupportedBareHourCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at 7; change it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(unsupportedBareHourCorrection.status, 'failed');
   const supportedSameDayComposition = await executeModelReferenceClockComposition(
     'use <t:1785643200:t> for the same day at 3 pm',
     '<t:1785643200:t>',
@@ -829,6 +847,7 @@ async function main() {
     '<t:1785643200:t> on 5/1 at 2 pm',
     '<t:1785643200:t> on Christmas at 2 pm',
     '<t:1785643200:t> on Juneteenth at 2 pm',
+    '<t:1785643200:t> move it to Juneteenth at 2 pm',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,

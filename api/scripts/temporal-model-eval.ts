@@ -2768,7 +2768,7 @@ async function buildEvaluationBoundary(
   if (baseline.compatible && baseline.regressions.length > 0) {
     blockers.push(`Baseline comparison found ${baseline.regressions.length} pass-to-fail regression(s).`);
   }
-  if (baseline.compatible && baseline.missingCandidateCases.length > 0) {
+  if (baseline.missingCandidateCases.length > 0) {
     blockers.push(`Baseline comparison found ${baseline.missingCandidateCases.length} missing candidate case(s).`);
   }
 

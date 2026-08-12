@@ -3843,10 +3843,10 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
     return true;
   }
   const namedCalendarResidue = residue.replace(
-    /\b(?:on|for)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:at|by|around)\b/giu,
+    /\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+(?:the\s+)?same\s+(?:day|date)\s+(?:at|by|around)\b/giu,
     ' ',
   );
-  if (/\b(?:on|for)\s+[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,3}\s+(?:at|by|around)\b/iu.test(namedCalendarResidue)) {
+  if (/\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,3}\s+(?:at|by|around)\b/iu.test(namedCalendarResidue)) {
     return true;
   }
   return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
@@ -4982,10 +4982,17 @@ function discordReferenceClockSemanticsError(
   originalText: string,
 ): string | undefined {
   const requestedClocks = requestedDiscordReferenceClocks(originalText);
+  const ambiguousClockMentions = ambiguousBareClockMentions(originalText);
+  const embeddedBareHourMentionCount = [...originalText.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
+    .filter((match) => match.index !== undefined && !ambiguousClockMentions.some((mention) =>
+      rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length),
+    ))
+    .length;
   const singularClockMentionCount = explicitAmPmClockMentions(originalText).length
-    + ambiguousBareClockMentions(originalText).length
+    + ambiguousClockMentions.length
     + [...originalText.matchAll(/\b(?:noon|midnight)\b/giu)].length
-    + [...originalText.matchAll(/(?<![\d:])(?:0?0|1[3-9]|2[0-3]):[0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length;
+    + [...originalText.matchAll(/(?<![\d:])(?:0?0|1[3-9]|2[0-3]):[0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
+    + embeddedBareHourMentionCount;
   if (plan.kind !== 'time_range' && singularClockMentionCount > 1) {
     return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
   }
@@ -5175,7 +5182,7 @@ function expectedDiscordReferenceShift(
   if (matchedAmountUnitCount > 1 && matchedShiftKeys.size > 1) {
     return undefined;
   }
-  if (matchedAmountUnitCount > 1 && /\b(?:actually|instead|rather|change|correct|make\s+(?:it|that)|was)\b/iu.test(residue)) {
+  if (matchedAmountUnitCount > 1 && /\b(?:actually|instead|rather|change|correct|make\s+(?:it|that)|was|no)\b/iu.test(residue)) {
     return undefined;
   }
   if (matchedAmountUnitCount > 1 && (matchedShiftKeys.has('months') || matchedShiftKeys.has('years'))) {
@@ -5202,7 +5209,7 @@ function expectedDiscordReferenceShift(
       .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
       .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
   }
-  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next|ago)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
+  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next|ago|round(?:ed|ing)?|nearest|floor(?:ed|ing)?|ceil(?:ed|ing)?|ceiling)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
   return unconsumedShiftHint ? undefined : result;
 }
 
