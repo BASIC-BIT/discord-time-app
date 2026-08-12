@@ -844,6 +844,11 @@ async function main() {
       delta: { hours: 4 },
     },
     {
+      text: '<t:1785643200:t> to four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
       text: '<t:1785643200:t> to one hour after <t:1785643200:t>',
       target: 'end' as const,
       delta: { hours: 1 },
@@ -920,6 +925,12 @@ async function main() {
     { hours: 4 },
   );
   assert.equal(rejectedSingularImplicitReferenceRange.status, 'failed');
+  const rejectedSingularBareImplicitReferenceRange = await executeModelReferenceShift(
+    '<t:1785643200:t> to four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedSingularBareImplicitReferenceRange.status, 'failed');
 
   const swappedRangeReferences = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -1105,6 +1116,7 @@ async function main() {
   for (const text of [
     'use <t:1785643200:t> for the same day at 3 pm',
     'set <t:1785643200:t> to 3 pm',
+    'set the time of <t:1785643200:t> to 3 pm',
     'change the time of <t:1785643200:t> to 3 pm',
     'change the time of <t:1785643200:t> to 3 p.m.',
     'move <t:1785643200:t> to 3 pm without changing the day',
@@ -1128,6 +1140,7 @@ async function main() {
   });
   for (const text of [
     'set <t:1785643200:t> to 25:00',
+    'set the time of <t:1785643200:t> to 25:00',
     '<t:1785643200:t> set it to 2:75',
     'set <t:1785643200:t> to 2500',
   ]) {

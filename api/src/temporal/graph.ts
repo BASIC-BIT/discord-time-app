@@ -3862,14 +3862,14 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   residue = residue
     .replace(new RegExp(String.raw`\b(?:set|move)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
-    .replace(new RegExp(String.raw`\bchange\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
+    .replace(new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
   return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
-    || new RegExp(String.raw`\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
+    || new RegExp(String.raw`(?:^|\bfrom\s+)<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
 }
 
 function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
@@ -5107,7 +5107,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   if (new RegExp(String.raw`\bstart(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bend(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
-  if (new RegExp(String.raw`\bfrom\s+${reference}\s+until\s+${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bending\s+${shift}\b`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`\bstarting\s+${shift}\b`, 'iu').test(text)) targets.add('start');
@@ -5125,7 +5125,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+to|\bchange\s+(?:the\s+)?time\s+of\s+reference\s+to)`;
+  const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+to|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+to)`;
   const setterClock = new RegExp(
     String.raw`${setter}\s+(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',
