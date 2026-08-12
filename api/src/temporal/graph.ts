@@ -5125,26 +5125,22 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
   const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+to|\bchange\s+(?:the\s+)?time\s+of\s+reference\s+to)`;
-  for (const match of normalized.matchAll(new RegExp(String.raw`${setter}\s+(\d{1,3})([.,])(\d{1,2})(\s*[ap](?:\.?m\.?)?)?(?![\w:])`, 'giu'))) {
-    const validDottedBareClock = match[2] === '.'
-      && match[3]!.length === 2
-      && match[4] === undefined
-      && parsePlanClockText(`${match[1]}:${match[3]}`).length > 0;
-    if (!validDottedBareClock) {
+  const setterClock = new RegExp(
+    String.raw`${setter}\s+(\d{1,3}(?:[:.,]\d{1,3})*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
+    'giu',
+  );
+  for (const match of normalized.matchAll(setterClock)) {
+    const token = match[1]!.trim();
+    const dottedBareClock = /^(\d{1,2})\.(\d{2})$/u.exec(token);
+    const validDottedBareClock = dottedBareClock !== null
+      && parsePlanClockText(`${dottedBareClock[1]}:${dottedBareClock[2]}`).length > 0;
+    const validConventionalClock = /^(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d)$/iu.test(token);
+    if (
+      !validDottedBareClock
+      && !validConventionalClock
+      && !/^(?:0?[1-9]|1[0-2])$/u.test(token)
+    ) {
       return true;
-    }
-  }
-  const setterClockPatterns = [
-    new RegExp(String.raw`${setter}\s+(\d{1,3}(?::\d{1,2})?\s*[ap](?:\.?m\.?)?)(?![\w:])`, 'giu'),
-    new RegExp(String.raw`${setter}\s+(\d{1,3}:\d{1,2})(?![\w:])`, 'giu'),
-    new RegExp(String.raw`${setter}\s+(\d{1,3})(?![\w:.,]|\s*[ap](?:\.?m\.?)?)`, 'giu'),
-  ];
-  for (const pattern of setterClockPatterns) {
-    for (const match of normalized.matchAll(pattern)) {
-      const token = match[1]!.trim();
-      if (parsePlanClockText(token).length === 0 && !/^(?:0?[1-9]|1[0-2])$/u.test(token)) {
-        return true;
-      }
     }
   }
   return false;

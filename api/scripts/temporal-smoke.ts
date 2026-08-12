@@ -1138,6 +1138,22 @@ async function main() {
   );
   assert.equal(rejectedPunctuatedClockSetter.status, 'failed');
   assert.match(rejectedPunctuatedClockSetter.validation.warnings.join(' '), /malformed clock value/);
+  const unchangedExtraSegmentClockSetter = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Ignored extra clock segment', finalStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedExtraSegmentClockSetter = await executeTemporalPlanPlannerOutput(
+    unchangedExtraSegmentClockSetter,
+    { text: 'set <t:1785643200:t> to 3:30:45 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedExtraSegmentClockSetter.status, 'failed');
+  assert.match(rejectedExtraSegmentClockSetter.validation.warnings.join(' '), /malformed clock value/);
   const supportedDottedBareClockSetter = await executeModelReferenceClockComposition(
     'set <t:1785643200:t> to 3.05',
     '<t:1785643200:t>',
