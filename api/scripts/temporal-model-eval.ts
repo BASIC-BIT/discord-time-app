@@ -2823,6 +2823,16 @@ function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: Eval
   }
   const alternatives = parsed.clarificationAlternatives ?? [];
   if (parsed.status !== 'needs_clarification' || alternatives.length === 0) return false;
+  if (evalCase.expected.status === 'resolved') {
+    if (alternatives.length !== 1) return true;
+    const alternative = alternatives[0]!;
+    if (evalCase.expected.range !== undefined) {
+      return alternative.range === undefined
+        || alternative.range.start.epoch !== evalCase.expected.range.startEpoch
+        || alternative.range.end.epoch !== evalCase.expected.range.endEpoch;
+    }
+    return alternative.range !== undefined || alternative.epoch !== evalCase.expected.epoch;
+  }
   if (evalCase.expected.status !== 'needs_clarification') return true;
   if (evalCase.expected.alternativeRanges !== undefined) {
     if (alternatives.some((alternative) => alternative.range === undefined)) return true;

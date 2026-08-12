@@ -779,6 +779,12 @@ async function main() {
     { days: 3 },
   );
   assert.equal(unsupportedSupersededShift.status, 'failed');
+  const unsupportedMakeThatShift = await executeModelReferenceShift(
+    '<t:1785643200:t> was one day later; make that two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedMakeThatShift.status, 'failed');
   const unsupportedMultiClockCorrection = await executeModelReferenceClockComposition(
     '<t:1785643200:t> was at 2 pm; change it to 3 pm',
     '<t:1785643200:t>',
@@ -791,6 +797,18 @@ async function main() {
     '3 pm',
   );
   assert.equal(unsupportedNamedClockCorrection.status, 'failed');
+  const unsupportedTwentyFourHourCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at 14:00; use 15:00',
+    '<t:1785643200:t>',
+    '15:00',
+  );
+  assert.equal(unsupportedTwentyFourHourCorrection.status, 'failed');
+  const supportedSameDayComposition = await executeModelReferenceClockComposition(
+    'use <t:1785643200:t> for the same day at 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(supportedSameDayComposition.status, 'resolved');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -1117,7 +1135,7 @@ async function main() {
     { implementations: createDeterministicTemporalToolImplementations() },
   );
   assert.equal(duplicateClockChoiceResult.status, 'failed');
-  assert.match(duplicateClockChoiceResult.ambiguity.join(' '), /distinct clocks/i);
+  assert.match(duplicateClockChoiceResult.ambiguity.join(' '), /distinct clocks|clock ownership/i);
 
   const unanchoredModelShiftPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
