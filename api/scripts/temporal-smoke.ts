@@ -283,6 +283,13 @@ async function main() {
   );
   assert.equal(rejectedAlternativeRelativeDays.status, 'failed');
   assert.equal(rejectedAlternativeRelativeDays.epoch, undefined);
+  const rejectedCrossClauseEndpointDuration = await executeModelReferenceShift(
+    'move the start marker beside <t:1785643200:t>; publish the marker one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedCrossClauseEndpointDuration.status, 'failed');
+  assert.equal(rejectedCrossClauseEndpointDuration.epoch, undefined);
   const acceptedDirectRelativeDayCommand = await executeModelReferenceShift(
     'move <t:1785643200:t> to tomorrow',
     '<t:1785643200:t>',
@@ -364,6 +371,14 @@ async function main() {
   );
   assert.equal(rejectedMalformedChangeSetter.status, 'failed');
   assert.equal(rejectedMalformedChangeSetter.epoch, undefined);
+  const rejectedMalformedPrepositionlessSetter = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: 'make <t:1785643200:t> 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedPrepositionlessSetter.status, 'failed');
+  assert.equal(rejectedMalformedPrepositionlessSetter.epoch, undefined);
+  assert.match(rejectedMalformedPrepositionlessSetter.validation.warnings.join(' '), /malformed clock value/);
   const rejectedFinishClockSingularRange = await executeModelReferenceClockComposition(
     'starts at <t:1785643200:t>, finishes at 5 pm',
     '<t:1785643200:t>',

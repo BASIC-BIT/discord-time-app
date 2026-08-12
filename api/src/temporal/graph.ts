@@ -5163,9 +5163,9 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  const setter = String.raw`(?:\b(?:set|change|move|make|use|keep)(?:\s+(?:reference|it))?\s+(?:to|at)|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at))`;
+  const setter = String.raw`(?:\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+)`;
   const setterClock = new RegExp(
-    String.raw`${setter}\s+(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
+    String.raw`${setter}(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',
   );
   for (const match of normalized.matchAll(setterClock)) {
@@ -5387,14 +5387,15 @@ function discordReferenceHasSupportedDurationRelationship(text: string): boolean
   const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
   const duration = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
   const direction = DISCORD_SHIFT_DIRECTION_SOURCE;
+  const endpoint = String.raw`(?:start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)`;
   return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:[-+]|,|;|and\s+then)?\s*(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:tomorrow|yesterday)\s*[,;]?\s*(?:(?:and\s+)?then|plus)\s+${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:${direction})(?:\s+than)?\s+${reference}(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:before|after)\s+${reference}(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:the\s+(?:time|date)\s+of\s+)?${reference}(?!\w)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\b[\s\S]*${duration}`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:the\s+)?(?:start|end)(?:ing)?(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\b[\s\S]*${duration}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?${endpoint}(?:\s+point)?\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:the\s+)?${endpoint}(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
     || discordReferenceRequestsRange(text, text.match(new RegExp(reference, 'iu'))?.[0] ?? '');
 }
 
