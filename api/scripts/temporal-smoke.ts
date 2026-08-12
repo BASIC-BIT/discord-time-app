@@ -848,6 +848,7 @@ async function main() {
     '<t:1785643200:t> on Christmas at 2 pm',
     '<t:1785643200:t> on Juneteenth at 2 pm',
     '<t:1785643200:t> move it to Juneteenth at 2 pm',
+    '<t:1785643200:t> move it to Juneteenth',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,
