@@ -785,6 +785,12 @@ async function main() {
     '3 pm',
   );
   assert.equal(unsupportedMultiClockCorrection.status, 'failed');
+  const unsupportedNamedClockCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at noon; change it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(unsupportedNamedClockCorrection.status, 'failed');
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -804,6 +810,7 @@ async function main() {
     '<t:1785643200:t> on 2027-05-01 at 2 pm',
     '<t:1785643200:t> on 5/1 at 2 pm',
     '<t:1785643200:t> on Christmas at 2 pm',
+    '<t:1785643200:t> on Juneteenth at 2 pm',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,

@@ -3842,6 +3842,9 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
   if (/\b(?:christmas|thanksgiving|easter|new\s+year(?:'s)?|memorial\s+day|labor\s+day|independence\s+day|halloween|hanukkah|kwanzaa|ramadan|eid(?:\s+al[- ](?:fitr|adha))?|valentine(?:'s)?\s+day|martin\s+luther\s+king(?:\s+jr\.?)?\s+day|presidents?\s+day|veterans?\s+day)\b/iu.test(residue)) {
     return true;
   }
+  if (/\b(?:on|for)\s+[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,3}\s+(?:at|by|around)\b/iu.test(residue)) {
+    return true;
+  }
   return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
 }
 
@@ -4976,7 +4979,8 @@ function discordReferenceClockSemanticsError(
 ): string | undefined {
   const requestedClocks = requestedDiscordReferenceClocks(originalText);
   const singularClockMentionCount = explicitAmPmClockMentions(originalText).length
-    + ambiguousBareClockMentions(originalText).length;
+    + ambiguousBareClockMentions(originalText).length
+    + [...originalText.matchAll(/\b(?:noon|midnight)\b/giu)].length;
   if (plan.kind !== 'time_range' && singularClockMentionCount > 1) {
     return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
   }
