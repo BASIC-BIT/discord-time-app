@@ -219,6 +219,35 @@ async function main() {
   assert.equal(noOpMidnightClockComposition.status, 'resolved');
   assert.equal(noOpMidnightClockComposition.epoch, 1785643200);
   assert.equal(noOpMidnightClockComposition.suggestedFormatIndex, 4);
+  const rejectedCopiedProseClock = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was copied at 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedCopiedProseClock.status, 'failed');
+  assert.equal(rejectedCopiedProseClock.epoch, undefined);
+  assert.match(rejectedCopiedProseClock.validation.warnings.join(' '), /clock relationship could not be validated safely/);
+  const rejectedCopiedProseRelativeDay = await executeModelReferenceShift(
+    'I will copy <t:1785643200:t> tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedCopiedProseRelativeDay.status, 'failed');
+  assert.equal(rejectedCopiedProseRelativeDay.epoch, undefined);
+  const rejectedPronounLinkedSingularRange = await executeModelReferenceShift(
+    'starts at <t:1785643200:t>, and it ends four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedPronounLinkedSingularRange.status, 'failed');
+  assert.equal(rejectedPronounLinkedSingularRange.epoch, undefined);
+  const rejectedThirdPersonClockSingularRange = await executeModelReferenceClockComposition(
+    'starts at <t:1785643200:t>, ends at 5 pm',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(rejectedThirdPersonClockSingularRange.status, 'failed');
+  assert.equal(rejectedThirdPersonClockSingularRange.epoch, undefined);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',

@@ -3867,8 +3867,8 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
-    || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
-    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+)?|\band(?:\s+then)?\s+)end(?:s|ing)?\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|end(?:s|ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+|and\s+)?|\band(?:\s+then)?\s+)(?:it\s+)?end(?:s|ing)?\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\bfrom\s+)<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
 }
 
@@ -5101,14 +5101,28 @@ function discordReferenceClockSemanticsError(
 
 function discordReferenceHasSupportedClockRelationship(text: string): boolean {
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
-  const clockWord = String.raw`(?:at\b|noon\b|midnight\b|\d{1,2}\s+o['\u2019]clock\b|\d{1,2}(?::|\.)\d{2}|\d{3,4}\b|\d{1,2}\s*[ap](?:\.?m\.?)?\b)`;
+  const clock = String.raw`(?:noon\b|midnight\b|\d{1,2}\s+o['\u2019]clock\b|\d{1,2}(?::|\.)\d{2}|\d{3,4}\b|\d{1,2}\s*[ap](?:\.?m\.?)?\b|(?:0?[1-9]|1[0-2])\b)`;
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   const rangeSeparator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
-  return new RegExp(String.raw`^\s*${reference}(?!\w)[\s\S]*\b${clockWord}`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\b[\s\S]*${reference}[\s\S]*\b${clockWord}`, 'iu').test(text)
-    || new RegExp(String.raw`\b${clockWord}[\s\S]*\b(?:same\s+(?:day|date)|day|date)\b[\s\S]*${reference}`, 'iu').test(text)
-    || new RegExp(String.raw`${reference}[\s\S]*\b(?:same\s+(?:day|date)|day|date)\b[\s\S]*\b${clockWord}`, 'iu').test(text)
-    || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clockWord}`, 'iu').test(text)
-    || new RegExp(String.raw`${clockWord}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text);
+  const endpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?)`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:(?:(?:the|that|same)\s+)?(?:day|date)\s+)?at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`^\s*${reference}(?!\w)\s+${shift}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+${reference}\s+(?:to|at)\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+(?:${reference}|it)\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+${reference}\s+(?:for|on)\s+(?:the\s+)?same\s+(?:day|date)\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\bkeep\s+${reference}(?:['\u2019]s)?\s+(?:day|date)\s+and\s+use\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${clock}\s+(?:on|for|using)\s+(?:the\s+)?(?:same\s+)?(?:day|date)\s+(?:as|of)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\bat\s+${clock}[\s,;:\-]+(?:use|using)\s+(?:the\s+)?(?:same\s+(?:day|date)\s+(?:as|of)|(?:(?:following|next|previous|prior|preceding)\s+)?(?:day|date)(?:\s+(?:after|before|following|preceding))?)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${clock}[\s,;:\-]+on\s+(?:the\s+)?(?:day|date)\s+(?:after|before|following|preceding)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:from|to|through|thru|until|til|till|between|and)\s+${reference}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}\s+(?:end(?:s|ing)?|start(?:s|ing)?)\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\bbetween\s+(?:${reference}\s+and\s+${clock}|${clock}\s+and\s+${reference})`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${clock}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endpoint}\s+at\s+${reference}[\s\S]*\b${endpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endpoint}\s+at\s+${clock}[\s\S]*\b${endpoint}\s+at\s+${reference}`, 'iu').test(text);
 }
 
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
@@ -5125,8 +5139,8 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
     if (new RegExp(String.raw`\bbetween\s+${reference}\s+and\s+${clock}`, 'iu').test(text)) targets.add('end');
     if (new RegExp(String.raw`\bbetween\s+${clock}\s+and\s+${reference}`, 'iu').test(text)) targets.add('start');
   }
-  if (new RegExp(String.raw`\bstart(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
-  if (new RegExp(String.raw`\bend(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\bstart(?:s|ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
+  if (new RegExp(String.raw`\bend(?:s|ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
@@ -5295,6 +5309,9 @@ function expectedDiscordReferenceShift(
   const yesterdayCount = [...residue.matchAll(/\byesterday\b/giu)].length;
   const tomorrowCount = [...residue.matchAll(/\btomorrow\b/giu)].length;
   if (yesterdayCount > 0 || tomorrowCount > 0) {
+    if (!discordReferenceHasSupportedRelativeDayRelationship(originalText)) {
+      return undefined;
+    }
     if ([...matchedShiftKeys].some((key) => key !== 'days')) {
       return undefined;
     }
@@ -5344,6 +5361,14 @@ function expectedDiscordReferenceShift(
   }
   const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next|ago|round(?:ed|ing)?|nearest|floor(?:ed|ing)?|ceil(?:ed|ing)?|ceiling)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
   return unconsumedShiftHint ? undefined : result;
+}
+
+function discordReferenceHasSupportedRelativeDayRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const relativeDay = String.raw`(?:tomorrow|yesterday)`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:on\s+)?${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b${relativeDay}\s+(?:from|after|before|relative\s+to)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|shift|make|use)\s+(?:${reference}|it)\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text);
 }
 
 function discordShiftAmount(value: string): number {
