@@ -1018,6 +1018,24 @@ async function main() {
   );
   assert.equal(rejectedInstantForRange.status, 'failed');
   assert.match(rejectedInstantForRange.validation.warnings.join(' '), /instant.*range request/);
+  const singularQuantifiedShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Move two days later',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 2 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedSingularQuantifiedShift = await executeTemporalPlanPlannerOutput(
+    singularQuantifiedShift,
+    { text: '<t:1785643200:t> move it to 2 days later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedSingularQuantifiedShift.status, 'resolved');
+  assert.equal(acceptedSingularQuantifiedShift.range, undefined);
   const rejectedSetterRange = await executeTemporalPlanPlannerOutput(
     discardedDateMutation,
     { text: 'change <t:1785643200:t> to 3 pm through 5 pm', calendarContext },

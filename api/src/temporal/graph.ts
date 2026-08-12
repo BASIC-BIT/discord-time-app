@@ -3820,12 +3820,13 @@ function discordReferenceCandidateIsGrounded(
 function discordReferenceRequestsRange(text: string, reference: string): boolean {
   let residue = text.replace(reference, ' ');
   const clock = String.raw`(?:\d{1,2}(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|midnight\b|noon\b)`;
+  const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   residue = residue.replace(new RegExp(String.raw`\b(?:set|change)\s+to\s+${clock}`, 'giu'), ' ');
-  return new RegExp(String.raw`(?:^|\s)${separator}\s*${clock}`, 'iu').test(residue)
-    || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
-    || new RegExp(String.raw`\bbetween\s*(?:${clock}\s*)?and(?:\s*${clock})?`, 'iu').test(residue)
-    || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue)
+  return new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
+    || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
+    || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
+    || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
     || /\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b/iu.test(text)
     || /\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)/iu.test(text);
 }

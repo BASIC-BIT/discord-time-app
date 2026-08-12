@@ -111,7 +111,7 @@ function compactPlan(plan: TemporalPlan) {
 
 function compactStep(step: TemporalPlanStep) {
   const compact: Record<string, unknown> = { op: step.operation };
-  for (const key of ['query', 'text', 'holidayName', 'weekday', 'weekdayAnchor', 'year', 'baseStep', 'time', 'timeStep', 'timeZoneStep', 'isoInstant', 'epochSeconds', 'timeZone', 'precision'] as const) {
+  for (const key of ['query', 'text', 'options', 'holidayName', 'weekday', 'weekdayAnchor', 'year', 'baseStep', 'time', 'timeStep', 'timeZoneStep', 'isoInstant', 'epochSeconds', 'timeZone', 'precision'] as const) {
     if (step[key] !== null) {
       compact[key] = step[key];
     }

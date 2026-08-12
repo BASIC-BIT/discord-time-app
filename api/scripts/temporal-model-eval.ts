@@ -190,26 +190,28 @@ type TrainedPlanPrediction = {
   error?: string;
 };
 
-const referenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? '2026-05-24T12:00:00Z';
-const timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? 'America/New_York';
-const openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
-const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
+const defaultReferenceInstant = '2026-05-24T12:00:00Z';
+const defaultTimeZone = 'America/New_York';
+let referenceInstant = defaultReferenceInstant;
+let timeZone = defaultTimeZone;
+let openaiApiKey: string | undefined;
+let requireEval = false;
 let modelSpecs: ModelSpec[] = [];
-const trainedPlanPredictionsPath = process.env['TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS'];
-const trainedPlanModelName = process.env['TEMPORAL_EVAL_TRAINED_PLAN_MODEL'] ?? 'trained-plan-ir';
+let trainedPlanPredictionsPath: string | undefined;
+let trainedPlanModelName = 'trained-plan-ir';
 let baselineSpecs: EvalRunnerSpec[] = [];
 let experimentSpecs: EvalExperimentSpec[] = [];
-const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
-const evalInputOutputPath = process.env['TEMPORAL_EVAL_EXPORT_INPUT'];
-const selectedCaseIds = new Set(splitList(process.env['TEMPORAL_EVAL_CASE_IDS'] ?? ''));
-const limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
-const offset = parseNonNegativeInt(process.env['TEMPORAL_EVAL_OFFSET']) ?? 0;
-const repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
-const progressEvery = parsePositiveInt(process.env['TEMPORAL_EVAL_PROGRESS_EVERY']);
-const blockingRunners = splitList(process.env['TEMPORAL_EVAL_BLOCKING_RUNNERS'] ?? 'agent');
-const includeExhaustiveRelativeOffsetEvals = isTruthy(process.env['TEMPORAL_EVAL_EXHAUSTIVE_RELATIVE_OFFSETS']);
-const boundaryEnabled = isTruthy(process.env['TEMPORAL_EVAL_BOUNDARY']);
-const boundaryBaselineReportPath = nonBlank(process.env['TEMPORAL_EVAL_BASELINE_REPORT']);
+let outputPath: string | undefined;
+let evalInputOutputPath: string | undefined;
+let selectedCaseIds = new Set<string>();
+let limit: number | undefined;
+let offset = 0;
+let repeats = 1;
+let progressEvery: number | undefined;
+let blockingRunners = ['agent'];
+let includeExhaustiveRelativeOffsetEvals = false;
+let boundaryEnabled = false;
+let boundaryBaselineReportPath: string | undefined;
 let trainedPlanPredictionCache: Promise<Map<string, TrainedPlanPrediction>> | undefined;
 
 const ENDPOINT_PLAN_INSTRUCTION_PRESETS = {
@@ -825,7 +827,8 @@ function rangeExpected(
   };
 }
 
-export const temporalEvalCases: TemporalEvalCase[] = [
+function buildTemporalEvalCases(): TemporalEvalCase[] {
+  return [
   {
     id: 'relative-date-default-noon',
     text: 'tomorrow',
@@ -1701,7 +1704,10 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     timeZone: 'America/New_York',
     expected: { status: 'needs_clarification', alternativeEpochs: [1809507600, 1809550800] },
   },
-];
+  ];
+}
+
+export let temporalEvalCases: TemporalEvalCase[] = buildTemporalEvalCases();
 
 export function temporalEvalRouteOwnership(evalCase: TemporalEvalCase): 'classifier' | 'model' {
   if (evalCase.routeOwnership !== undefined) {
@@ -1713,9 +1719,27 @@ export function temporalEvalRouteOwnership(evalCase: TemporalEvalCase): 'classif
 }
 
 async function main() {
+  referenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? defaultReferenceInstant;
+  timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? defaultTimeZone;
+  openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
+  requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
   modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
+  trainedPlanPredictionsPath = process.env['TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS'];
+  trainedPlanModelName = process.env['TEMPORAL_EVAL_TRAINED_PLAN_MODEL'] ?? 'trained-plan-ir';
   baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
   experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
+  outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
+  evalInputOutputPath = process.env['TEMPORAL_EVAL_EXPORT_INPUT'];
+  selectedCaseIds = new Set(splitList(process.env['TEMPORAL_EVAL_CASE_IDS'] ?? ''));
+  limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
+  offset = parseNonNegativeInt(process.env['TEMPORAL_EVAL_OFFSET']) ?? 0;
+  repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
+  progressEvery = parsePositiveInt(process.env['TEMPORAL_EVAL_PROGRESS_EVERY']);
+  blockingRunners = splitList(process.env['TEMPORAL_EVAL_BLOCKING_RUNNERS'] ?? 'agent');
+  includeExhaustiveRelativeOffsetEvals = isTruthy(process.env['TEMPORAL_EVAL_EXHAUSTIVE_RELATIVE_OFFSETS']);
+  boundaryEnabled = isTruthy(process.env['TEMPORAL_EVAL_BOUNDARY']);
+  boundaryBaselineReportPath = nonBlank(process.env['TEMPORAL_EVAL_BASELINE_REPORT']);
+  temporalEvalCases = buildTemporalEvalCases();
   const runnerSpecs: EvalRunnerSpec[] = [...modelSpecs, ...baselineSpecs];
   const excludedCategories = new Set(
     (process.env['TEMPORAL_EVAL_EXCLUDE_CATEGORIES'] ?? '')
