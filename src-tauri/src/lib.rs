@@ -1807,6 +1807,10 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
     }
     let configured_model = settings.local_slm_model.trim();
     let configured_adapter = settings.local_slm_adapter_path.trim();
+    let uses_packaged_runtime = settings.local_slm_endpoint_base_url.trim()
+        == LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
+        && settings.local_slm_launcher_path.trim().is_empty()
+        && settings.local_slm_docker_image.trim() == LOCAL_SLM_DEFAULT_DOCKER_IMAGE;
     let is_packaged_pair = (configured_model == LOCAL_SLM_LEGACY_MODEL
         && configured_adapter == LOCAL_SLM_LEGACY_ADAPTER_PATH)
         || (configured_model == LOCAL_SLM_PREVIOUS_MODEL
@@ -1815,7 +1819,7 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
             && configured_adapter == LOCAL_SLM_V11_ADAPTER_PATH)
         || (configured_model == LOCAL_SLM_V9_MODEL
             && configured_adapter == LOCAL_SLM_V9_ADAPTER_PATH);
-    if is_packaged_pair {
+    if is_packaged_pair && uses_packaged_runtime {
         settings.local_slm_model = LOCAL_SLM_DEFAULT_MODEL.to_string();
         settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
     }
@@ -1960,6 +1964,31 @@ mod local_slm_default_migration_tests {
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_V11_MODEL);
         assert_eq!(settings.local_slm_adapter_path, "custom/adapter");
+    }
+
+    #[test]
+    fn preserves_packaged_model_identity_with_a_custom_runtime() {
+        for customize in ["endpoint", "launcher", "image"] {
+            let mut settings = AppSettings {
+                settings_schema_version: 0,
+                local_slm_model: LOCAL_SLM_V11_MODEL.to_string(),
+                local_slm_adapter_path: LOCAL_SLM_V11_ADAPTER_PATH.to_string(),
+                ..AppSettings::default()
+            };
+            match customize {
+                "endpoint" => {
+                    settings.local_slm_endpoint_base_url = "http://127.0.0.1:9999/v1".to_string()
+                }
+                "launcher" => settings.local_slm_launcher_path = "custom-launcher.ps1".to_string(),
+                "image" => settings.local_slm_docker_image = "custom/image:latest".to_string(),
+                _ => unreachable!(),
+            }
+
+            migrate_local_slm_defaults(&mut settings);
+
+            assert_eq!(settings.local_slm_model, LOCAL_SLM_V11_MODEL);
+            assert_eq!(settings.local_slm_adapter_path, LOCAL_SLM_V11_ADAPTER_PATH);
+        }
     }
 
     #[test]

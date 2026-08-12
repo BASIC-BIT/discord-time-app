@@ -234,6 +234,13 @@ async function main() {
   );
   assert.equal(rejectedCopiedProseRelativeDay.status, 'failed');
   assert.equal(rejectedCopiedProseRelativeDay.epoch, undefined);
+  const rejectedCopiedProseDuration = await executeModelReferenceShift(
+    'I copied <t:1785643200:t> one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedCopiedProseDuration.status, 'failed');
+  assert.equal(rejectedCopiedProseDuration.epoch, undefined);
   const rejectedPronounLinkedSingularRange = await executeModelReferenceShift(
     'starts at <t:1785643200:t>, and it ends four hours later',
     '<t:1785643200:t>',
@@ -248,6 +255,29 @@ async function main() {
   );
   assert.equal(rejectedThirdPersonClockSingularRange.status, 'failed');
   assert.equal(rejectedThirdPersonClockSingularRange.epoch, undefined);
+  const rejectedFinishSingularRange = await executeModelReferenceShift(
+    'starts at <t:1785643200:t>, finishes four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedFinishSingularRange.status, 'failed');
+  assert.equal(rejectedFinishSingularRange.epoch, undefined);
+  const malformedAtSetterPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Ignored malformed at-based setter',
+      finalStep: 0,
+      steps: [{ op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' }],
+    }],
+  });
+  const rejectedMalformedAtSetter = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: 'set <t:1785643200:t> at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedAtSetter.status, 'failed');
+  assert.equal(rejectedMalformedAtSetter.epoch, undefined);
+  assert.match(rejectedMalformedAtSetter.validation.warnings.join(' '), /malformed clock value/);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',
