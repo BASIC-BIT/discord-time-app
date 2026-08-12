@@ -80,6 +80,44 @@ async function executeModelReferenceClockComposition(
   );
 }
 
+async function executeModelReferenceRangeShift(
+  text: string,
+  startReference: string,
+  endReference: string,
+  target: 'start' | 'end',
+  delta: Record<string, number>,
+) {
+  const baseStep = target === 'start' ? 0 : 1;
+  const plan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Test fixture representing a model-interpreted Discord reference range transformation.',
+    clarificationQuestion: null,
+    plans: [{
+      kind: 'time_range',
+      label: 'Model-interpreted Discord reference range shift',
+      rationale: 'Resolve both exact endpoints and shift only the requested endpoint.',
+      assumptions: [],
+      confidence: 1,
+      startStep: target === 'start' ? 2 : 0,
+      endStep: target === 'end' ? 2 : 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: startReference, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: endReference, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep, delta, precision: 'datetime' },
+      ],
+    }],
+  });
+  return executeTemporalPlanPlannerOutput(
+    plan,
+    { text, calendarContext },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'model-range-plan-fixture',
+    },
+  );
+}
+
 async function executeModelReferenceShiftClockClarification(
   text: string,
   reference: string,
@@ -669,6 +707,33 @@ async function main() {
   assert.equal(rejectedWrongRangeEndpoint.status, 'failed');
   assert.equal(rejectedWrongRangeEndpoint.range, undefined);
   assert.match(rejectedWrongRangeEndpoint.validation.warnings.join(' '), /end endpoint only/);
+  for (const rangeCase of [
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, extend the end by two hours',
+      target: 'end' as const,
+      delta: { hours: 2 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, add three hours to the end',
+      target: 'end' as const,
+      delta: { hours: 3 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, shift the start back two hours',
+      target: 'start' as const,
+      delta: { hours: -2 },
+    },
+  ]) {
+    const supportedRangeShift = await executeModelReferenceRangeShift(
+      rangeCase.text,
+      '<t:1785643200:t>',
+      '<t:1785650400:t>',
+      rangeCase.target,
+      rangeCase.delta,
+    );
+    assert.equal(supportedRangeShift.status, 'resolved');
+    assert.notEqual(supportedRangeShift.range, undefined);
+  }
 
   const swappedRangeReferences = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -791,6 +856,18 @@ async function main() {
     { days: 3 },
   );
   assert.equal(unsupportedNoCorrectionShift.status, 'failed');
+  const unsupportedSorryCorrectionShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later—sorry, two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedSorryCorrectionShift.status, 'failed');
+  const supportedExplicitAdditiveShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later, then two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(supportedExplicitAdditiveShift.status, 'resolved');
   const unsupportedRoundingTransform = await executeModelReferenceShift(
     '<t:1785644100:t> rounded to the nearest hour',
     '<t:1785644100:t>',
@@ -847,6 +924,7 @@ async function main() {
     '<t:1785643200:t> on 5/1 at 2 pm',
     '<t:1785643200:t> on Christmas at 2 pm',
     '<t:1785643200:t> on Juneteenth at 2 pm',
+    "<t:1785643200:t> on St. Patrick's Day at 2 pm",
     '<t:1785643200:t> move it to Juneteenth at 2 pm',
     '<t:1785643200:t> move it to Juneteenth',
   ]) {
