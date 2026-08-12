@@ -331,6 +331,28 @@ async function main() {
   assert.equal(acceptedFinishClockRange.status, 'resolved');
   assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
   assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
+  const beginClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Begin-clock range',
+      startStep: 2,
+      endStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedBeginClockRange = await executeTemporalPlanPlannerOutput(
+    beginClockRangePlan,
+    { text: 'begins at 5 pm, finishes at <t:1785726000:t>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedBeginClockRange.status, 'resolved', acceptedBeginClockRange.validation.warnings.join(' | '));
+  assert.equal(acceptedBeginClockRange.range?.start.epoch, 1785704400);
+  assert.equal(acceptedBeginClockRange.range?.end.epoch, 1785726000);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',

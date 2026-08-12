@@ -3867,7 +3867,7 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
-    || new RegExp(String.raw`\b(?:start(?:s|ing)?|end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+|and\s+)?|\band(?:\s+then)?\s+)(?:it\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\bfrom\s+)<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
 }
@@ -5139,7 +5139,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
     if (new RegExp(String.raw`\bbetween\s+${reference}\s+and\s+${clock}`, 'iu').test(text)) targets.add('end');
     if (new RegExp(String.raw`\bbetween\s+${clock}\s+and\s+${reference}`, 'iu').test(text)) targets.add('start');
   }
-  if (new RegExp(String.raw`\bstart(?:s|ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
+  if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');

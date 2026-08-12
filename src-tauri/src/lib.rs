@@ -1798,7 +1798,7 @@ async fn parse_time_with_local_service(
     last_response.ok_or_else(|| "No parser API key candidates were available.".to_string())
 }
 
-fn migrate_local_slm_defaults(settings: &mut AppSettings) {
+fn migrate_local_slm_defaults(settings: &mut AppSettings, installed_launcher: Option<&Path>) {
     if settings.settings_schema_version >= CURRENT_SETTINGS_SCHEMA_VERSION {
         return;
     }
@@ -1807,9 +1807,14 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings) {
     }
     let configured_model = settings.local_slm_model.trim();
     let configured_adapter = settings.local_slm_adapter_path.trim();
+    let configured_launcher = Path::new(settings.local_slm_launcher_path.trim());
+    let uses_packaged_launcher = settings.local_slm_launcher_path.trim().is_empty()
+        || installed_launcher
+            .map(|path| configured_launcher == path)
+            .unwrap_or(false);
     let uses_packaged_runtime = settings.local_slm_endpoint_base_url.trim()
         == LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
-        && settings.local_slm_launcher_path.trim().is_empty()
+        && uses_packaged_launcher
         && settings.local_slm_docker_image.trim() == LOCAL_SLM_DEFAULT_DOCKER_IMAGE;
     let is_packaged_pair = (configured_model == LOCAL_SLM_LEGACY_MODEL
         && configured_adapter == LOCAL_SLM_LEGACY_ADAPTER_PATH)
@@ -1840,7 +1845,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
         assert_eq!(
@@ -1863,7 +1868,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
         assert_eq!(
@@ -1886,7 +1891,7 @@ mod local_slm_default_migration_tests {
         .expect("legacy settings should deserialize");
 
         assert_eq!(settings.settings_schema_version, 0);
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
         assert_eq!(
             settings.settings_schema_version,
             CURRENT_SETTINGS_SCHEMA_VERSION
@@ -1904,7 +1909,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
         assert_eq!(
@@ -1923,7 +1928,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
         assert_eq!(
@@ -1941,7 +1946,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, "custom-model");
         assert_eq!(
@@ -1960,7 +1965,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_V11_MODEL);
         assert_eq!(settings.local_slm_adapter_path, "custom/adapter");
@@ -1984,11 +1989,37 @@ mod local_slm_default_migration_tests {
                 _ => unreachable!(),
             }
 
-            migrate_local_slm_defaults(&mut settings);
+            migrate_local_slm_defaults(&mut settings, None);
 
             assert_eq!(settings.local_slm_model, LOCAL_SLM_V11_MODEL);
             assert_eq!(settings.local_slm_adapter_path, LOCAL_SLM_V11_ADAPTER_PATH);
         }
+    }
+
+    #[test]
+    fn migrates_packaged_identity_with_the_app_installed_launcher() {
+        let installed_launcher = PathBuf::from(
+            r"C:\Users\test\AppData\Roaming\com.hammer-overlay.app\local-slm-runtime\scripts\start-temporal-peft-server.ps1",
+        );
+        let mut settings = AppSettings {
+            settings_schema_version: 0,
+            local_slm_model: LOCAL_SLM_V11_MODEL.to_string(),
+            local_slm_adapter_path: LOCAL_SLM_V11_ADAPTER_PATH.to_string(),
+            local_slm_launcher_path: installed_launcher.to_string_lossy().to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings, Some(&installed_launcher));
+
+        assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
+        assert_eq!(
+            settings.local_slm_adapter_path,
+            LOCAL_SLM_DEFAULT_ADAPTER_PATH
+        );
+        assert_eq!(
+            settings.local_slm_launcher_path,
+            installed_launcher.to_string_lossy()
+        );
     }
 
     #[test]
@@ -2001,7 +2032,7 @@ mod local_slm_default_migration_tests {
             ..AppSettings::default()
         };
 
-        migrate_local_slm_defaults(&mut settings);
+        migrate_local_slm_defaults(&mut settings, None);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_PREVIOUS_MODEL);
         assert_eq!(
@@ -2182,7 +2213,10 @@ fn load_app_settings(app: &AppHandle) -> Result<AppSettings, String> {
         AppSettings::default()
     };
 
-    migrate_local_slm_defaults(&mut settings);
+    let installed_launcher = local_slm_install_root(app)
+        .ok()
+        .map(|root| root.join("scripts").join("start-temporal-peft-server.ps1"));
+    migrate_local_slm_defaults(&mut settings, installed_launcher.as_deref());
 
     Ok(settings)
 }
