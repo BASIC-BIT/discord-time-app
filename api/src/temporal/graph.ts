@@ -5126,7 +5126,7 @@ function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
   const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+to|\bchange\s+(?:the\s+)?time\s+of\s+reference\s+to)`;
   const setterClock = new RegExp(
-    String.raw`${setter}\s+(\d{1,3}(?:[:.,]\d{1,3})*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
+    String.raw`${setter}\s+(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',
   );
   for (const match of normalized.matchAll(setterClock)) {

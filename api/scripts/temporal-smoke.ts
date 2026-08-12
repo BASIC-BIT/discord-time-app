@@ -1118,6 +1118,7 @@ async function main() {
   for (const text of [
     'set <t:1785643200:t> to 25:00',
     '<t:1785643200:t> set it to 2:75',
+    'set <t:1785643200:t> to 2500',
   ]) {
     const rejectedMalformedClockSetter = await executeTemporalPlanPlannerOutput(
       unchangedMalformedClockSetter,
