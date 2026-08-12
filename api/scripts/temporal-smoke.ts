@@ -899,6 +899,16 @@ async function main() {
       delta: { hours: 4 },
     },
     {
+      text: 'beginning at <t:1785643200:t>, ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'begin at <t:1785643200:t> and then end four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
       text: '<t:1785643200:t> through 30 minutes before <t:1785650400:t>',
       target: 'end' as const,
       delta: { minutes: -30 },
@@ -950,6 +960,8 @@ async function main() {
     'starting at <t:1785643200:t> \u2014 ending four hours later',
     'starting at <t:1785643200:t>, then ending four hours later',
     'starting at <t:1785643200:t> and then ending four hours later',
+    'beginning at <t:1785643200:t>, ending four hours later',
+    'begin at <t:1785643200:t> and then end four hours later',
   ]) {
     const rejectedSingularPunctuatedRelationalRange = await executeModelReferenceShift(
       text,

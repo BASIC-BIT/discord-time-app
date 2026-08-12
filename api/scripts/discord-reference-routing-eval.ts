@@ -101,11 +101,11 @@ async function main() {
       && parsed.status === 'needs_clarification'
       && evalCase.expected.status === 'needs_clarification'
     ) {
-      assertParsed(evalCase, parsed);
+      assertParsed(evalCase, parsed, false);
     } else if (offlineModelRoute) {
       assert.equal(parsed.status, 'failed', `${evalCase.id}: offline model route must not resolve semantic residue`);
     } else {
-      assertParsed(evalCase, parsed);
+      assertParsed(evalCase, parsed, endpointEnabled);
     }
 
     if (
@@ -113,6 +113,8 @@ async function main() {
       && parsed.status === 'resolved'
       && parsed.range === undefined
       && clientClassification.route === 'model'
+      && (evalCase.expected.status !== 'resolved'
+        || evalCase.expected.epoch !== clientClassification.references[0]?.epochSeconds)
     ) {
       assert.notEqual(
         parsed.epoch,
@@ -161,6 +163,7 @@ async function main() {
 function assertParsed(
   evalCase: TemporalEvalCase,
   parsed: Awaited<ReturnType<typeof parseTemporalExpression>>,
+  enforceClarificationAlternatives: boolean,
 ): void {
   assert.equal(parsed.status, evalCase.expected.status, `${evalCase.id}: status`);
   if (evalCase.expected.status === 'resolved') {
@@ -179,6 +182,17 @@ function assertParsed(
         `${evalCase.id}: format`,
       );
     }
+  } else if (enforceClarificationAlternatives && evalCase.expected.alternativeEpochs !== undefined) {
+    assert.equal(
+      (parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range !== undefined),
+      false,
+      `${evalCase.id}: expected singular clarification alternatives`,
+    );
+    const actual = (parsed.clarificationAlternatives ?? [])
+      .map((alternative) => alternative.epoch)
+      .sort((a, b) => a - b);
+    const expected = [...evalCase.expected.alternativeEpochs].sort((a, b) => a - b);
+    assert.deepEqual(actual, expected, `${evalCase.id}: clarification alternative epochs`);
   }
 }
 
