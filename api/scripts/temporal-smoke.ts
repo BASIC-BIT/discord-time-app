@@ -840,6 +840,11 @@ async function main() {
       delta: { hours: 1 },
     },
     {
+      text: '<t:1785643200:t> to one hour after <t:1785643200:t>',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
       text: 'starting at <t:1785643200:t> and ending two hours later',
       target: 'end' as const,
       delta: { hours: 2 },
@@ -1097,6 +1102,24 @@ async function main() {
     );
     assert.equal(supportedSameDayComposition.status, 'resolved', `${text}: ${supportedSameDayComposition.validation.warnings.join(' | ')}`);
   }
+  const singularSetterAsRange = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range', label: 'Incorrect setter range', startStep: 0, endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '3 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedSingularSetterRange = await executeTemporalPlanPlannerOutput(
+    singularSetterAsRange,
+    { text: 'set <t:1785643200:t> to 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSingularSetterRange.status, 'failed');
+  assert.match(rejectedSingularSetterRange.validation.warnings.join(' '), /range for a singular/);
 
   const discardedDateMutation = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

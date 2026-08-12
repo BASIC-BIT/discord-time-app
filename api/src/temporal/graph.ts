@@ -3862,7 +3862,8 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   residue = residue
     .replace(new RegExp(String.raw`\b(?:set|move)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
     .replace(new RegExp(String.raw`\bchange\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
-  return new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
+  return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
@@ -4938,11 +4939,14 @@ function discordReferencePlanSemanticsError(
   if (references.some((reference) => discordReferenceHasUnsupportedCalendarTransform(originalText, reference))) {
     return 'Model plan used a Discord-reference calendar transformation that could not be validated safely.';
   }
-  if (
-    references.some((reference) => discordReferenceRequestsRange(originalText, reference))
-    && plan.kind !== 'time_range'
-  ) {
+  const explicitReferenceSpan = /<t:\d+(?::[tTdDfFR])?>\s*(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*<t:\d+(?::[tTdDfFR])?>/iu.test(originalText);
+  const requestsRange = explicitReferenceSpan
+    || references.some((reference) => discordReferenceRequestsRange(originalText, reference));
+  if (requestsRange && plan.kind !== 'time_range') {
     return 'Model plan returned an instant for a Discord-reference range request.';
+  }
+  if (!requestsRange && plan.kind === 'time_range') {
+    return 'Model plan returned a range for a singular Discord-reference request.';
   }
   const expectedDelta = expectedDiscordReferenceShift(originalText, references);
   if (expectedDelta === undefined) {
