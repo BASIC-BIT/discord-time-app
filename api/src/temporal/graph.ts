@@ -3855,6 +3855,7 @@ function discordReferenceCandidateIsGrounded(
 
 function discordReferenceRequestsRange(text: string, reference: string): boolean {
   let residue = text.replace(reference, ' ');
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
   const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
@@ -3865,14 +3866,14 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
-    || /\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b/iu.test(text)
-    || /\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)/iu.test(text);
+    || new RegExp(String.raw`\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b`, 'iu').test(text)
+    || new RegExp(String.raw`\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text);
 }
 
 function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
   let residue = text.replace(reference, ' ').toLowerCase();
   residue = residue
-    .replace(/\b(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu, ' ')
+    .replace(new RegExp(String.raw`\b(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b`, 'giu'), ' ')
     .replace(/\b(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next)\b/giu, ' ');
   if (/\b(?:set|change|move|use)\s+(?:the\s+)?(?:month|year)\s+(?:to|as)\s+\d{1,4}\b/iu.test(residue)) {
     return true;
@@ -5085,7 +5086,8 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
   const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
-  const shift = String.raw`(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
   const referenceCount = [...text.matchAll(new RegExp(reference, 'giu'))].length;
   if (referenceCount === 1) {
     if (new RegExp(String.raw`${reference}\s*${separator}\s*${clock}`, 'iu').test(text)) targets.add('end');
@@ -5102,7 +5104,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\b/giu)) {
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
-  for (const match of text.matchAll(/\badd\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b/giu)) {
+  for (const match of text.matchAll(new RegExp(String.raw`\badd\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b`, 'giu'))) {
     targets.add(match[1]!.toLowerCase() as 'start' | 'end');
   }
   for (const match of text.matchAll(/\b(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b/giu)) {

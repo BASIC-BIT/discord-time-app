@@ -845,6 +845,11 @@ async function main() {
       delta: { hours: 2 },
     },
     {
+      text: 'starting at <t:1785643200:t> and ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
       text: '<t:1785643200:t> through 30 minutes before <t:1785650400:t>',
       target: 'end' as const,
       delta: { minutes: -30 },
@@ -883,6 +888,12 @@ async function main() {
     { hours: 2 },
   );
   assert.equal(rejectedSingularRelationalRange.status, 'failed');
+  const rejectedSingularWordNumberRelationalRange = await executeModelReferenceShift(
+    'starting at <t:1785643200:t> and ending four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedSingularWordNumberRelationalRange.status, 'failed');
   const rejectedSingularDuplicatedReferenceRange = await executeModelReferenceShift(
     'from <t:1785643200:t> until one hour after <t:1785643200:t>',
     '<t:1785643200:t>',
