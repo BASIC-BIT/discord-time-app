@@ -3825,7 +3825,8 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   return new RegExp(String.raw`(?:^|\s)${separator}\s*${clock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${clock}\s*)?and(?:\s*${clock})?`, 'iu').test(residue)
-    || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue);
+    || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue)
+    || /\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b/iu.test(text);
 }
 
 function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
@@ -5062,8 +5063,8 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bending\s+${shift}\b`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`\bstarting\s+${shift}\b`, 'iu').test(text)) targets.add('start');
-  for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start|end)\b/giu)) {
-    targets.add(match[1]!.toLowerCase() as 'start' | 'end');
+  for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\b/giu)) {
+    targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
   for (const match of text.matchAll(/\badd\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b/giu)) {
     targets.add(match[1]!.toLowerCase() as 'start' | 'end');

@@ -737,6 +737,11 @@ async function main() {
       delta: { hours: -2 },
     },
     {
+      text: '<t:1785643200:t> to <t:1785650400:t>, extend the starting point by two hours',
+      target: 'start' as const,
+      delta: { hours: -2 },
+    },
+    {
       text: 'from <t:1785643200:t> until one hour after <t:1785643200:t>',
       target: 'end' as const,
       delta: { hours: 1 },
@@ -779,6 +784,12 @@ async function main() {
     { hours: 2 },
   );
   assert.equal(rejectedShrinkingStartExtension.status, 'failed');
+  const rejectedSingularRelationalRange = await executeModelReferenceShift(
+    'starting at <t:1785643200:t> and ending two hours later',
+    '<t:1785643200:t>',
+    { hours: 2 },
+  );
+  assert.equal(rejectedSingularRelationalRange.status, 'failed');
 
   const swappedRangeReferences = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
