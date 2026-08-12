@@ -194,11 +194,11 @@ const referenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? '2026-05-24T12:00:0
 const timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? 'America/New_York';
 const openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
 const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
-const modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
+let modelSpecs: ModelSpec[] = [];
 const trainedPlanPredictionsPath = process.env['TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS'];
 const trainedPlanModelName = process.env['TEMPORAL_EVAL_TRAINED_PLAN_MODEL'] ?? 'trained-plan-ir';
-const baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
-const experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
+let baselineSpecs: EvalRunnerSpec[] = [];
+let experimentSpecs: EvalExperimentSpec[] = [];
 const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
 const evalInputOutputPath = process.env['TEMPORAL_EVAL_EXPORT_INPUT'];
 const selectedCaseIds = new Set(splitList(process.env['TEMPORAL_EVAL_CASE_IDS'] ?? ''));
@@ -1713,6 +1713,9 @@ export function temporalEvalRouteOwnership(evalCase: TemporalEvalCase): 'classif
 }
 
 async function main() {
+  modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
+  baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
+  experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
   const runnerSpecs: EvalRunnerSpec[] = [...modelSpecs, ...baselineSpecs];
   const excludedCategories = new Set(
     (process.env['TEMPORAL_EVAL_EXCLUDE_CATEGORIES'] ?? '')

@@ -790,6 +790,12 @@ async function main() {
     { hours: 2 },
   );
   assert.equal(rejectedSingularRelationalRange.status, 'failed');
+  const rejectedSingularDuplicatedReferenceRange = await executeModelReferenceShift(
+    'from <t:1785643200:t> until one hour after <t:1785643200:t>',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedSingularDuplicatedReferenceRange.status, 'failed');
 
   const swappedRangeReferences = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -924,6 +930,12 @@ async function main() {
     { days: 3 },
   );
   assert.equal(supportedExplicitAdditiveShift.status, 'resolved');
+  const supportedForwardBeforeAmountShift = await executeModelReferenceShift(
+    '<t:1785643200:t>, go forward one day',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(supportedForwardBeforeAmountShift.status, 'resolved');
   const unsupportedCorrectionAfterAdditiveShift = await executeModelReferenceShift(
     '<t:1785643200:t> one day later, then no, two days later',
     '<t:1785643200:t>',

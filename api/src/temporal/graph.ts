@@ -3826,7 +3826,8 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`(?:^|\s)${clock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${clock}\s*)?and(?:\s*${clock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${clock}`, 'iu').test(residue)
-    || /\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b/iu.test(text);
+    || /\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b/iu.test(text)
+    || /\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+(?:\d+|a|an|one|two|three)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)/iu.test(text);
 }
 
 function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
@@ -4901,8 +4902,7 @@ function discordReferencePlanSemanticsError(
     return 'Model plan used a Discord-reference calendar transformation that could not be validated safely.';
   }
   if (
-    references.length === 1
-    && discordReferenceRequestsRange(originalText, references[0]!)
+    references.some((reference) => discordReferenceRequestsRange(originalText, reference))
     && plan.kind !== 'time_range'
   ) {
     return 'Model plan returned an instant for a Discord-reference range request.';
@@ -5190,6 +5190,9 @@ function expectedDiscordReferenceShift(
     recordShift(match, 1, 2, 1);
   }
   for (const match of residue.matchAll(/\bshift\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(back|backward|forward|ahead)\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+    recordShift(match, 2, 3, /^(?:forward|ahead)$/iu.test(match[1]!) ? 1 : -1);
+  }
+  for (const match of residue.matchAll(/\b(?:go|move|shift)\s+(forward|ahead|back|backward)\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
     recordShift(match, 2, 3, /^(?:forward|ahead)$/iu.test(match[1]!) ? 1 : -1);
   }
 
