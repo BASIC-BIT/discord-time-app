@@ -923,6 +923,14 @@ function buildTemporalEvalCases(): TemporalEvalCase[] {
     expectedRouteReason: 'semantic_residue_requires_model',
   },
   {
+    id: 'discord-reference-shift-suffix-word-number-four',
+    text: '<t:1785643200:t> four hours later',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785657600, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
     id: 'discord-reference-shift-suffix-day-earlier',
     text: '<t:1785643200:t> 1 day earlier',
     category: 'discord-reference-routing',

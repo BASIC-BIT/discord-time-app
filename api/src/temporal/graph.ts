@@ -9,6 +9,8 @@ import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
 import {
   classifyDiscordTimestampInput,
+  DISCORD_TIMESTAMP_AMOUNT_SOURCE,
+  parseDiscordTimestampAmount,
   type DiscordTimestampClassification,
 } from '@hammer-overlay/discord-timestamp-routing';
 import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalModelCostConfig, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
@@ -100,7 +102,7 @@ type TemporalPlanStepOutput =
   | { kind: 'time'; time: { hour: number; minute: number } }
   | { kind: 'time_options'; options: PlanTimeOptionOutput[] }
   | { kind: 'timezone'; timeZone: TimeZoneResolutionCandidate };
-type PlanCandidateOutput = { candidate: Candidate; label?: string | undefined };
+type PlanCandidateOutput = { candidate: Candidate; label?: string | undefined; lineage?: string[] | undefined };
 type PlanTimeOptionOutput = { label: string; time: { hour: number; minute: number } };
 type PlanCandidateResult = { enriched: EnrichedCandidate; label?: string | undefined };
 type PlanRangeResult = {
@@ -2160,6 +2162,7 @@ async function executePlanStep(
         return {
           label: timeOption.label ?? baseCandidate.label,
           candidate,
+          lineage: planCandidateLineage(baseCandidate),
         };
       })));
       recordTool(stepIndex, step, candidates, startedAt);
@@ -2184,7 +2187,7 @@ async function executePlanStep(
         if (!candidateHasExactClock(candidate, timeOption.time!, calendarContext.timeZone)) {
           throw new Error('set_clock_time normalized the requested clock to a different local time.');
         }
-        return { label: timeOption.label ?? baseCandidate.label, candidate };
+        return { label: timeOption.label ?? baseCandidate.label, candidate, lineage: planCandidateLineage(baseCandidate) };
       })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
@@ -2208,7 +2211,7 @@ async function executePlanStep(
         if (!candidateHasExactClock(candidate, timeOption.time!, calendarContext.timeZone)) {
           throw new Error('combine_date_time normalized the requested clock to a different local time.');
         }
-        return { label: timeOption.label ?? baseCandidate.label, candidate };
+        return { label: timeOption.label ?? baseCandidate.label, candidate, lineage: planCandidateLineage(baseCandidate) };
       })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
@@ -2485,12 +2488,15 @@ function pairRangeCandidateOutputs(
   if (ends.length === 1) {
     return starts.map((start) => ({ start, end: ends[0]!, label: start.label ?? ends[0]!.label }));
   }
-  const localDate = (output: PlanCandidateOutput) => Temporal.ZonedDateTime.from(output.candidate.zonedDateTime).toPlainDate().toString();
-  const startsCovered = starts.every((start) => ends.some((end) => localDate(start) === localDate(end)));
-  const endsCovered = ends.every((end) => starts.some((start) => localDate(start) === localDate(end)));
+  const sharesLineage = (left: PlanCandidateOutput, right: PlanCandidateOutput) => {
+    const rightLineage = new Set(planCandidateLineage(right));
+    return planCandidateLineage(left).some((candidateId) => rightLineage.has(candidateId));
+  };
+  const startsCovered = starts.every((start) => ends.some((end) => sharesLineage(start, end)));
+  const endsCovered = ends.every((end) => starts.some((start) => sharesLineage(start, end)));
   if (startsCovered && endsCovered) {
     return starts.flatMap((start) => ends
-      .filter((end) => localDate(start) === localDate(end))
+      .filter((end) => sharesLineage(start, end))
       .map((end) => ({ start, end, label: end.label ?? start.label })));
   }
   throw new Error(`Cannot pair ${starts.length} range starts with ${ends.length} range ends.`);
@@ -3269,6 +3275,10 @@ async function runAmbiguityPolicy(
     return multiClock;
   }
   return null;
+}
+
+function planCandidateLineage(output: PlanCandidateOutput): string[] {
+  return output.lineage ?? [output.candidate.id];
 }
 
 async function runPlanIrAmbiguityPolicy(
@@ -5187,8 +5197,9 @@ function expectedDiscordReferenceShift(
     return undefined;
   }
   const result = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
-  const amountUnitMatches = [...residue.matchAll(/\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)];
-  const amountUnitDirection = /\b(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b/giu;
+  const shiftAmountSource = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const amountUnitMatches = [...residue.matchAll(new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))];
+  const amountUnitDirection = new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b`, 'giu');
   let matchedShift = false;
   let matchedAmountUnitCount = 0;
   const matchedShiftKeys = new Set<DiscordShiftDeltaKey>();
@@ -5206,19 +5217,19 @@ function expectedDiscordReferenceShift(
     const direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(match[3]!) ? 1 : -1;
     recordShift(match, 1, 2, direction);
   }
-  for (const match of residue.matchAll(/\bextend\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+by\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+  for (const match of residue.matchAll(new RegExp(String.raw`\bextend\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
     recordShift(match, 2, 3, match[1]!.toLowerCase() === 'start' ? -1 : 1);
   }
-  for (const match of residue.matchAll(/\bpush\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+  for (const match of residue.matchAll(new RegExp(String.raw`\bpush\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
     recordShift(match, 1, 2, 1);
   }
-  for (const match of residue.matchAll(/\badd\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(?:start|end)\b/giu)) {
+  for (const match of residue.matchAll(new RegExp(String.raw`\badd\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(?:start|end)\b`, 'giu'))) {
     recordShift(match, 1, 2, 1);
   }
-  for (const match of residue.matchAll(/\bshift\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(back|backward|forward|ahead)\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+  for (const match of residue.matchAll(new RegExp(String.raw`\bshift\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(back|backward|forward|ahead)\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
     recordShift(match, 2, 3, /^(?:forward|ahead)$/iu.test(match[1]!) ? 1 : -1);
   }
-  for (const match of residue.matchAll(/\b(?:go|move|shift)\s+(forward|ahead|back|backward)\s+(\d+|a|an|one|two|three)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/giu)) {
+  for (const match of residue.matchAll(new RegExp(String.raw`\b(?:go|move|shift)\s+(forward|ahead|back|backward)\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
     recordShift(match, 2, 3, /^(?:forward|ahead)$/iu.test(match[1]!) ? 1 : -1);
   }
 
@@ -5277,18 +5288,10 @@ function expectedDiscordReferenceShift(
 }
 
 function discordShiftAmount(value: string): number {
-  switch (value.toLowerCase()) {
-    case 'a':
-    case 'an':
-    case 'one':
-      return 1;
-    case 'two':
-      return 2;
-    case 'three':
-      return 3;
-    default:
-      return Number(value);
-  }
+  if (/^(?:a|an)$/iu.test(value)) return 1;
+  const amount = parseDiscordTimestampAmount(value);
+  if (amount === null) throw new Error(`Unsupported Discord shift amount ${value}.`);
+  return amount;
 }
 
 function discordShiftDeltaKey(value: string): DiscordShiftDeltaKey {

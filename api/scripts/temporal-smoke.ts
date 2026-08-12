@@ -448,6 +448,35 @@ async function main() {
   assert.equal(independentRangeClarification.status, 'needs_clarification', JSON.stringify(independentRangeClarification, null, 2));
   assert.equal(independentRangeClarification.clarificationAlternatives?.length, 4);
 
+  const overnightRangeChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which Saturday and which 1 oclock?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Ambiguous overnight Saturday range',
+      startStep: 2,
+      endStep: 5,
+      steps: [
+        { op: 'resolve_weekday_anchor', weekday: 'saturday', weekdayAnchor: 'next_ambiguous', precision: 'date' },
+        { op: 'resolve_clock_time', text: '11 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '1 AM', text: '1 am' },
+          { label: '1 PM', text: '1 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 4, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const overnightRangeClarification = await executeTemporalPlanPlannerOutput(
+    overnightRangeChoices,
+    { text: "next Saturday from 11 pm to 1 o'clock", calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(overnightRangeClarification.status, 'needs_clarification', JSON.stringify(overnightRangeClarification, null, 2));
+  assert.equal(overnightRangeClarification.clarificationAlternatives?.length, 4);
+
   const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Did you mean 4:30 AM or 4:30 PM?',
@@ -916,6 +945,12 @@ async function main() {
     { days: 1 },
   );
   assert.equal(tomorrowReferenceShift.status, 'resolved');
+  const wordNumberReferenceShift = await executeModelReferenceShift(
+    '<t:1785643200:t> four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(wordNumberReferenceShift.status, 'resolved');
   const underShiftedCompoundRelativeDay = await executeModelReferenceShift(
     '<t:1785643200:t> tomorrow, then one day later',
     '<t:1785643200:t>',

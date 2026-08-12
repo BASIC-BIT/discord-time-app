@@ -3,10 +3,19 @@ const assert = require('node:assert/strict');
 const {
   DISCORD_TIMESTAMP_CLASSIFIER_VERSION,
   DISCORD_TIMESTAMP_MAX_INPUT_CHARS,
+  parseDiscordTimestampAmount,
   classifyDiscordTimestampInput,
 } = require('./index.js');
 
 const classify = (text) => classifyDiscordTimestampInput(text);
+
+test('shares the full routed duration amount vocabulary', () => {
+  assert.equal(parseDiscordTimestampAmount('four'), 4);
+  assert.equal(parseDiscordTimestampAmount('twenty-one'), 21);
+  assert.equal(parseDiscordTimestampAmount('ninety nine'), 99);
+  assert.equal(parseDiscordTimestampAmount('999'), 999);
+  assert.equal(parseDiscordTimestampAmount('thousand'), null);
+});
 
 test('classifies standalone and harmlessly wrapped timestamps', () => {
   const standalone = classify('<t:1785643200:t>');

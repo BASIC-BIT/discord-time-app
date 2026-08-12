@@ -13,7 +13,7 @@ const EXACT_RANGE = new RegExp(
   "i",
 );
 const HARMLESS_WRAPPER = /^[\s`'"“”‘’()[\]{}*_~>|.\\-]*$/u;
-const AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
+const DISCORD_TIMESTAMP_AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const UNIT_SOURCE = String.raw`(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
 const CLOCK_SOURCE = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*(?:a\.?m\.?|p\.?m\.?))?|(?:[01]?\d|2[0-3]):[0-5]\d|midnight|noon)`;
 const AFFIRMATIVE_CLOCK_CHANGE = new RegExp(
@@ -25,8 +25,8 @@ const CONDITIONAL_OR_UNCERTAIN = /\b(?:if|unless|maybe|perhaps|possibly|probably
 const COMPARISON = /\b(?:compare|versus|vs\.?|difference|between|earlier\s+of|later\s+of|which\s+(?:is\s+)?(?:first|earlier|later))\b/i;
 const SCHEDULING = /\b(?:schedule|reschedule|calendar|create\s+an?\s+event|book|remind\s+me|set\s+an?\s+alarm)\b/i;
 const TIMEZONE = /\b(?:utc|gmt|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+)\b|[+-]\d{2}:\d{2}\b/i;
-const DURATION = new RegExp(String.raw`\b${AMOUNT_SOURCE}\s+${UNIT_SOURCE}\b`, "i");
-const SUBDAY_DURATION = new RegExp(String.raw`\b${AMOUNT_SOURCE}\s+(?:minutes?|mins?|hours?|hrs?)\b`, "i");
+const DURATION = new RegExp(String.raw`\b${DISCORD_TIMESTAMP_AMOUNT_SOURCE}\s+${UNIT_SOURCE}\b`, "i");
+const SUBDAY_DURATION = new RegExp(String.raw`\b${DISCORD_TIMESTAMP_AMOUNT_SOURCE}\s+(?:minutes?|mins?|hours?|hrs?)\b`, "i");
 const OTHER_TEMPORAL_ENTITY = new RegExp(
   String.raw`\b(?:today|tomorrow|yesterday|tonight|noon|midnight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next|last|later|earlier|before|after|from\s+now|ago|${UNIT_SOURCE}|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{4}-\d{2}-\d{2}\b`,
   "i",
@@ -270,12 +270,30 @@ function inputLengthBucket(length) {
   return "over-16384";
 }
 
+function parseDiscordTimestampAmount(value) {
+  const normalized = value.toLowerCase().trim().replace(/-/g, " ").replace(/\s+/g, " ");
+  if (/^\d{1,3}$/.test(normalized)) return Number(normalized);
+  const values = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+    sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  };
+  if (values[normalized] !== undefined) return values[normalized];
+  const [tensWord, onesWord] = normalized.split(" ");
+  const tens = values[tensWord];
+  const ones = values[onesWord];
+  return tens >= 20 && tens % 10 === 0 && ones > 0 && ones < 10 ? tens + ones : null;
+}
+
 module.exports = {
   DISCORD_TIMESTAMP_CLASSIFIER_VERSION,
   DISCORD_TIMESTAMP_MAX_EPOCH_SECONDS,
   DISCORD_TIMESTAMP_MAX_INPUT_CHARS,
   DISCORD_TIMESTAMP_MAX_MODEL_CHARS,
+  DISCORD_TIMESTAMP_AMOUNT_SOURCE,
   classifyDiscordTimestampInput,
   discordTimestampFormatIndex,
   discordTimestampFormatCode,
+  parseDiscordTimestampAmount,
 };

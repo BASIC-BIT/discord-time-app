@@ -2,6 +2,7 @@ export const DISCORD_TIMESTAMP_CLASSIFIER_VERSION: "discord-reference-v2";
 export const DISCORD_TIMESTAMP_MAX_EPOCH_SECONDS: 253402300799;
 export const DISCORD_TIMESTAMP_MAX_INPUT_CHARS: 16384;
 export const DISCORD_TIMESTAMP_MAX_MODEL_CHARS: 4096;
+export const DISCORD_TIMESTAMP_AMOUNT_SOURCE: string;
 
 export type DiscordTimestampRoute =
   | "no_reference"
@@ -74,3 +75,4 @@ export function classifyDiscordTimestampInput(
 
 export function discordTimestampFormatIndex(formatCode: string | undefined): number;
 export function discordTimestampFormatCode(formatIndex: number): DiscordTimestampReference["formatCode"];
+export function parseDiscordTimestampAmount(value: string): number | null;
