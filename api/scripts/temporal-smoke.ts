@@ -241,6 +241,27 @@ async function main() {
   );
   assert.equal(rejectedCopiedProseDuration.status, 'failed');
   assert.equal(rejectedCopiedProseDuration.epoch, undefined);
+  const rejectedUnrelatedDurationCommand = await executeModelReferenceShift(
+    'I copied <t:1785643200:t>, then set the table one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedUnrelatedDurationCommand.status, 'failed');
+  assert.equal(rejectedUnrelatedDurationCommand.epoch, undefined);
+  const acceptedDirectDurationCommand = await executeModelReferenceShift(
+    'move <t:1785643200:t> one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(acceptedDirectDurationCommand.status, 'resolved');
+  assert.equal(acceptedDirectDurationCommand.epoch, 1785646800);
+  const acceptedPronounDurationCommand = await executeModelReferenceShift(
+    '<t:1785643200:t>, then move it one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(acceptedPronounDurationCommand.status, 'resolved');
+  assert.equal(acceptedPronounDurationCommand.epoch, 1785646800);
   const rejectedPronounLinkedSingularRange = await executeModelReferenceShift(
     'starts at <t:1785643200:t>, and it ends four hours later',
     '<t:1785643200:t>',

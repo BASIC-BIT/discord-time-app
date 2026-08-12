@@ -5383,8 +5383,8 @@ function discordReferenceHasSupportedDurationRelationship(text: string): boolean
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:tomorrow|yesterday)\s*[,;]?\s*(?:(?:and\s+)?then|plus)\s+${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:${direction})(?:\s+than)?\s+${reference}(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:before|after)\s+${reference}(?!\w)`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:move|shift|change|set|push|pull|extend|shorten|add)\b[\s\S]*${reference}[\s\S]*${duration}`, 'iu').test(text)
-    || new RegExp(String.raw`${reference}(?!\w)[\s\S]*\b(?:move|shift|change|set|push|pull|extend|shorten|add)\b[\s\S]*${duration}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:the\s+(?:time|date)\s+of\s+)?${reference}(?!\w)[\s\S]*${duration}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\b[\s\S]*${duration}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\b[\s\S]*${duration}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:the\s+)?(?:start|end)(?:ing)?(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\b[\s\S]*${duration}`, 'iu').test(text)
     || discordReferenceRequestsRange(text, text.match(new RegExp(reference, 'iu'))?.[0] ?? '');
