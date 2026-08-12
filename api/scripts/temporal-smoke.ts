@@ -839,6 +839,11 @@ async function main() {
       delta: { hours: 1 },
     },
     {
+      text: 'from <t:1785643200:t> until four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
       text: '<t:1785643200:t> to one hour after <t:1785643200:t>',
       target: 'end' as const,
       delta: { hours: 1 },
@@ -909,6 +914,12 @@ async function main() {
     { hours: 1 },
   );
   assert.equal(rejectedSingularDuplicatedReferenceRange.status, 'failed');
+  const rejectedSingularImplicitReferenceRange = await executeModelReferenceShift(
+    'from <t:1785643200:t> until four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedSingularImplicitReferenceRange.status, 'failed');
 
   const swappedRangeReferences = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -1161,6 +1172,27 @@ async function main() {
     '3:05 pm',
   );
   assert.equal(supportedDottedBareClockSetter.status, 'needs_clarification');
+  const compactClockSetterClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3:30 AM or 3:30 PM?',
+    plans: [{
+      label: 'Compact setter clock', finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3:30 AM', text: '3:30 am' },
+          { label: '3:30 PM', text: '3:30 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const supportedCompactClockSetter = await executeTemporalPlanPlannerOutput(
+    compactClockSetterClarification,
+    { text: 'set <t:1785643200:t> to 330', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(supportedCompactClockSetter.status, 'needs_clarification');
   const singularSetterAsRange = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
@@ -1203,6 +1235,7 @@ async function main() {
     '<t:1785643200:t> on Martin Luther King, Jr. Day at 2 pm',
     '<t:1785643200:t> move it to Juneteenth at 2 pm',
     '<t:1785643200:t> move it to Juneteenth',
+    '<t:1785643200:t> at the end of the quarter',
   ]) {
     const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
       discardedDateMutation,

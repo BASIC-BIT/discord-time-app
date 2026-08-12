@@ -3869,7 +3869,7 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
-    || new RegExp(String.raw`\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text);
+    || new RegExp(String.raw`\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
 }
 
 function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
@@ -3896,7 +3896,7 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
   if (/\b(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as)\s+(?!the\s+same\s+(?:day|date)\b)[a-z][a-z.,'’-]*(?:\s+[a-z][a-z.,'’-]*){0,5}(?:\s*$|\s*[,.!?;])/iu.test(namedCalendarResidue)) {
     return true;
   }
-  return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|year)\b/iu.test(residue);
+  return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|quarter|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|quarter|year)\b/iu.test(residue);
 }
 
 function canUseForPlanClarification(enriched: EnrichedCandidate): boolean {
@@ -5107,6 +5107,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   if (new RegExp(String.raw`\bstart(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bend(?:ing)?\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\bfrom\s+${reference}\s+until\s+${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\bending\s+${shift}\b`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`\bstarting\s+${shift}\b`, 'iu').test(text)) targets.add('start');
@@ -5135,9 +5136,11 @@ function discordReferenceHasMalformedClockSetter(text: string): boolean {
     const validDottedBareClock = dottedBareClock !== null
       && parsePlanClockText(`${dottedBareClock[1]}:${dottedBareClock[2]}`).length > 0;
     const validConventionalClock = /^(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d)$/iu.test(token);
+    const validCompactClock = /^(?:0?[1-9]|1[0-2])[0-5]\d$/u.test(token);
     if (
       !validDottedBareClock
       && !validConventionalClock
+      && !validCompactClock
       && !/^(?:0?[1-9]|1[0-2])$/u.test(token)
     ) {
       return true;

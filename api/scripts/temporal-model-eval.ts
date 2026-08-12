@@ -2844,7 +2844,7 @@ function unsafeTimestampDiagnosticMismatch(result: EvalResult): boolean {
 }
 
 function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: EvalParsed): boolean {
-  if (parsed.status === 'resolved') {
+  if (parsed.status === 'resolved' || parsed.status !== 'needs_clarification' && parsed.epoch !== undefined) {
     if (evalCase.expected.status !== 'resolved') return true;
     if (evalCase.expected.range !== undefined) {
       return parsed.kind !== 'time_range'
