@@ -262,6 +262,47 @@ async function main() {
   );
   assert.equal(acceptedPronounDurationCommand.status, 'resolved');
   assert.equal(acceptedPronounDurationCommand.epoch, 1785646800);
+  const rejectedCrossClauseDurationCommand = await executeModelReferenceShift(
+    'move <t:1785643200:t> into the announcement; publish it one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedCrossClauseDurationCommand.status, 'failed');
+  assert.equal(rejectedCrossClauseDurationCommand.epoch, undefined);
+  const rejectedInterveningPronounRelativeDay = await executeModelReferenceShift(
+    'I copied <t:1785643200:t> into a reminder, then set it to tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedInterveningPronounRelativeDay.status, 'failed');
+  assert.equal(rejectedInterveningPronounRelativeDay.epoch, undefined);
+  const rejectedAlternativeRelativeDays = await executeModelReferenceShift(
+    'move <t:1785643200:t> to tomorrow or yesterday',
+    '<t:1785643200:t>',
+    {},
+  );
+  assert.equal(rejectedAlternativeRelativeDays.status, 'failed');
+  assert.equal(rejectedAlternativeRelativeDays.epoch, undefined);
+  const acceptedDirectRelativeDayCommand = await executeModelReferenceShift(
+    'move <t:1785643200:t> to tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(
+    acceptedDirectRelativeDayCommand.status,
+    'resolved',
+    acceptedDirectRelativeDayCommand.validation.warnings.join(' | '),
+  );
+  const acceptedPronounRelativeDayCommand = await executeModelReferenceShift(
+    '<t:1785643200:t>, then move it to tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(
+    acceptedPronounRelativeDayCommand.status,
+    'resolved',
+    acceptedPronounRelativeDayCommand.validation.warnings.join(' | '),
+  );
   const rejectedPronounLinkedSingularRange = await executeModelReferenceShift(
     'starts at <t:1785643200:t>, and it ends four hours later',
     '<t:1785643200:t>',

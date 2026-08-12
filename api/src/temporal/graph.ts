@@ -3877,6 +3877,9 @@ function discordReferenceHasUnsupportedCalendarTransform(text: string, reference
   residue = residue
     .replace(new RegExp(String.raw`\b(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'giu'), ' ')
     .replace(/\b(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next)\b/giu, ' ');
+  if (discordReferenceHasSupportedRelativeDayRelationship(text)) {
+    residue = residue.replace(/\b(?:tomorrow|yesterday)\b/giu, ' ');
+  }
   if (/\b(?:set|change|move|use)\s+(?:the\s+)?(?:month|year)\s+(?:to|as)\s+\d{1,4}\b/iu.test(residue)) {
     return true;
   }
@@ -5312,6 +5315,9 @@ function expectedDiscordReferenceShift(
   const yesterdayCount = [...residue.matchAll(/\byesterday\b/giu)].length;
   const tomorrowCount = [...residue.matchAll(/\btomorrow\b/giu)].length;
   if (yesterdayCount > 0 || tomorrowCount > 0) {
+    if (yesterdayCount > 0 && tomorrowCount > 0) {
+      return undefined;
+    }
     if (!discordReferenceHasSupportedRelativeDayRelationship(originalText)) {
       return undefined;
     }
@@ -5369,9 +5375,11 @@ function expectedDiscordReferenceShift(
 function discordReferenceHasSupportedRelativeDayRelationship(text: string): boolean {
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
   const relativeDay = String.raw`(?:tomorrow|yesterday)`;
+  const command = String.raw`(?:set|change|move|shift|make|use)`;
   return new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:on\s+)?${relativeDay}\b`, 'iu').test(text)
     || new RegExp(String.raw`\b${relativeDay}\s+(?:from|after|before|relative\s+to)\s+${reference}`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:set|change|move|shift|make|use)\s+(?:${reference}|it)\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text);
+    || new RegExp(String.raw`\b${command}\s+${reference}(?!\w)\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?${command}\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text);
 }
 
 function discordReferenceHasSupportedDurationRelationship(text: string): boolean {
@@ -5383,8 +5391,8 @@ function discordReferenceHasSupportedDurationRelationship(text: string): boolean
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:tomorrow|yesterday)\s*[,;]?\s*(?:(?:and\s+)?then|plus)\s+${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:${direction})(?:\s+than)?\s+${reference}(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:before|after)\s+${reference}(?!\w)`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:the\s+(?:time|date)\s+of\s+)?${reference}(?!\w)[\s\S]*${duration}`, 'iu').test(text)
-    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\b[\s\S]*${duration}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:the\s+(?:time|date)\s+of\s+)?${reference}(?!\w)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\b[\s\S]*${duration}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:the\s+)?(?:start|end)(?:ing)?(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\b[\s\S]*${duration}`, 'iu').test(text)
     || discordReferenceRequestsRange(text, text.match(new RegExp(reference, 'iu'))?.[0] ?? '');
