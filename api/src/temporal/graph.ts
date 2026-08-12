@@ -4839,7 +4839,7 @@ function discordReferencePlanError(
 
     if (classification.meaningfulResidue) {
       const allReferenceIndexes = new Set([...referenceStepIndexes.values()].flat());
-      const terminalIndexes = plan.kind === 'time_range'
+      const terminalIndexes = isTimeRangePlan(plan)
         ? [plan.startStep, plan.endStep].filter((index): index is number => index !== null)
         : [plan.finalStep ?? plan.steps.length - 1];
       const terminalDependencies = terminalIndexes.map((index) => temporalPlanStepDependencies(plan, index));
@@ -4856,7 +4856,7 @@ function discordReferencePlanError(
       if (unusedReferences.length > 0) {
         return `Model plan final output did not derive from required Discord timestamp reference operand(s): ${unusedReferences.join(', ')}.`;
       }
-      if (plan.kind === 'time_range' && terminalDependencies.length === 2 && classification.references.length === 2) {
+      if (isTimeRangePlan(plan) && terminalDependencies.length === 2 && classification.references.length === 2) {
         const [startReference, endReference] = classification.references;
         if (startReference!.raw !== endReference!.raw) {
           const startReferenceIndexes = referenceStepIndexes.get(startReference!.raw)!;
@@ -5006,7 +5006,7 @@ function discordReferenceRangeShiftTargetError(
   shiftSteps: Array<{ step: TemporalPlanStep; index: number }>,
   originalText: string,
 ): string | undefined {
-  if (plan.kind !== 'time_range' || terminalDependencies.length !== 2 || shiftSteps.length === 0) {
+  if (!isTimeRangePlan(plan) || terminalDependencies.length !== 2 || shiftSteps.length === 0) {
     return undefined;
   }
   const target = requestedDiscordRangeEndpoint(originalText);
@@ -5040,7 +5040,7 @@ function discordReferenceClockSemanticsError(
     + [...originalText.matchAll(/\b(?:noon|midnight)\b/giu)].length
     + [...originalText.matchAll(/(?<![\d:])(?:0?0|1[3-9]|2[0-3]):[0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
     + embeddedBareHourMentionCount;
-  if (plan.kind !== 'time_range' && singularClockMentionCount > 1) {
+  if (!isTimeRangePlan(plan) && singularClockMentionCount > 1) {
     return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
   }
   const clocksByTerminal = terminalDependencies.map((dependencies) => {
@@ -5066,7 +5066,7 @@ function discordReferenceClockSemanticsError(
   ) {
     return 'Model plan clock did not match the requested Discord-reference clock.';
   }
-  if (plan.kind === 'time_range' && terminalDependencies.length === 2) {
+  if (isTimeRangePlan(plan) && terminalDependencies.length === 2) {
     const target = requestedDiscordRangeEndpoint(originalText);
     if (target !== undefined) {
       const targetIndex = target === 'start' ? 0 : 1;

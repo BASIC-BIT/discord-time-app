@@ -789,7 +789,6 @@ async function main() {
   const wrongRangeShiftEndpoint = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
-      kind: 'time_range',
       label: 'Shifted the start instead of the requested end',
       startStep: 1,
       endStep: 2,
