@@ -818,10 +818,7 @@ fn configure_local_slm_launcher_args(
     settings: &AppSettings,
 ) -> Result<(), String> {
     let port = local_slm_port(settings).ok_or_else(|| {
-        format!(
-            "Local SLM endpoint must be a local HTTP URL like {}.",
-            LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL
-        )
+        format!("Local SLM endpoint must be a local HTTP URL like {LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL}.")
     })?;
     command
         .arg("-Port")
@@ -1398,7 +1395,7 @@ fn local_time_parser_request(
     let body = body.unwrap_or("");
     let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: localhost:{TIME_PARSER_PORT}\r\nConnection: close\r\nContent-Type: application/json\r\nx-api-key: {api_key}\r\nx-api-version: 1\r\nContent-Length: {}\r\n\r\n{body}",
-        body.as_bytes().len()
+        body.len()
     );
 
     stream
@@ -1886,7 +1883,10 @@ mod local_slm_default_migration_tests {
 
         assert_eq!(settings.settings_schema_version, 0);
         migrate_local_slm_defaults(&mut settings);
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
         assert_eq!(settings.local_slm_model, LOCAL_SLM_DEFAULT_MODEL);
     }
 
@@ -1975,7 +1975,10 @@ mod local_slm_default_migration_tests {
         migrate_local_slm_defaults(&mut settings);
 
         assert_eq!(settings.local_slm_model, LOCAL_SLM_PREVIOUS_MODEL);
-        assert_eq!(settings.local_slm_adapter_path, LOCAL_SLM_PREVIOUS_ADAPTER_PATH);
+        assert_eq!(
+            settings.local_slm_adapter_path,
+            LOCAL_SLM_PREVIOUS_ADAPTER_PATH
+        );
     }
 }
 
@@ -2166,7 +2169,7 @@ fn save_app_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), Stri
             e.to_string()
         })?;
 
-    let settings_value = serde_json::to_value(&settings).map_err(|e| {
+    let settings_value = serde_json::to_value(settings).map_err(|e| {
         log::error!("Failed to serialize settings: {e}");
         e.to_string()
     })?;
