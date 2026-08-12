@@ -55,6 +55,7 @@ const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*([ap])\
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
+const DISCORD_SHIFT_DIRECTION_SOURCE = String.raw`(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
 const AMBIGUOUS_BOUNDED_BARE_HOUR_PATTERN = /\b(0?[1-9]|1[0-2])\b(?=\s*,?\s*(?:keeping\s+the\s+same\s+calendar\s+day|on\s+(?:the\s+)?(?:following|previous|prior|next)\s+day))/gi;
 const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'] as const;
 const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
@@ -3862,19 +3863,19 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   residue = residue
     .replace(new RegExp(String.raw`\b(?:set|move)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
     .replace(new RegExp(String.raw`\bchange\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
-  return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
+  return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
-    || new RegExp(String.raw`\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\b`, 'iu').test(text)
-    || new RegExp(String.raw`\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|earlier|before)\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text);
+    || new RegExp(String.raw`\bstarting\s+at\s+<t:\d+(?::[tTdDfFR])?>\s+and\s+ending\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\bfrom\s+<t:\d+(?::[tTdDfFR])?>\s+until\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text);
 }
 
 function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
   let residue = text.replace(reference, ' ').toLowerCase();
   residue = residue
-    .replace(new RegExp(String.raw`\b(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b`, 'giu'), ' ')
+    .replace(new RegExp(String.raw`\b(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'giu'), ' ')
     .replace(/\b(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next)\b/giu, ' ');
   if (/\b(?:set|change|move|use)\s+(?:the\s+)?(?:month|year)\s+(?:to|as)\s+\d{1,4}\b/iu.test(residue)) {
     return true;
@@ -4942,10 +4943,11 @@ function discordReferencePlanSemanticsError(
   const explicitReferenceSpan = /<t:\d+(?::[tTdDfFR])?>\s*(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*<t:\d+(?::[tTdDfFR])?>/iu.test(originalText);
   const requestsRange = explicitReferenceSpan
     || references.some((reference) => discordReferenceRequestsRange(originalText, reference));
-  if (requestsRange && plan.kind !== 'time_range') {
+  const returnsRange = isTimeRangePlan(plan);
+  if (requestsRange && !returnsRange) {
     return 'Model plan returned an instant for a Discord-reference range request.';
   }
-  if (!requestsRange && plan.kind === 'time_range') {
+  if (!requestsRange && returnsRange) {
     return 'Model plan returned a range for a singular Discord-reference request.';
   }
   const expectedDelta = expectedDiscordReferenceShift(originalText, references);
@@ -5091,7 +5093,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
-  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
+  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   const referenceCount = [...text.matchAll(new RegExp(reference, 'giu'))].length;
   if (referenceCount === 1) {
     if (new RegExp(String.raw`${reference}\s*${separator}\s*${clock}`, 'iu').test(text)) targets.add('end');
@@ -5205,7 +5207,7 @@ function expectedDiscordReferenceShift(
   const result = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
   const shiftAmountSource = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
   const amountUnitMatches = [...residue.matchAll(new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))];
-  const amountUnitDirection = new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)\b`, 'giu');
+  const amountUnitDirection = new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(${DISCORD_SHIFT_DIRECTION_SOURCE})\b`, 'giu');
   let matchedShift = false;
   let matchedAmountUnitCount = 0;
   const matchedShiftKeys = new Set<DiscordShiftDeltaKey>();

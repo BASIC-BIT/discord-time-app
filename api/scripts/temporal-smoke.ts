@@ -845,6 +845,11 @@ async function main() {
       delta: { hours: 1 },
     },
     {
+      text: '<t:1785643200:t> to one hour afetr <t:1785643200:t>',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
       text: 'starting at <t:1785643200:t> and ending two hours later',
       target: 'end' as const,
       delta: { hours: 2 },
@@ -1105,7 +1110,7 @@ async function main() {
   const singularSetterAsRange = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
-      kind: 'time_range', label: 'Incorrect setter range', startStep: 0, endStep: 2,
+      label: 'Incorrect setter range', startStep: 0, endStep: 2,
       steps: [
         { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
         { op: 'resolve_clock_time', text: '3 pm' },
