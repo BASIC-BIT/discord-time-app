@@ -1106,6 +1106,31 @@ async function main() {
     );
     assert.equal(supportedSameDayComposition.status, 'resolved', `${text}: ${supportedSameDayComposition.validation.warnings.join(' | ')}`);
   }
+  const unchangedMalformedClockSetter = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Ignored malformed clock setter', finalStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  for (const text of [
+    'set <t:1785643200:t> to 25:00',
+    '<t:1785643200:t> set it to 2:75',
+  ]) {
+    const rejectedMalformedClockSetter = await executeTemporalPlanPlannerOutput(
+      unchangedMalformedClockSetter,
+      { text, calendarContext },
+      { implementations: createDeterministicTemporalToolImplementations() },
+    );
+    assert.equal(rejectedMalformedClockSetter.status, 'failed');
+    assert.match(
+      rejectedMalformedClockSetter.validation.warnings.join(' '),
+      /malformed clock value/,
+      `${text}: ${rejectedMalformedClockSetter.validation.warnings.join(' | ')}`,
+    );
+  }
   const singularSetterAsRange = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

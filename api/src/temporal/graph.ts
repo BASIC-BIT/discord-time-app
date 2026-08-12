@@ -5028,6 +5028,9 @@ function discordReferenceClockSemanticsError(
   terminalDependencies: Set<number>[],
   originalText: string,
 ): string | undefined {
+  if (discordReferenceHasMalformedClockSetter(originalText)) {
+    return 'Discord-reference clock setter contained a malformed clock value.';
+  }
   const requestedClocks = requestedDiscordReferenceClocks(originalText);
   const ambiguousClockMentions = ambiguousBareClockMentions(originalText);
   const embeddedBareHourMentionCount = [...originalText.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
@@ -5117,6 +5120,25 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
   return targets.size === 1 ? [...targets][0] : undefined;
+}
+
+function discordReferenceHasMalformedClockSetter(text: string): boolean {
+  const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
+  const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+to|\bchange\s+(?:the\s+)?time\s+of\s+reference\s+to)`;
+  const setterClockPatterns = [
+    new RegExp(String.raw`${setter}\s+(\d{1,3}(?::\d{1,2})?\s*[ap](?:\.?m\.?)?)(?![\w:])`, 'giu'),
+    new RegExp(String.raw`${setter}\s+(\d{1,3}:\d{1,2})(?![\w:])`, 'giu'),
+    new RegExp(String.raw`${setter}\s+(\d{1,3})(?![\w:]|\s*[ap](?:\.?m\.?)?)`, 'giu'),
+  ];
+  for (const pattern of setterClockPatterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const token = match[1]!.trim();
+      if (parsePlanClockText(token).length === 0 && !/^(?:0?[1-9]|1[0-2])$/u.test(token)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {
