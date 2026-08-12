@@ -262,6 +262,16 @@ async function main() {
   );
   assert.equal(rejectedFinishSingularRange.status, 'failed');
   assert.equal(rejectedFinishSingularRange.epoch, undefined);
+  const acceptedFinishShiftRange = await executeModelReferenceRangeShift(
+    'starts at <t:1785643200:t>, finishes four hours later',
+    '<t:1785643200:t>',
+    '<t:1785643200:t>',
+    'end',
+    { hours: 4 },
+  );
+  assert.equal(acceptedFinishShiftRange.status, 'resolved');
+  assert.equal(acceptedFinishShiftRange.range?.start.epoch, 1785643200);
+  assert.equal(acceptedFinishShiftRange.range?.end.epoch, 1785657600);
   const malformedAtSetterPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

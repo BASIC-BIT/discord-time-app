@@ -5144,15 +5144,15 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
-  if (new RegExp(String.raw`\bend(?:s|ing)?\s+${shift}\b`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+${shift}\b`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+${shift}\b`, 'iu').test(text)) targets.add('start');
-  for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\b/giu)) {
+  for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\b/giu)) {
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
   for (const match of text.matchAll(new RegExp(String.raw`\badd\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b`, 'giu'))) {
     targets.add(match[1]!.toLowerCase() as 'start' | 'end');
   }
-  for (const match of text.matchAll(/\b(?:the\s+)?(start(?:ing)?|end(?:ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b/giu)) {
+  for (const match of text.matchAll(/\b(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b/giu)) {
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
   return targets.size === 1 ? [...targets][0] : undefined;
