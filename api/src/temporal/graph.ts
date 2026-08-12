@@ -3868,7 +3868,7 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
     || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
     || new RegExp(String.raw`\b(?:start(?:ing)?|end(?:ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
-    || new RegExp(String.raw`\bstart(?:ing)?\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:[,;:.!?]|[-\u2013\u2014]|\band\b)\s*end(?:ing)?\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\bstart(?:ing)?\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+)?|\band(?:\s+then)?\s+)end(?:ing)?\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\bfrom\s+)<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
 }
 
@@ -4779,7 +4779,7 @@ function temporalClockChoiceContractError(
   if (plans.length !== 1 || choiceSteps.length !== 1) {
     return 'Compact clock clarification requires exactly one plan and one choice-bearing step.';
   }
-  const step = choiceSteps[0]!.step;
+  const { plan, step, stepIndex } = choiceSteps[0]!;
   if (step.operation !== 'resolve_clock_time') {
     return 'Only resolve_clock_time may contain clock options.';
   }
@@ -4790,6 +4790,12 @@ function temporalClockChoiceContractError(
   const texts = new Set(step.options!.map((option) => option.text.trim().toLocaleLowerCase('en-US')));
   if (labels.size !== step.options!.length || texts.size !== step.options!.length) {
     return 'Clock option labels and texts must be unique.';
+  }
+  const terminalIndexes = isTimeRangePlan(plan)
+    ? [plan.startStep, plan.endStep].filter((index): index is number => index !== null)
+    : [plan.finalStep ?? plan.steps.length - 1];
+  if (!terminalIndexes.some((index) => temporalPlanStepDependencies(plan, index).has(stepIndex))) {
+    return 'Clock option step must feed a final result.';
   }
   return undefined;
 }

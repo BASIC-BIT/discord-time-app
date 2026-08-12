@@ -889,6 +889,16 @@ async function main() {
       delta: { hours: 4 },
     },
     {
+      text: 'starting at <t:1785643200:t>, then ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starting at <t:1785643200:t> and then ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
       text: '<t:1785643200:t> through 30 minutes before <t:1785650400:t>',
       target: 'end' as const,
       delta: { minutes: -30 },
@@ -938,6 +948,8 @@ async function main() {
     'start at <t:1785643200:t>; end four hours later',
     'starting at <t:1785643200:t>: ending four hours later',
     'starting at <t:1785643200:t> \u2014 ending four hours later',
+    'starting at <t:1785643200:t>, then ending four hours later',
+    'starting at <t:1785643200:t> and then ending four hours later',
   ]) {
     const rejectedSingularPunctuatedRelationalRange = await executeModelReferenceShift(
       text,
@@ -1607,6 +1619,30 @@ async function main() {
   );
   assert.equal(duplicateClockChoiceResult.status, 'failed');
   assert.match(duplicateClockChoiceResult.ambiguity.join(' '), /distinct clocks|clock ownership/i);
+
+  const disconnectedClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 9 AM or 3 PM?',
+    plans: [{
+      label: 'Disconnected clock choices',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '9 AM', text: '9 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, time: { hour: 9, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const disconnectedClockChoiceResult = await executeTemporalPlanPlannerOutput(
+    disconnectedClockChoices,
+    { text: 'tomorrow at either 9 am or 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(disconnectedClockChoiceResult.status, 'failed');
+  assert.match(disconnectedClockChoiceResult.ambiguity.join(' '), /option step must feed a final result/i);
 
   const unanchoredModelShiftPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',

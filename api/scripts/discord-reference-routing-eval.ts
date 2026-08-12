@@ -9,7 +9,10 @@ import {
 } from './temporal-model-eval';
 
 const defaultReferenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? '2026-05-24T12:00:00Z';
-const defaultTimeZone = process.env['TEMPORAL_EVAL_TZ'] ?? 'America/New_York';
+// This imported catalog contains fixed expected epochs built for its canonical zone.
+// Per-case timeZone values still override this default; a process-level override would
+// otherwise change execution without rebuilding those expectations.
+const defaultTimeZone = 'America/New_York';
 
 const cases = temporalEvalCases.filter(
   (evalCase): evalCase is TemporalEvalCase & { expectedRoute: NonNullable<TemporalEvalCase['expectedRoute']> } =>
