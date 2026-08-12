@@ -49,7 +49,7 @@ const CalendarContextSchema = z.object({
 const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TOP_LEVEL_NEXT_WEEKDAY_PATTERN = new RegExp(`^\\s*next\\s+(?:${PLAN_WEEKDAYS.join('|')})(?:\\b[\\s\\S]*)?$`, 'i');
 const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?\b/i;
-const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*(am|pm)\b/gi;
+const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*([ap])\.?m(?:\.(?!\w)|(?![\w.]))/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
@@ -2351,9 +2351,9 @@ async function enrichedRangesFromPlanOutput(
   }
 
   const pairs = pairRangeCandidateOutputs(startOutput.candidates, endOutput.candidates);
-  const startValidationText = rangeEndpointValidationText(plan, startStep, request.text);
-  const endValidationText = rangeEndpointValidationText(plan, endStep, request.text);
   return Promise.all(pairs.map(async (pair) => {
+    const startValidationText = rangeEndpointValidationText(plan, startStep, request.text, pair.start.label);
+    const endValidationText = rangeEndpointValidationText(plan, endStep, request.text, pair.end.label);
     const [start, end] = await Promise.all([
       enrichCandidate(pair.start.candidate, request, implementations, startValidationText),
       enrichCandidate(pair.end.candidate, request, implementations, endValidationText),
@@ -2370,11 +2370,11 @@ async function enrichedRangesFromPlanOutput(
   }));
 }
 
-function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string): string {
-  return planStepValidationText(plan, stepIndex, new Set()) ?? fallback;
+function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string, choiceLabel?: string): string {
+  return planStepValidationText(plan, stepIndex, new Set(), choiceLabel) ?? fallback;
 }
 
-function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set<number>): string | null {
+function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set<number>, choiceLabel?: string): string | null {
   if (seen.has(stepIndex)) {
     return null;
   }
@@ -2386,19 +2386,19 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
 
   const parts: string[] = [];
   if (step.baseStep !== null) {
-    const baseText = planStepValidationText(plan, step.baseStep, seen);
+    const baseText = planStepValidationText(plan, step.baseStep, seen, choiceLabel);
     if (baseText !== null) {
       parts.push(baseText);
     }
   }
   if (step.timeStep !== null) {
-    const timeText = planStepValidationText(plan, step.timeStep, seen);
+    const timeText = planStepValidationText(plan, step.timeStep, seen, choiceLabel);
     if (timeText !== null) {
       parts.push(timeText);
     }
   }
   if (step.timeZoneStep !== null) {
-    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen);
+    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen, choiceLabel);
     if (timeZoneText !== null) {
       parts.push(timeZoneText);
     }
@@ -2410,7 +2410,10 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
       break;
     case 'resolve_clock_time':
       if (step.options !== null) {
-        parts.push(...step.options.map((option) => option.text));
+        const matchingOption = choiceLabel === undefined
+          ? undefined
+          : step.options.find((option) => option.label.toLocaleLowerCase('en-US') === choiceLabel.toLocaleLowerCase('en-US'));
+        parts.push(...(matchingOption === undefined ? step.options.map((option) => option.text) : [matchingOption.text]));
       }
       parts.push(...optionalPlanText(step.text));
       break;
@@ -3576,7 +3579,7 @@ function explicitAmPmClockMentions(text: string): ExplicitClockMention[] {
     const hourText = match[1]!;
     const suffix = match[3]!.toLowerCase();
     let hour = Number(hourText) % 12;
-    if (suffix === 'pm') {
+    if (suffix === 'p') {
       hour += 12;
     }
     const minute = Number(match[2] ?? 0);
@@ -4739,9 +4742,6 @@ function temporalClockChoiceContractError(
   }
   if (plans.length !== 1 || choiceSteps.length !== 1) {
     return 'Compact clock clarification requires exactly one plan and one choice-bearing step.';
-  }
-  if (plans[0]!.kind === 'time_range') {
-    return 'Compact clock clarification does not support time-range plans.';
   }
   const step = choiceSteps[0]!.step;
   if (step.operation !== 'resolve_clock_time') {

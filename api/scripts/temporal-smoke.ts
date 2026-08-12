@@ -390,6 +390,35 @@ async function main() {
   );
   assert.equal(rejectedInstantForOclockRange.status, 'failed');
   assert.match(rejectedInstantForOclockRange.validation.warnings.join(' '), /instant.*range request/);
+  const selectableOclockRange = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Timestamp through 3 oclock',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3 AM', text: '3 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const oclockRangeClarification = await executeTemporalPlanPlannerOutput(
+    selectableOclockRange,
+    { text: "<t:1785643200:t> to 3 o'clock", calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(oclockRangeClarification.status, 'needs_clarification', JSON.stringify(oclockRangeClarification, null, 2));
+  assert.equal(oclockRangeClarification.clarificationAlternatives?.length, 2);
+  assert.deepEqual(
+    oclockRangeClarification.clarificationAlternatives?.map((alternative) => alternative.range?.end.epoch),
+    [1785654000, 1785697200],
+  );
 
   const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
@@ -983,6 +1012,7 @@ async function main() {
     'use <t:1785643200:t> for the same day at 3 pm',
     'set <t:1785643200:t> to 3 pm',
     'change the time of <t:1785643200:t> to 3 pm',
+    'change the time of <t:1785643200:t> to 3 p.m.',
     'move <t:1785643200:t> to 3 pm without changing the day',
     '<t:1785643200:t> move it to 3 pm without changing the day',
   ]) {
