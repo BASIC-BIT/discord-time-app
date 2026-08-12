@@ -401,8 +401,8 @@ async function main() {
       steps: [
         { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
         { op: 'resolve_clock_time', options: [
-          { label: '3 AM', text: '3 am' },
-          { label: '3 PM', text: '3 pm' },
+          { label: 'Morning', text: '3 am' },
+          { label: 'Afternoon', text: '3 pm' },
         ] },
         { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
       ],

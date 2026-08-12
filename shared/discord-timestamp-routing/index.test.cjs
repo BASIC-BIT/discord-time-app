@@ -64,6 +64,9 @@ test('routes temporal transformation language to model interpretation', () => {
   const invalidMinuteChange = classify('change the time of <t:1785643200:t> to 12:99');
   assert.equal(invalidMinuteChange.route, 'clarify');
   assert.equal(invalidMinuteChange.reason, 'negated_or_corrected_reference');
+  const alternativeClockChange = classify('change the time of <t:1785643200:t> to 3 or 4 pm');
+  assert.equal(alternativeClockChange.route, 'clarify');
+  assert.equal(alternativeClockChange.reason, 'negated_or_corrected_reference');
 });
 
 test('preserves a narrow affirmative copied-prose route and rejects semantic hazards', () => {

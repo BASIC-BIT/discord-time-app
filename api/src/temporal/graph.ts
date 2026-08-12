@@ -2352,8 +2352,8 @@ async function enrichedRangesFromPlanOutput(
 
   const pairs = pairRangeCandidateOutputs(startOutput.candidates, endOutput.candidates);
   return Promise.all(pairs.map(async (pair) => {
-    const startValidationText = rangeEndpointValidationText(plan, startStep, request.text, pair.start.label);
-    const endValidationText = rangeEndpointValidationText(plan, endStep, request.text, pair.end.label);
+    const startValidationText = rangeEndpointValidationText(plan, startStep, request.text, pair.start);
+    const endValidationText = rangeEndpointValidationText(plan, endStep, request.text, pair.end);
     const [start, end] = await Promise.all([
       enrichCandidate(pair.start.candidate, request, implementations, startValidationText),
       enrichCandidate(pair.end.candidate, request, implementations, endValidationText),
@@ -2370,11 +2370,18 @@ async function enrichedRangesFromPlanOutput(
   }));
 }
 
-function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string, choiceLabel?: string): string {
-  return planStepValidationText(plan, stepIndex, new Set(), choiceLabel) ?? fallback;
+function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string, choice: PlanCandidateOutput): string {
+  const zoned = Temporal.ZonedDateTime.from(choice.candidate.zonedDateTime);
+  return planStepValidationText(plan, stepIndex, new Set(), choice.label, { hour: zoned.hour, minute: zoned.minute }) ?? fallback;
 }
 
-function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set<number>, choiceLabel?: string): string | null {
+function planStepValidationText(
+  plan: TemporalPlan,
+  stepIndex: number,
+  seen: Set<number>,
+  choiceLabel?: string,
+  choiceClock?: { hour: number; minute: number },
+): string | null {
   if (seen.has(stepIndex)) {
     return null;
   }
@@ -2386,19 +2393,19 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
 
   const parts: string[] = [];
   if (step.baseStep !== null) {
-    const baseText = planStepValidationText(plan, step.baseStep, seen, choiceLabel);
+    const baseText = planStepValidationText(plan, step.baseStep, seen, choiceLabel, choiceClock);
     if (baseText !== null) {
       parts.push(baseText);
     }
   }
   if (step.timeStep !== null) {
-    const timeText = planStepValidationText(plan, step.timeStep, seen, choiceLabel);
+    const timeText = planStepValidationText(plan, step.timeStep, seen, choiceLabel, choiceClock);
     if (timeText !== null) {
       parts.push(timeText);
     }
   }
   if (step.timeZoneStep !== null) {
-    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen, choiceLabel);
+    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen, choiceLabel, choiceClock);
     if (timeZoneText !== null) {
       parts.push(timeZoneText);
     }
@@ -2410,9 +2417,10 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
       break;
     case 'resolve_clock_time':
       if (step.options !== null) {
-        const matchingOption = choiceLabel === undefined
-          ? undefined
-          : step.options.find((option) => option.label.toLocaleLowerCase('en-US') === choiceLabel.toLocaleLowerCase('en-US'));
+        const matchingOption = step.options.find((option) =>
+          choiceLabel !== undefined && option.label.toLocaleLowerCase('en-US') === choiceLabel.toLocaleLowerCase('en-US')
+          || choiceClock !== undefined && parsePlanClockText(option.text).some((clock) => clockKey(clock) === clockKey(choiceClock)),
+        );
         parts.push(...(matchingOption === undefined ? step.options.map((option) => option.text) : [matchingOption.text]));
       }
       parts.push(...optionalPlanText(step.text));
