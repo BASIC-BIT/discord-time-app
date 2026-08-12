@@ -5125,10 +5125,19 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
   const setter = String.raw`(?:\b(?:set|move)(?:\s+(?:reference|it))?\s+to|\bchange\s+(?:the\s+)?time\s+of\s+reference\s+to)`;
+  for (const match of normalized.matchAll(new RegExp(String.raw`${setter}\s+(\d{1,3})([.,])(\d{1,2})(\s*[ap](?:\.?m\.?)?)?(?![\w:])`, 'giu'))) {
+    const validDottedBareClock = match[2] === '.'
+      && match[3]!.length === 2
+      && match[4] === undefined
+      && parsePlanClockText(`${match[1]}:${match[3]}`).length > 0;
+    if (!validDottedBareClock) {
+      return true;
+    }
+  }
   const setterClockPatterns = [
     new RegExp(String.raw`${setter}\s+(\d{1,3}(?::\d{1,2})?\s*[ap](?:\.?m\.?)?)(?![\w:])`, 'giu'),
     new RegExp(String.raw`${setter}\s+(\d{1,3}:\d{1,2})(?![\w:])`, 'giu'),
-    new RegExp(String.raw`${setter}\s+(\d{1,3})(?![\w:]|\s*[ap](?:\.?m\.?)?)`, 'giu'),
+    new RegExp(String.raw`${setter}\s+(\d{1,3})(?![\w:.,]|\s*[ap](?:\.?m\.?)?)`, 'giu'),
   ];
   for (const pattern of setterClockPatterns) {
     for (const match of normalized.matchAll(pattern)) {

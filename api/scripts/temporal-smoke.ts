@@ -1131,6 +1131,19 @@ async function main() {
       `${text}: ${rejectedMalformedClockSetter.validation.warnings.join(' | ')}`,
     );
   }
+  const rejectedPunctuatedClockSetter = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 3.5 pm',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(rejectedPunctuatedClockSetter.status, 'failed');
+  assert.match(rejectedPunctuatedClockSetter.validation.warnings.join(' '), /malformed clock value/);
+  const supportedDottedBareClockSetter = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 3.05',
+    '<t:1785643200:t>',
+    '3:05 pm',
+  );
+  assert.equal(supportedDottedBareClockSetter.status, 'needs_clarification');
   const singularSetterAsRange = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
