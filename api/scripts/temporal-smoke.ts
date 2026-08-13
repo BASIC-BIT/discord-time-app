@@ -590,6 +590,60 @@ async function main() {
   );
   assert.equal(rejectedUnrelatedClockChainRange.status, 'failed');
   assert.equal(rejectedUnrelatedClockChainRange.range, undefined);
+  const endpointClockAlternativesPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Should the range end at 5 PM or 6 PM?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Explicit end-clock alternatives',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '5 PM', text: '5 pm' },
+          { label: '6 PM', text: '6 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedEndpointClockAlternatives = await executeTemporalPlanPlannerOutput(
+    endpointClockAlternativesPlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm or 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedEndpointClockAlternatives.status,
+    'needs_clarification',
+    acceptedEndpointClockAlternatives.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedEndpointClockAlternatives.clarificationAlternatives?.length, 2);
+  const independentClockSetterAndArithmeticPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independent start clock and end arithmetic',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 1, delta: { hours: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedIndependentClockSetterAndArithmetic = await executeTemporalPlanPlannerOutput(
+    independentClockSetterAndArithmeticPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm; move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedIndependentClockSetterAndArithmetic.status,
+    'resolved',
+    acceptedIndependentClockSetterAndArithmetic.validation.warnings.join(' | '),
+  );
   const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },

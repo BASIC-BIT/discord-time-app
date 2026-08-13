@@ -5054,17 +5054,7 @@ function discordReferenceClockSemanticsError(
     return 'Discord-reference clock setter contained a malformed clock value.';
   }
   const requestedClocks = requestedDiscordReferenceClocks(originalText);
-  const ambiguousClockMentions = ambiguousBareClockMentions(originalText);
-  const embeddedBareHourMentionCount = [...originalText.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
-    .filter((match) => match.index !== undefined && !ambiguousClockMentions.some((mention) =>
-      rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length),
-    ))
-    .length;
-  const singularClockMentionCount = explicitAmPmClockMentions(originalText).length
-    + ambiguousClockMentions.length
-    + [...originalText.matchAll(/\b(?:noon|midnight)\b/giu)].length
-    + [...originalText.matchAll(/(?<![\d:.])(?:0?0|1[3-9]|2[0-3])[:.][0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
-    + embeddedBareHourMentionCount;
+  const singularClockMentionCount = discordReferenceClockMentionCount(originalText);
   if (!isTimeRangePlan(plan) && singularClockMentionCount > 1) {
     return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
   }
@@ -5108,7 +5098,7 @@ function discordReferenceClockSemanticsError(
     }
     const target = requestedDiscordRangeClockEndpoint(originalText);
     if (target !== undefined) {
-      if (singularClockMentionCount !== 1) {
+      if (discordReferenceOwnedRangeClockMentionCount(originalText, target) !== singularClockMentionCount) {
         return 'Model range plan included clocks outside the validated Discord-reference endpoint clause.';
       }
       const targetIndex = target === 'start' ? 0 : 1;
@@ -5199,24 +5189,46 @@ function requestedDiscordRangeClockEndpoint(text: string): 'start' | 'end' | und
   return targets.size === 1 ? [...targets][0] : undefined;
 }
 
+function discordReferenceClockMentionCount(text: string): number {
+  const ambiguousClockMentions = ambiguousBareClockMentions(text);
+  const embeddedBareHourMentionCount = [...text.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
+    .filter((match) => match.index !== undefined && !ambiguousClockMentions.some((mention) =>
+      rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length),
+    ))
+    .length;
+  return explicitAmPmClockMentions(text).length
+    + ambiguousClockMentions.length
+    + [...text.matchAll(/\b(?:noon|midnight)\b/giu)].length
+    + [...text.matchAll(/(?<![\d:.])(?:0?0|1[3-9]|2[0-3])[:.][0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
+    + embeddedBareHourMentionCount;
+}
+
+function discordReferenceOwnedRangeClockMentionCount(text: string, target: 'start' | 'end'): number {
+  return text
+    .split(/[;.!?]+/u)
+    .filter((clause) => requestedDiscordRangeClockEndpoint(clause) === target)
+    .reduce((count, clause) => count + discordReferenceClockMentionCount(clause), 0);
+}
+
 function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' | undefined {
   const targets = new Set<'start' | 'end'>();
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
   const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
-  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
+  const duration = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
+  const shift = String.raw`${duration}\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+${shift}\b`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+${shift}\b`, 'iu').test(text)) targets.add('start');
-  for (const match of text.matchAll(/\b(?:move|shift|extend|shorten|set|change|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\b/giu)) {
+  for (const match of text.matchAll(new RegExp(String.raw`\b(?:move|shift|extend|shorten|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
   for (const match of text.matchAll(new RegExp(String.raw`\badd\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b`, 'giu'))) {
     targets.add(match[1]!.toLowerCase() as 'start' | 'end');
   }
-  for (const match of text.matchAll(/\b(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b/giu)) {
+  for (const match of text.matchAll(new RegExp(String.raw`\b(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
     targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
   }
   return targets.size === 1 ? [...targets][0] : undefined;
