@@ -36,7 +36,7 @@ const OTHER_TEMPORAL_ENTITY = new RegExp(
   "i",
 );
 const PRESENTATION_ANCHOR = /\b(?:(?:the\s+)?(?:event|meeting|party|show|stream|class|session|launch|deadline|doors?)\s+(?:starts?|begins?|happens|is|will\s+be|opens?)|starts?|begins?|happens|scheduled)\s+(?:at|on|for)?\s*$/i;
-const REFERENCE_RELATIONSHIP = /\b(?:to|through|until|from|after|before|later|earlier|start|end|move|shift|extend|shorten)\b|(?:^|\s)[-–—](?:\s|$)/i;
+const REFERENCE_RELATIONSHIP = /\b(?:to|through|until|from|after|before|later|earlier|starts?|ends?|move|shift|extend|shorten)\b|(?:^|\s)[-–—](?:\s|$)/i;
 
 function discordTimestampFormatIndex(formatCode) {
   const normalized = formatCode === undefined || formatCode === "" ? ":f" : formatCode.startsWith(":") ? formatCode : `:${formatCode}`;
@@ -97,7 +97,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
     if (signals.includes("scheduling")) {
       return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
     }
-    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text)) {
+    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !REFERENCE_RELATIONSHIP.test(text)) {
       return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
     }
     if (signals.includes("negation_or_correction")) {
@@ -135,7 +135,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
   if (signals.includes("scheduling")) {
     return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
   }
-  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text)) {
+  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !REFERENCE_RELATIONSHIP.test(text)) {
     return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
   }
   if (signals.includes("negation_or_correction")) {

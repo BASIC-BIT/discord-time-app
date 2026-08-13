@@ -64,6 +64,8 @@ test('routes temporal transformation language to model interpretation', () => {
     'change <t:1785643200:t> to 5 pm',
     'set <t:1785643200:t> to 5 pm UTC',
     'change <t:1785643200:t> to 5 pm UTC',
+    'starts at <t:1785643200:t> and ends at 5 pm UTC',
+    'set <t:1785643200:t> to 5 pm UTC+02:00',
     'change the time of <t:1785643200:t> to 5.30p',
     'change the time of <t:1785643200:t> to 15.00',
     'change time of <t:1785643200:t> to 15:00',
