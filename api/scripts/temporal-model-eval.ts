@@ -13,6 +13,7 @@ import {
 } from '@hammer-overlay/discord-timestamp-routing';
 import { parseTemporalExpression } from '../src/temporal';
 import { parseCalendarContext } from '../src/temporal/deterministic';
+import { unsafeTemporalDiagnosticMismatch } from '../src/temporal/eval-safety';
 import { executeTemporalPlanPlannerOutput, formatEndpointInputJson } from '../src/temporal/graph';
 import { parseTemporalPlanPlannerOutput, PLAN_WEEKDAYS, TEMPORAL_PLAN_MAX_PLANS, TEMPORAL_PLAN_MAX_STEPS } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
@@ -1893,7 +1894,7 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
-      unsafeDiagnosticMismatch: unsafeParsedDiagnosticMismatch(evalCase, parsed),
+      unsafeDiagnosticMismatch: unsafeTemporalDiagnosticMismatch(evalCase.expected, parsed),
       metrics: metricsFromResponse(parsed, evalCase, durationMs),
     };
   } catch (error) {
@@ -2841,24 +2842,6 @@ async function buildEvaluationBoundary(
 
 function unsafeTimestampDiagnosticMismatch(result: EvalResult): boolean {
   return result.unsafeDiagnosticMismatch === true;
-}
-
-function unsafeParsedDiagnosticMismatch(evalCase: TemporalEvalCase, parsed: EvalParsed): boolean {
-  if (parsed.status === 'resolved' || parsed.epoch !== undefined || parsed.range !== undefined) {
-    if (evalCase.expected.status !== 'resolved') return true;
-    if (evalCase.expected.range !== undefined) {
-      return parsed.kind !== 'time_range'
-        || parsed.range === undefined
-        || parsed.range.start.epoch !== evalCase.expected.range.startEpoch
-        || parsed.range.end.epoch !== evalCase.expected.range.endEpoch;
-    }
-    return parsed.kind === 'time_range'
-      || parsed.range !== undefined
-      || parsed.epoch !== evalCase.expected.epoch;
-  }
-  // Optional diagnostics still record clarification mismatches in Gate C, but
-  // selectable alternatives do not expose a wrong singular answer.
-  return false;
 }
 
 function boundaryGate(

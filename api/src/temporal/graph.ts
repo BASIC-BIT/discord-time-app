@@ -4800,6 +4800,7 @@ function temporalClockChoiceContractError(
   if (
     requestedClockKeys.size === 0
     || [...optionClockKeys].some((key) => !requestedClockKeys.has(key))
+    || (/\b(?:either|or)\b/iu.test(originalText) && optionClockKeys.size !== requestedClockKeys.size)
   ) {
     return 'Clock options must match the clocks requested in the user input.';
   }

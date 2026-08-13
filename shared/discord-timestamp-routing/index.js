@@ -15,7 +15,7 @@ const EXACT_RANGE = new RegExp(
 const HARMLESS_WRAPPER = /^[\s`'"“”‘’()[\]{}*_~>|.\\-]*$/u;
 const DISCORD_TIMESTAMP_AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const UNIT_SOURCE = String.raw`(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
-const CLOCK_SOURCE = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*(?:a\.?m\.?|p\.?m\.?))?|(?:[01]?\d|2[0-3]):[0-5]\d|midnight|noon)`;
+const CLOCK_SOURCE = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?))?|(?:[01]?\d|2[0-3]):[0-5]\d|midnight|noon)`;
 const AFFIRMATIVE_CLOCK_CHANGE = new RegExp(
   String.raw`\bchange\s+(?:the\s+)?time\s+of\s+${TIMESTAMP_SOURCE}\s+to\s+${CLOCK_SOURCE}(?=[\s,.!?;]*(?:(?:please|thanks?|now)\b[\s,.!?;]*)*$)`,
   "gi",

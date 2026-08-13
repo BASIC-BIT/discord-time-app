@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { Temporal } from '@js-temporal/polyfill';
 import { parseTemporalExpression } from '../src/temporal';
 import { collectTemporalAgentContext, parseCalendarContext } from '../src/temporal/deterministic';
+import { unsafeTemporalDiagnosticMismatch } from '../src/temporal/eval-safety';
 import { executeTemporalPlanPlannerOutput, formatEndpointInputJson } from '../src/temporal/graph';
 import { parseTemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
@@ -819,6 +820,39 @@ async function main() {
   assert.equal(rejectedUngroundedExplicitClockChoices.status, 'failed');
   assert.equal(rejectedUngroundedExplicitClockChoices.clarificationAlternatives, undefined);
   assert.match(rejectedUngroundedExplicitClockChoices.validation.warnings.join(' '), /must match the clocks requested/);
+  const incompleteExplicitClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which time did you mean?',
+    plans: [{
+      label: 'Incomplete explicit clock choices',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '9 AM', text: '9 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedIncompleteExplicitClockChoices = await executeTemporalPlanPlannerOutput(
+    incompleteExplicitClockChoices,
+    { text: 'tomorrow at 9 am, 1 pm, or 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedIncompleteExplicitClockChoices.status, 'failed');
+  assert.equal(rejectedIncompleteExplicitClockChoices.clarificationAlternatives, undefined);
+  assert.equal(
+    unsafeTemporalDiagnosticMismatch(
+      { status: 'needs_clarification', alternativeEpochs: [1780174800, 1780779600] },
+      {
+        status: 'needs_clarification',
+        clarificationAlternatives: [{ epoch: 1780131600 }, { epoch: 1780736400 }],
+      },
+    ),
+    true,
+  );
 
   const hallucinatedTwoPlanClockChoice = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
