@@ -392,6 +392,20 @@ async function main() {
   );
   assert.equal(rejectedDuplicateRelativeDay.status, 'failed');
   assert.equal(rejectedDuplicateRelativeDay.epoch, undefined);
+  const rejectedDuplicateCalendarDay = await executeModelReferenceShift(
+    '<t:1785643200:t> on the following day, then the next day',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedDuplicateCalendarDay.status, 'failed');
+  assert.equal(rejectedDuplicateCalendarDay.epoch, undefined);
+  const rejectedUnboundEndpointDuration = await executeModelReferenceShift(
+    'The transcript contains <t:1785643200:t>; the ending point was moved one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedUnboundEndpointDuration.status, 'failed');
+  assert.equal(rejectedUnboundEndpointDuration.epoch, undefined);
   const rejectedThirdPersonClockSingularRange = await executeModelReferenceClockComposition(
     'starts at <t:1785643200:t>, ends at 5 pm',
     '<t:1785643200:t>',
@@ -462,6 +476,14 @@ async function main() {
   assert.equal(rejectedMalformedReferenceLeadingSetter.status, 'failed');
   assert.equal(rejectedMalformedReferenceLeadingSetter.epoch, undefined);
   assert.match(rejectedMalformedReferenceLeadingSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedEndpointClock = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: '<t:1785643200:t> finishes at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedEndpointClock.status, 'failed');
+  assert.equal(rejectedMalformedEndpointClock.epoch, undefined);
+  assert.match(rejectedMalformedEndpointClock.validation.warnings.join(' '), /malformed clock value/);
   const rejectedFinishClockSingularRange = await executeModelReferenceClockComposition(
     'starts at <t:1785643200:t>, finishes at 5 pm',
     '<t:1785643200:t>',
@@ -491,6 +513,16 @@ async function main() {
   assert.equal(acceptedFinishClockRange.status, 'resolved');
   assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
   assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
+  const acceptedConjoinedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedConjoinedFinishClockRange.status,
+    'resolved',
+    acceptedConjoinedFinishClockRange.validation.warnings.join(' | '),
+  );
   const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },
@@ -567,6 +599,34 @@ async function main() {
   );
   assert.equal(acceptedAnchoredTwoClockRange.range?.start.epoch, 1785697200);
   assert.equal(acceptedAnchoredTwoClockRange.range?.end.epoch, 1785704400);
+  const anchoredShiftClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored two-clock range using clock-only shifts',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 0 }, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 3, delta: { days: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredShiftClockRange = await executeTemporalPlanPlannerOutput(
+    anchoredShiftClockRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 3 pm to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredShiftClockRange.status,
+    'resolved',
+    acceptedAnchoredShiftClockRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredShiftClockRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredShiftClockRange.range?.end.epoch, 1785704400);
   const anchoredTwentyFourHourRangePlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

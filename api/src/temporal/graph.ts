@@ -4991,7 +4991,10 @@ function discordReferencePlanSemanticsError(
   }
 
   const shiftSteps = terminalSteps.filter(({ step }) => step.operation === 'shift_datetime');
-  const rangeTargetError = discordReferenceRangeShiftTargetError(plan, terminalDependencies, shiftSteps, originalText);
+  const arithmeticShiftSteps = shiftSteps.filter(({ step }) =>
+    DISCORD_SHIFT_DELTA_KEYS.some((key) => (step.delta[key] ?? 0) !== 0),
+  );
+  const rangeTargetError = discordReferenceRangeShiftTargetError(plan, terminalDependencies, arithmeticShiftSteps, originalText);
   if (rangeTargetError !== undefined) {
     return rangeTargetError;
   }
@@ -5164,8 +5167,8 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
     || new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${clock}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text)
-    || new RegExp(String.raw`\b${endpoint}\s+at\s+${reference}\s*,\s*(?:and\s+)?${endpoint}\s+at\s+${clock}`, 'iu').test(text)
-    || new RegExp(String.raw`\b${endpoint}\s+at\s+${clock}\s*,\s*(?:and\s+)?${endpoint}\s+at\s+${reference}`, 'iu').test(text);
+    || new RegExp(String.raw`\b${endpoint}\s+at\s+${reference}(?:\s*,\s*(?:and\s+)?|\s+and\s+)${endpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endpoint}\s+at\s+${clock}(?:\s*,\s*(?:and\s+)?|\s+and\s+)${endpoint}\s+at\s+${reference}`, 'iu').test(text);
 }
 
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
@@ -5203,7 +5206,7 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  const setter = String.raw`(?:\breference\s+at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+)`;
+  const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+)`;
   const setterClock = new RegExp(
     String.raw`${setter}(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',
@@ -5394,16 +5397,18 @@ function expectedDiscordReferenceShift(
   }
 
   if (!matchedShift) {
-    const hasPreviousCalendarDay = /\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue);
-    const hasFollowingCalendarDay = /\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue);
-    if (hasPreviousCalendarDay && hasFollowingCalendarDay) {
+    const previousCalendarDayPattern = /\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu;
+    const followingCalendarDayPattern = /\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/giu;
+    const previousCalendarDayCount = [...residue.matchAll(previousCalendarDayPattern)].length;
+    const followingCalendarDayCount = [...residue.matchAll(followingCalendarDayPattern)].length;
+    if (previousCalendarDayCount + followingCalendarDayCount > 1) {
       return undefined;
     }
-    if (hasPreviousCalendarDay) {
+    if (previousCalendarDayCount === 1) {
       if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
       result.days = -1;
       matchedShift = true;
-    } else if (hasFollowingCalendarDay) {
+    } else if (followingCalendarDayCount === 1) {
       if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
       result.days = 1;
       matchedShift = true;
@@ -5451,6 +5456,8 @@ function discordReferenceHasSupportedDurationRelationship(text: string): boolean
   const endpoint = String.raw`(?:start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)`;
   const rangeSeparator = String.raw`(?:to|through|thru|until|til|till)`;
   const endpointJoin = String.raw`(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+|and\s+)?|\band(?:\s+then)?\s+)`;
+  const hasReferenceRange = new RegExp(String.raw`${reference}\s*(?:[-\u2013\u2014]|${rangeSeparator})\s*${reference}`, 'iu').test(text)
+    || [...text.matchAll(new RegExp(reference, 'giu'))].some((match) => discordReferenceRequestsRange(text, match[0]));
   return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:[-+]|,|;|and\s+then)?\s*(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:tomorrow|yesterday)\s*[,;]?\s*(?:(?:and\s+)?then|plus)\s+${duration}\s+${direction}\b`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${duration}\s+(?:${direction})(?:\s+than)?\s+${reference}(?!\w)`, 'iu').test(text)
@@ -5460,8 +5467,8 @@ function discordReferenceHasSupportedDurationRelationship(text: string): boolean
     || new RegExp(String.raw`${reference}(?!\w)\s*${rangeSeparator}\s*${duration}\s+${direction}(?:\s+${reference}(?!\w))?`, 'iu').test(text)
     || new RegExp(String.raw`${duration}\s+${direction}\s+${reference}(?!\w)\s*${rangeSeparator}\s*${reference}(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+${reference}(?!\w)\s*${endpointJoin}(?:it\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+(?:it\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?${endpoint}(?:\s+point)?\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:the\s+)?${endpoint}(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text);
+    || (hasReferenceRange && new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?${endpoint}(?:\s+point)?\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text))
+    || (hasReferenceRange && new RegExp(String.raw`\b(?:the\s+)?${endpoint}(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text));
 }
 
 function discordShiftAmount(value: string): number {
