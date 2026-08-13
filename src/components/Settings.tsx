@@ -509,8 +509,14 @@ export function Settings({ onClose }: SettingsProps) {
                 <div className="local-slm-checks">
                   <span className={slmStatus.runtimeInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Runtime files: {slmStatus.runtimeInstalled ? 'installed' : 'missing'}</span>
                   <span className={slmStatus.adapterInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Model: {slmStatus.adapterInstalled ? 'installed' : 'missing'}</span>
-                  <span className={slmStatus.dockerAvailable ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Docker: {slmStatus.dockerAvailable ? 'available' : 'missing'}</span>
-                  <span className={slmStatus.dockerImageInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Image: {slmStatus.dockerImageInstalled ? 'installed' : 'missing'}</span>
+                  {slmStatus.ready ? (
+                    <span className="local-slm-check-ok">Endpoint: ready</span>
+                  ) : (
+                    <>
+                      <span className={slmStatus.dockerAvailable ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Docker: {slmStatus.dockerAvailable ? 'available' : 'missing'}</span>
+                      <span className={slmStatus.dockerImageInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Image: {slmStatus.dockerImageInstalled ? 'installed' : 'missing'}</span>
+                    </>
+                  )}
                 </div>
               )}
               {settingsDirty && (
