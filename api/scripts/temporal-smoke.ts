@@ -259,6 +259,31 @@ async function main() {
   );
   assert.equal(dottedTwentyFourHourClock.status, 'resolved', dottedTwentyFourHourClock.validation.warnings.join(' | '));
   assert.equal(dottedTwentyFourHourClock.epoch, 1785697200);
+  const omittedExplicitUtcClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5 pm UTC',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(omittedExplicitUtcClock.status, 'failed');
+  const explicitUtcClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at an explicit UTC clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedExplicitUtcClock = await executeTemporalPlanPlannerOutput(
+    explicitUtcClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedExplicitUtcClock.status, 'resolved', acceptedExplicitUtcClock.validation.warnings.join(' | '));
   const rejectedMixedMeridiemAlternative = await executeModelReferenceClockComposition(
     'set <t:1785643200:t> to 3 or 4 pm',
     '<t:1785643200:t>',
@@ -1668,6 +1693,11 @@ async function main() {
       delta: { hours: 3 },
     },
     {
+      text: '<t:1785643200:t> to <t:1785654000:t>; push the end by one hour later',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
       text: '<t:1785643200:t> to <t:1785650400:t>, shift the start back two hours',
       target: 'start' as const,
       delta: { hours: -2 },
@@ -1778,10 +1808,11 @@ async function main() {
       delta: { minutes: -15 },
     },
   ]) {
+    const rangeReferences = [...rangeCase.text.matchAll(/<t:\d+(?::[tTdDfFR])?>/giu)].map((match) => match[0]);
     const supportedRangeShift = await executeModelReferenceRangeShift(
       rangeCase.text,
       '<t:1785643200:t>',
-      rangeCase.text.includes('<t:1785650400:t>') ? '<t:1785650400:t>' : '<t:1785643200:t>',
+      rangeReferences[1] ?? '<t:1785643200:t>',
       rangeCase.target,
       rangeCase.delta,
     );

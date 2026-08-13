@@ -16,6 +16,7 @@ import {
 import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalModelCostConfig, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
+import { resolveTimeZone } from './timezones';
 import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
@@ -4995,13 +4996,43 @@ function discordReferencePlanSemanticsError(
   const terminalSteps = plan.steps
     .map((step, index) => ({ step, index }))
     .filter(({ index }) => terminalIndexes.has(index));
+  const requestedTimeZoneResolution = resolveTimeZone({
+    text: originalText,
+    calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+  });
+  const requestedTimeZone = requestedTimeZoneResolution.status === 'resolved'
+    ? requestedTimeZoneResolution.candidates[0]?.timeZone
+    : undefined;
+  if (requestedTimeZoneResolution.status === 'ambiguous') {
+    return 'Discord-reference timezone intent could not be validated safely.';
+  }
+  const terminalTimeZones = terminalSteps.flatMap(({ step }) => {
+    if (step.operation === 'resolve_timezone') {
+      const resolvedText = step.text ?? step.query ?? step.timeZone;
+      if (resolvedText === null) return [];
+      const resolution = resolveTimeZone({
+        text: resolvedText,
+        calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+      });
+      return resolution.status === 'resolved' ? resolution.candidates.map((candidate) => candidate.timeZone) : [];
+    }
+    return step.timeZone === null ? [] : [step.timeZone];
+  });
+  if (requestedTimeZone !== undefined && !terminalTimeZones.some((timeZone) => timeZone.toLowerCase() === requestedTimeZone.toLowerCase())) {
+    return 'Model plan omitted the explicit timezone requested for the Discord-reference clock.';
+  }
   for (const { step } of terminalSteps) {
-    if (step.timeZone !== null && step.timeZone.toLowerCase() !== requestTimeZone.toLowerCase()) {
+    const allowedTimeZone = requestedTimeZone ?? requestTimeZone;
+    if (step.timeZone !== null && step.timeZone.toLowerCase() !== allowedTimeZone.toLowerCase()) {
       return 'Model plan used a timezone override that was not grounded in the Discord-reference request.';
     }
     if (step.operation === 'resolve_timezone') {
       const resolvedText = step.text ?? step.query ?? step.timeZone;
-      if (resolvedText === null || resolvedText.toLowerCase() !== requestTimeZone.toLowerCase()) {
+      const resolution = resolvedText === null ? undefined : resolveTimeZone({
+        text: resolvedText,
+        calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+      });
+      if (resolution?.status !== 'resolved' || !resolution.candidates.some((candidate) => candidate.timeZone.toLowerCase() === allowedTimeZone.toLowerCase())) {
         return 'Model plan used a timezone step that was not grounded in the Discord-reference request.';
       }
     }
@@ -5439,13 +5470,17 @@ function expectedDiscordReferenceShift(
   const matchedShiftKeys = new Set<DiscordShiftDeltaKey>();
   const consumedRanges: Array<{ start: number; end: number }> = [];
   const recordShift = (match: RegExpMatchArray, amountIndex: number, unitIndex: number, direction: number) => {
+    const range = match.index === undefined ? undefined : { start: match.index, end: match.index + match[0].length };
+    if (range !== undefined && consumedRanges.some((consumed) => rangesOverlap(consumed.start, consumed.end - consumed.start, range.start, range.end - range.start))) {
+      return;
+    }
     const amount = discordShiftAmount(match[amountIndex]!);
     const key = discordShiftDeltaKey(match[unitIndex]!);
     result[key] += direction * amount;
     matchedShift = true;
     matchedAmountUnitCount += 1;
     matchedShiftKeys.add(key);
-    if (match.index !== undefined) consumedRanges.push({ start: match.index, end: match.index + match[0].length });
+    if (range !== undefined) consumedRanges.push(range);
   };
   for (const match of residue.matchAll(amountUnitDirection)) {
     const direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(match[3]!) ? 1 : -1;
