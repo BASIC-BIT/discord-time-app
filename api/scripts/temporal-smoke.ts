@@ -416,6 +416,13 @@ async function main() {
   );
   assert.equal(rejectedUnboundEndpointDuration.status, 'failed');
   assert.equal(rejectedUnboundEndpointDuration.epoch, undefined);
+  const rejectedUnboundAddEndpointDuration = await executeModelReferenceShift(
+    'The transcript contains <t:1785643200:t>; add one hour to the end',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedUnboundAddEndpointDuration.status, 'failed');
+  assert.equal(rejectedUnboundAddEndpointDuration.epoch, undefined);
   const rejectedThirdPersonClockSingularRange = await executeModelReferenceClockComposition(
     'starts at <t:1785643200:t>, ends at 5 pm',
     '<t:1785643200:t>',
@@ -486,6 +493,14 @@ async function main() {
   assert.equal(rejectedMalformedReferenceLeadingSetter.status, 'failed');
   assert.equal(rejectedMalformedReferenceLeadingSetter.epoch, undefined);
   assert.match(rejectedMalformedReferenceLeadingSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedReferenceRangeOperand = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: '<t:1785643200:t> to 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedReferenceRangeOperand.status, 'failed');
+  assert.equal(rejectedMalformedReferenceRangeOperand.epoch, undefined);
+  assert.match(rejectedMalformedReferenceRangeOperand.validation.warnings.join(' '), /malformed clock value/);
   const rejectedMalformedEndpointClock = await executeTemporalPlanPlannerOutput(
     malformedAtSetterPlan,
     { text: '<t:1785643200:t> finishes at 25:00', calendarContext },
@@ -636,6 +651,56 @@ async function main() {
     acceptedEndpointClockAlternatives.validation.warnings.join(' | '),
   );
   assert.equal(acceptedEndpointClockAlternatives.clarificationAlternatives?.length, 2);
+  const compactEndpointClockAlternativesPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 12:30 AM or 12:30 PM?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Compact end-clock alternatives',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '12:30 AM', text: '12:30 am' },
+          { label: '12:30 PM', text: '12:30 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedCompactEndpointClockAlternatives = await executeTemporalPlanPlannerOutput(
+    compactEndpointClockAlternativesPlan,
+    { text: '<t:1785643200:t> to 1230', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedCompactEndpointClockAlternatives.status,
+    'needs_clarification',
+    acceptedCompactEndpointClockAlternatives.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedCompactEndpointClockAlternatives.clarificationAlternatives?.length, 2);
+  const multiClockTextRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Invalid singular multi-clock text operand',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm or 6 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMultiClockTextRange = await executeTemporalPlanPlannerOutput(
+    multiClockTextRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm or 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMultiClockTextRange.status, 'failed');
+  assert.equal(rejectedMultiClockTextRange.range, undefined);
   const independentClockSetterAndArithmeticPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
@@ -705,6 +770,16 @@ async function main() {
     acceptedConjoinedEndpointClockSetters.status,
     'resolved',
     acceptedConjoinedEndpointClockSetters.validation.warnings.join(' | '),
+  );
+  const acceptedAndThenEndpointClockSetters = await executeTemporalPlanPlannerOutput(
+    twoEndpointClockSettersPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm and then set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAndThenEndpointClockSetters.status,
+    'resolved',
+    acceptedAndThenEndpointClockSetters.validation.warnings.join(' | '),
   );
   const copiedClockToUnownedEndPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -1848,6 +1923,12 @@ async function main() {
     { days: 2 },
   );
   assert.equal(compoundRelativeDay.status, 'resolved');
+  const compoundRelativeDayAndHour = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one hour later',
+    '<t:1785643200:t>',
+    { days: 1, hours: 1 },
+  );
+  assert.equal(compoundRelativeDayAndHour.status, 'resolved');
   const mixedUnitRelativeDay = await executeModelReferenceShift(
     '<t:1785643200:t> tomorrow, then one month later',
     '<t:1785643200:t>',

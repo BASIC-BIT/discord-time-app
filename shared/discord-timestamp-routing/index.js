@@ -17,7 +17,7 @@ const DISCORD_TIMESTAMP_AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three
 const UNIT_SOURCE = String.raw`(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
 const CLOCK_SOURCE = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?))?|(?:[01]?\d|2[0-3])[:.][0-5]\d|midnight|noon)`;
 const AFFIRMATIVE_CLOCK_CHANGE = new RegExp(
-  String.raw`\bchange\s+(?:the\s+)?time\s+of\s+${TIMESTAMP_SOURCE}\s+to\s+${CLOCK_SOURCE}(?=[\s,.!?;]*(?:(?:please|thanks?|now)\b[\s,.!?;]*)*$)`,
+  String.raw`\bchange\s+(?:the\s+)?time\s+of\s+${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}(?=[\s,.!?;]*(?:(?:please|thanks?|now)\b[\s,.!?;]*)*$)`,
   "gi",
 );
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;

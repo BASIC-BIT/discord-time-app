@@ -60,6 +60,7 @@ test('routes temporal transformation language to model interpretation', () => {
     'change the time of <t:1785643200:t> to 3 pm please',
     'change the time of <t:1785643200:t> to 3 pm, thanks!',
     'change the time of <t:1785643200:t> to 5p',
+    'change the time of <t:1785643200:t> at 5 pm',
     'change the time of <t:1785643200:t> to 5.30p',
     'change the time of <t:1785643200:t> to 15.00',
     'change time of <t:1785643200:t> to 15:00',
