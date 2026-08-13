@@ -5092,6 +5092,17 @@ function discordReferenceClockSemanticsError(
     return 'Model plan clock did not match the requested Discord-reference clock.';
   }
   if (isTimeRangePlan(plan) && terminalDependencies.length === 2) {
+    const orderedRangeClocks = requestedDiscordReferenceOrderedRangeClocks(originalText);
+    if (orderedRangeClocks !== undefined) {
+      const startKeys = new Set(clocksByTerminal[0]!.map(clockKey));
+      const endKeys = new Set(clocksByTerminal[1]!.map(clockKey));
+      return startKeys.size === 1
+        && endKeys.size === 1
+        && startKeys.has(clockKey(orderedRangeClocks[0]))
+        && endKeys.has(clockKey(orderedRangeClocks[1]))
+        ? undefined
+        : 'Model range plan did not apply the requested clocks to their ordered endpoints.';
+    }
     const target = requestedDiscordRangeEndpoint(originalText);
     if (target !== undefined) {
       const targetIndex = target === 'start' ? 0 : 1;
@@ -5112,6 +5123,22 @@ function discordReferenceClockSemanticsError(
   return undefined;
 }
 
+function requestedDiscordReferenceOrderedRangeClocks(
+  text: string,
+): [{ hour: number; minute: number }, { hour: number; minute: number }] | undefined {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const clock = String.raw`(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?`;
+  const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const anchoredRange = new RegExp(
+    String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?(${clock})\s*${separator}\s*(${clock})`,
+    'iu',
+  ).exec(text);
+  if (anchoredRange === null) return undefined;
+  const start = parsePlanClockText(anchoredRange[1] ?? '');
+  const end = parsePlanClockText(anchoredRange[2] ?? '');
+  return start.length === 1 && end.length === 1 ? [start[0]!, end[0]!] : undefined;
+}
+
 function discordReferenceHasSupportedClockRelationship(text: string): boolean {
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
   const clock = String.raw`(?:noon\b|midnight\b|\d{1,2}\s+o['\u2019]clock\b|\d{1,2}(?::|\.)\d{2}|\d{3,4}\b|\d{1,2}\s*[ap](?:\.?m\.?)?\b|(?:0?[1-9]|1[0-2])\b)`;
@@ -5122,7 +5149,9 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
   return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:(?:(?:the|that|same)\s+)?(?:day|date)\s+)?at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+${shift}\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+${reference}\s+(?:to|at)\s+${clock}`, 'iu').test(text)
-    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+(?:${reference}|it)\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+${reference}\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:set|change|move|make|use|keep)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s+(?:was|is)\s+at\s+${clock}\s*[,;:.!?-]\s*(?:(?:and\s+)?then\s+)?(?:set|change|move|make|use|keep)\s+it\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+${reference}\s+(?:for|on)\s+(?:the\s+)?same\s+(?:day|date)\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\bkeep\s+${reference}(?:['\u2019]s)?\s+(?:day|date)\s+and\s+use\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\b${clock}\s+(?:on|for|using)\s+(?:the\s+)?(?:same\s+)?(?:day|date)\s+(?:as|of)\s+${reference}`, 'iu').test(text)
@@ -5131,6 +5160,7 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
     || new RegExp(String.raw`\b(?:from|to|through|thru|until|til|till|between|and)\s+${reference}\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${reference}\s+${endpoint}\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\bbetween\s+(?:${reference}\s+and\s+${clock}|${clock}\s+and\s+${reference})`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?${clock}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${clock}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text)

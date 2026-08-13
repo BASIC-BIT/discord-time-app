@@ -228,6 +228,13 @@ async function main() {
   assert.equal(rejectedCopiedProseClock.status, 'failed');
   assert.equal(rejectedCopiedProseClock.epoch, undefined);
   assert.match(rejectedCopiedProseClock.validation.warnings.join(' '), /clock relationship could not be validated safely/);
+  const rejectedInterveningPronounClock = await executeModelReferenceClockComposition(
+    'I copied <t:1785643200:t> into a reminder, then set it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedInterveningPronounClock.status, 'failed');
+  assert.equal(rejectedInterveningPronounClock.epoch, undefined);
   const compactMeridiemClock = await executeModelReferenceClockComposition(
     'set <t:1785643200:t> to 5p',
     '<t:1785643200:t>',
@@ -455,6 +462,34 @@ async function main() {
   assert.equal(acceptedBeginClockRange.status, 'resolved', acceptedBeginClockRange.validation.warnings.join(' | '));
   assert.equal(acceptedBeginClockRange.range?.start.epoch, 1785704400);
   assert.equal(acceptedBeginClockRange.range?.end.epoch, 1785726000);
+  const anchoredTwoClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored two-clock range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredTwoClockRange = await executeTemporalPlanPlannerOutput(
+    anchoredTwoClockRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 3 pm to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredTwoClockRange.status,
+    'resolved',
+    acceptedAnchoredTwoClockRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredTwoClockRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredTwoClockRange.range?.end.epoch, 1785704400);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',
