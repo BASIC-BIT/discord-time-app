@@ -265,6 +265,13 @@ async function main() {
     '5 pm',
   );
   assert.equal(omittedExplicitUtcClock.status, 'failed');
+  const unresolvedPacificClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5 pm Pacific',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(unresolvedPacificClock.status, 'failed');
+  assert.match(unresolvedPacificClock.validation.warnings.join(' '), /timezone suffix could not be resolved safely/);
   const explicitUtcClockPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

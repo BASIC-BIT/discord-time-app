@@ -5000,6 +5000,10 @@ function discordReferencePlanSemanticsError(
     text: originalText,
     calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
   });
+  const hasExplicitTimeZoneSignal = classifyDiscordTimestampInput(originalText).signals.includes('timezone');
+  if (hasExplicitTimeZoneSignal && requestedTimeZoneResolution.status === 'not_found') {
+    return 'Discord-reference timezone suffix could not be resolved safely.';
+  }
   const requestedTimeZone = requestedTimeZoneResolution.status === 'resolved'
     ? requestedTimeZoneResolution.candidates[0]?.timeZone
     : undefined;

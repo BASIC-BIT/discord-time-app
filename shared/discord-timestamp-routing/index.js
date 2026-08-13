@@ -244,7 +244,9 @@ function aggregateContext(references) {
 
 function semanticSignals(text) {
   const signals = [];
-  const correctionText = text.replace(AFFIRMATIVE_CLOCK_CHANGE, " ");
+  const correctionText = text
+    .replace(AFFIRMATIVE_CLOCK_CHANGE, " ")
+    .replace(AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE, " ");
   if (NEGATION_OR_CORRECTION.test(correctionText)) signals.push("negation_or_correction");
   if (CONDITIONAL_OR_UNCERTAIN.test(text)) signals.push("conditional_or_uncertain");
   if (COMPARISON.test(text)) signals.push("comparison");
