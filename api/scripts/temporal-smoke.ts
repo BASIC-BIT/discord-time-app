@@ -671,6 +671,13 @@ async function main() {
   );
   assert.equal(rejectedTrailingMalformedFinishClockRange.status, 'failed');
   assert.match(rejectedTrailingMalformedFinishClockRange.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedReversedTrailingMalformedClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at 5 pm:99 and ends at <t:1785643200:t>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedReversedTrailingMalformedClockRange.status, 'failed');
+  assert.match(rejectedReversedTrailingMalformedClockRange.validation.warnings.join(' '), /malformed clock value/);
   const misplacedDualClockTimeZonePlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
@@ -1123,6 +1130,29 @@ async function main() {
   assert.equal(acceptedDualEndpointShift.status, 'resolved', acceptedDualEndpointShift.validation.warnings.join(' | '));
   assert.equal(acceptedDualEndpointShift.range?.start.epoch, 1785639600);
   assert.equal(acceptedDualEndpointShift.range?.end.epoch, 1785661200);
+  const dualEndpointAddPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independently added reference endpoint shifts',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785654000:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: 1 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 1, delta: { hours: 2 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedDualEndpointAdd = await executeTemporalPlanPlannerOutput(
+    dualEndpointAddPlan,
+    { text: '<t:1785643200:t> to <t:1785654000:t>; add one hour to the start; add two hours to the end', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedDualEndpointAdd.status, 'resolved', acceptedDualEndpointAdd.validation.warnings.join(' | '));
+  assert.equal(acceptedDualEndpointAdd.range?.start.epoch, 1785646800);
+  assert.equal(acceptedDualEndpointAdd.range?.end.epoch, 1785661200);
   for (const text of [
     '<t:1785643200:t> to <t:1785654000:t>; pull the end by one hour',
     '<t:1785643200:t> to <t:1785654000:t>; shorten the end by one hour',

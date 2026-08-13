@@ -5413,7 +5413,7 @@ function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' 
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  if (/\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+\d{1,2}\s*(?:[ap](?:\.?m\.?)?)?\s*[:.,]\s*\d+/iu.test(normalized)) {
+  if (/\b(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+\d{1,2}\s*(?:[ap](?:\.?m\.?)?)?\s*[:.,]\s*\d+/iu.test(normalized)) {
     return true;
   }
   const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\breference\s+(?:to|through|thru|until|til|till)\s+|\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+|\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+|\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+)`;
@@ -5516,6 +5516,17 @@ function requestedDiscordRangeEndpointShifts(text: string): Map<'start' | 'end',
     if (direction === undefined || result.has(target)) return new Map();
     const delta = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
     delta[discordShiftDeltaKey(match[4]!)] = direction * discordShiftAmount(match[3]!);
+    result.set(target, delta);
+  }
+  const addPattern = new RegExp(
+    String.raw`\badd\s+(${amount})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)(?:ing\s+point)?\b`,
+    'giu',
+  );
+  for (const match of text.matchAll(addPattern)) {
+    const target = match[3]!.toLowerCase() as 'start' | 'end';
+    if (result.has(target)) return new Map();
+    const delta = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+    delta[discordShiftDeltaKey(match[2]!)] = discordShiftAmount(match[1]!);
     result.set(target, delta);
   }
   return result;

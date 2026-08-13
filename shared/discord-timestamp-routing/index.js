@@ -29,6 +29,10 @@ const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
   String.raw`(?:\b(?:starts?|begins?)\s+at\s+${TIMESTAMP_SOURCE}\s+and(?:\s+then)?\s+(?:ends?|finishes?)\s+at\s+${CLOCK_SOURCE}|${TIMESTAMP_SOURCE}\s*(?:to|through|until)\s*${CLOCK_SOURCE})\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
   "i",
 );
+const AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE = new RegExp(
+  String.raw`^(?=[\s\S]*${TIMESTAMP_SOURCE}\s*(?:[-\u2013\u2014]|to\b|through\b|until\b)\s*${TIMESTAMP_SOURCE})[\s\S]*\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${CLOCK_SOURCE}\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
+  "i",
+);
 const AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK = new RegExp(
   String.raw`^\s*between\s+(?:${TIMESTAMP_SOURCE}\s+and\s+${CLOCK_SOURCE}|${CLOCK_SOURCE}\s+and\s+${TIMESTAMP_SOURCE})(?![\w:])\s*[.!]?\s*$`,
   "i",
@@ -106,7 +110,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
     if (signals.includes("scheduling")) {
       return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
     }
-    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text)) {
+    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text) && !AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE.test(text)) {
       return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
     }
     if (signals.includes("negation_or_correction")) {
@@ -144,7 +148,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
   if (signals.includes("scheduling")) {
     return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
   }
-  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text)) {
+  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text) && !AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE.test(text)) {
     return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
   }
   if (signals.includes("negation_or_correction")) {
