@@ -5127,7 +5127,7 @@ function requestedDiscordReferenceOrderedRangeClocks(
   text: string,
 ): [{ hour: number; minute: number }, { hour: number; minute: number }] | undefined {
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
-  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d)`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)`;
   const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const anchoredRange = new RegExp(
     String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?(${clock})\s*${separator}\s*(${clock})`,
@@ -5246,9 +5246,9 @@ function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; mi
   }
   if (/\bmidnight\b/iu.test(text)) clocks.push({ hour: 0, minute: 0 });
   if (/\bnoon\b/iu.test(text)) clocks.push({ hour: 12, minute: 0 });
-  for (const match of text.matchAll(/(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)) {
+  for (const match of text.matchAll(/(?<![\d:.])([01]?\d|2[0-3])([:.])([0-5]\d)(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)) {
     const hour = Number(match[1]);
-    if (hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[2]) });
+    if (match[2] === '.' || hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[3]) });
   }
   return clocks;
 }
@@ -5289,7 +5289,7 @@ function parsePlanClockText(text: string): Array<{ hour: number; minute: number 
   if (explicit.length > 0) return explicit;
   if (/^\s*midnight\s*$/iu.test(text)) return [{ hour: 0, minute: 0 }];
   if (/^\s*noon\s*$/iu.test(text)) return [{ hour: 12, minute: 0 }];
-  const twentyFourHour = /^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$/u.exec(text);
+  const twentyFourHour = /^\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*$/u.exec(text);
   return twentyFourHour === null
     ? []
     : [{ hour: Number(twentyFourHour[1]), minute: Number(twentyFourHour[2]) }];
@@ -5395,9 +5395,11 @@ function expectedDiscordReferenceShift(
 
   if (!matchedShift) {
     if (/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue)) {
+      if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
       result.days = -1;
       matchedShift = true;
     } else if (/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue)) {
+      if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
       result.days = 1;
       matchedShift = true;
     }
@@ -5425,6 +5427,15 @@ function discordReferenceHasSupportedRelativeDayRelationship(text: string): bool
     || new RegExp(String.raw`\b${relativeDay}\s+(?:from|after|before|relative\s+to)\s+${reference}`, 'iu').test(text)
     || new RegExp(String.raw`\b${command}\s+${reference}(?!\w)\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text)
     || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?${command}\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text);
+}
+
+function discordReferenceHasSupportedCalendarDayRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const relativeDay = String.raw`(?:(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)|(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next))`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)[^,;.!?]*\b${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b${relativeDay}(?:\s+(?:after|before|relative\s+to|from))?\s+${reference}(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:make|set|change|move|shift|use|keep)\s+${reference}(?!\w)[^,;.!?]*\b${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:use|using|take)\s+(?:the\s+)?${relativeDay}(?:\s+(?:after|before|relative\s+to|from))?\s+${reference}(?!\w)`, 'iu').test(text);
 }
 
 function discordReferenceHasSupportedDurationRelationship(text: string): boolean {
