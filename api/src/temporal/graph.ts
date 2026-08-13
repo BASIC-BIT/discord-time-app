@@ -51,7 +51,7 @@ const CalendarContextSchema = z.object({
 const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TOP_LEVEL_NEXT_WEEKDAY_PATTERN = new RegExp(`^\\s*next\\s+(?:${PLAN_WEEKDAYS.join('|')})(?:\\b[\\s\\S]*)?$`, 'i');
 const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?\b/i;
-const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*([ap])\.?m(?:\.(?!\w)|(?![\w.]))/gi;
+const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*([ap])(?:\.?m\.?)?(?![\w.])/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
@@ -586,7 +586,7 @@ export async function executeTemporalPlanPlannerOutput(
   planResult = groundBareClockPlanClarification(planResult, request.text);
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
 
-  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
+  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans, request.text);
   if (clockChoiceContractError !== undefined) {
     const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 0);
     attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
@@ -1427,7 +1427,7 @@ async function runPlanIrPath(
   }
 
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
-  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans);
+  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans, request.text);
   if (clockChoiceContractError !== undefined) {
     const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
     attachPlanDebug(response);
@@ -4769,6 +4769,7 @@ function candidateHasExactClock(candidate: Candidate, clock: { hour: number; min
 function temporalClockChoiceContractError(
   planResult: TemporalPlanPlannerOutput,
   plans: TemporalPlan[],
+  originalText: string,
 ): string | undefined {
   const choiceSteps = plans.flatMap((plan) => plan.steps
     .map((step, stepIndex) => ({ plan, step, stepIndex }))
@@ -4793,6 +4794,14 @@ function temporalClockChoiceContractError(
   const texts = new Set(step.options!.map((option) => option.text.trim().toLocaleLowerCase('en-US')));
   if (labels.size !== step.options!.length || texts.size !== step.options!.length) {
     return 'Clock option labels and texts must be unique.';
+  }
+  const requestedClockKeys = new Set(requestedDiscordReferenceClocks(originalText).map(clockKey));
+  const optionClockKeys = new Set(step.options!.flatMap((option) => parsePlanClockText(option.text).map(clockKey)));
+  if (
+    requestedClockKeys.size === 0
+    || [...optionClockKeys].some((key) => !requestedClockKeys.has(key))
+  ) {
+    return 'Clock options must match the clocks requested in the user input.';
   }
   const terminalIndexes = isTimeRangePlan(plan)
     ? [plan.startStep, plan.endStep].filter((index): index is number => index !== null)
@@ -5119,7 +5128,7 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
     || new RegExp(String.raw`\bat\s+${clock}[\s,;:\-]+(?:use|using)\s+(?:the\s+)?(?:same\s+(?:day|date)\s+(?:as|of)|(?:(?:following|next|previous|prior|preceding)\s+)?(?:day|date)(?:\s+(?:after|before|following|preceding))?)\s+${reference}`, 'iu').test(text)
     || new RegExp(String.raw`\b${clock}[\s,;:\-]+on\s+(?:the\s+)?(?:day|date)\s+(?:after|before|following|preceding)\s+${reference}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:from|to|through|thru|until|til|till|between|and)\s+${reference}\s+at\s+${clock}`, 'iu').test(text)
-    || new RegExp(String.raw`${reference}\s+(?:end(?:s|ing)?|start(?:s|ing)?)\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}\s+${endpoint}\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\bbetween\s+(?:${reference}\s+and\s+${clock}|${clock}\s+and\s+${reference})`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
@@ -5189,6 +5198,11 @@ function discordReferenceHasMalformedClockSetter(text: string): boolean {
 
 function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {
   const clocks: Array<{ hour: number; minute: number }> = explicitAmPmClockMentions(text).map(({ time }) => time);
+  for (const match of text.matchAll(/\b(?:either\s+)?(0?[1-9]|1[0-2])(?::([0-5]\d))?\s+(?:or|\/)\s+(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*([ap])(?:\.?m\.?)?(?![\w.])/giu)) {
+    let hour = Number(match[1]) % 12;
+    if (match[3]!.toLowerCase() === 'p') hour += 12;
+    clocks.push({ hour, minute: Number(match[2] ?? 0) });
+  }
   for (const mention of ambiguousBareClockMentions(text)) {
     clocks.push(
       { hour: mention.hour % 12, minute: mention.minute },

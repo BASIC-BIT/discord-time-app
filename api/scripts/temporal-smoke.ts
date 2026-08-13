@@ -227,6 +227,20 @@ async function main() {
   assert.equal(rejectedCopiedProseClock.status, 'failed');
   assert.equal(rejectedCopiedProseClock.epoch, undefined);
   assert.match(rejectedCopiedProseClock.validation.warnings.join(' '), /clock relationship could not be validated safely/);
+  const compactMeridiemClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5p',
+    '<t:1785643200:t>',
+    '5p',
+  );
+  assert.equal(compactMeridiemClock.status, 'resolved', compactMeridiemClock.validation.warnings.join(' | '));
+  assert.equal(compactMeridiemClock.epoch, 1785704400);
+  const rejectedMixedMeridiemAlternative = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 3 or 4 pm',
+    '<t:1785643200:t>',
+    '4 pm',
+  );
+  assert.equal(rejectedMixedMeridiemAlternative.status, 'failed');
+  assert.equal(rejectedMixedMeridiemAlternative.epoch, undefined);
   const rejectedCopiedProseRelativeDay = await executeModelReferenceShift(
     'I will copy <t:1785643200:t> tomorrow',
     '<t:1785643200:t>',
@@ -408,6 +422,16 @@ async function main() {
   assert.equal(acceptedFinishClockRange.status, 'resolved');
   assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
   assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
+  const acceptedReferenceLeadingFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: '<t:1785643200:t> finishes at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedReferenceLeadingFinishClockRange.status,
+    'resolved',
+    acceptedReferenceLeadingFinishClockRange.validation.warnings.join(' | '),
+  );
   const beginClockRangePlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
@@ -770,6 +794,31 @@ async function main() {
     groundedClockChoiceTexts.clarificationAlternatives?.map((alternative) => alternative.epoch),
     [1785650400, 1785693600],
   );
+
+  const ungroundedExplicitClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which time did you mean?',
+    plans: [{
+      label: 'Hallucinated explicit clock choices',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '8 AM', text: '8 am' },
+          { label: '4 PM', text: '4 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUngroundedExplicitClockChoices = await executeTemporalPlanPlannerOutput(
+    ungroundedExplicitClockChoices,
+    { text: 'tomorrow at either 9 am or 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUngroundedExplicitClockChoices.status, 'failed');
+  assert.equal(rejectedUngroundedExplicitClockChoices.clarificationAlternatives, undefined);
+  assert.match(rejectedUngroundedExplicitClockChoices.validation.warnings.join(' '), /must match the clocks requested/);
 
   const hallucinatedTwoPlanClockChoice = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
@@ -1607,7 +1656,7 @@ async function main() {
   );
   assert.equal(rejectedCompactUnrequestedClock.status, 'failed');
   assert.equal(rejectedCompactUnrequestedClock.epoch, undefined);
-  assert.match(rejectedCompactUnrequestedClock.validation.warnings.join(' '), /clock operand.*validated safely/);
+  assert.match(rejectedCompactUnrequestedClock.validation.warnings.join(' '), /clock change.*not requested/);
 
   const wrongRangeClockEndpoint = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
