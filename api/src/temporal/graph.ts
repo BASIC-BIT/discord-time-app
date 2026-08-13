@@ -3266,6 +3266,10 @@ async function runAmbiguityPolicy(
   implementations: TemporalToolImplementations,
   features?: TemporalFeatureFlags,
 ): Promise<AmbiguityPolicyResult | null> {
+  const ambiguousRange = ambiguousBareClockRangePolicy(request.text);
+  if (ambiguousRange !== null) {
+    return ambiguousRange;
+  }
   const bareClock = await bareMeridiemClockAmbiguityPolicy(request, implementations, features);
   if (bareClock !== null) {
     return bareClock;
@@ -3276,6 +3280,18 @@ async function runAmbiguityPolicy(
     return multiClock;
   }
   return null;
+}
+
+function ambiguousBareClockRangePolicy(text: string): AmbiguityPolicyResult | null {
+  const mentions = ambiguousBareClockMentions(text);
+  if (mentions.length < 2 || (parseExplicitDatedTimeRangeParts(text) === null && parseExplicitBareTimeRangeParts(text) === null)) {
+    return null;
+  }
+  return {
+    name: 'ambiguous_bare_clock_range',
+    question: 'Please specify AM or PM for each range endpoint.',
+    alternatives: [],
+  };
 }
 
 function planCandidateLineage(output: PlanCandidateOutput): string[] {
@@ -5111,6 +5127,14 @@ function discordReferenceClockSemanticsError(
           return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
         }
       }
+      for (const target of ['start', 'end'] as const) {
+        if (!ownedEndpointClocks.has(target)) {
+          const targetIndex = target === 'start' ? 0 : 1;
+          if (clocksByTerminal[targetIndex]!.length > 0) {
+            return `Model range plan applied a clock to the unrequested ${target} endpoint.`;
+          }
+        }
+      }
       return undefined;
     }
     const target = requestedDiscordRangeClockEndpoint(originalText);
@@ -5225,7 +5249,7 @@ function requestedDiscordOwnedEndpointClocks(
 ): Map<'start' | 'end', Array<{ hour: number; minute: number }>> {
   const owned = new Map<'start' | 'end', Array<{ hour: number; minute: number }>>();
   const reference = /<t:\d+(?::[tTdDfFR])?>/iu;
-  for (const clause of text.split(/[;.!?]+/u)) {
+  for (const clause of discordReferenceEndpointClockClauses(text)) {
     const target = requestedDiscordRangeClockEndpoint(clause);
     if (target === undefined) continue;
     const explicitEndpointSetter = /\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\b/iu.test(clause);
@@ -5240,7 +5264,7 @@ function requestedDiscordOwnedEndpointClocks(
 
 function discordReferenceOwnedEndpointClockMentionCount(text: string): number {
   const reference = /<t:\d+(?::[tTdDfFR])?>/iu;
-  return text.split(/[;.!?]+/u).reduce((count, clause) => {
+  return discordReferenceEndpointClockClauses(text).reduce((count, clause) => {
     if (requestedDiscordRangeClockEndpoint(clause) === undefined) return count;
     const explicitEndpointSetter = /\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\b/iu.test(clause);
     const referenceLinkedRange = reference.test(clause) && discordReferenceHasSupportedClockRelationship(clause);
@@ -5248,6 +5272,10 @@ function discordReferenceOwnedEndpointClockMentionCount(text: string): number {
       ? count + discordReferenceClockMentionCount(clause)
       : count;
   }, 0);
+}
+
+function discordReferenceEndpointClockClauses(text: string): string[] {
+  return text.split(/[;.!?]+|\band\s+(?=(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)\b)/iu);
 }
 
 function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' | undefined {
@@ -5281,7 +5309,7 @@ function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' 
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+)`;
+  const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+|\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+)`;
   const setterClock = new RegExp(
     String.raw`${setter}(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',

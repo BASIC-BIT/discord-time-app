@@ -185,6 +185,9 @@ async function main() {
   assert.equal(epochZeroWithPreflightDisabled.epoch, 0);
   assert.equal(epochZeroWithPreflightDisabled.method, 'deterministic');
   assert.equal(epochZeroWithPreflightDisabled.debug?.shortCircuitReason, 'deterministic_resolved_validation_passed');
+  const ambiguousDottedRange = await parse('tomorrow 3.30-4.30');
+  assert.equal(ambiguousDottedRange.status, 'needs_clarification');
+  assert.match(ambiguousDottedRange.clarificationQuestion ?? '', /AM or PM/i);
   const referencePromptInput = JSON.parse(formatEndpointInputJson({
     text: '<t:1785643200:t> 1 hour later',
     referenceInstant,
@@ -693,6 +696,46 @@ async function main() {
     'resolved',
     acceptedTwoEndpointClockSetters.validation.warnings.join(' | '),
   );
+  const acceptedConjoinedEndpointClockSetters = await executeTemporalPlanPlannerOutput(
+    twoEndpointClockSettersPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm and set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedConjoinedEndpointClockSetters.status,
+    'resolved',
+    acceptedConjoinedEndpointClockSetters.validation.warnings.join(' | '),
+  );
+  const copiedClockToUnownedEndPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Incorrectly copied start clock onto end',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 1, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedCopiedClockToUnownedEnd = await executeTemporalPlanPlannerOutput(
+    copiedClockToUnownedEndPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedCopiedClockToUnownedEnd.status, 'failed');
+  assert.equal(rejectedCopiedClockToUnownedEnd.range, undefined);
+  const malformedEndpointSetterRange = await executeTemporalPlanPlannerOutput(
+    independentClockSetterAndArithmeticPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 25:00; move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(malformedEndpointSetterRange.status, 'failed');
+  assert.equal(malformedEndpointSetterRange.range, undefined);
+  assert.match(malformedEndpointSetterRange.validation.warnings.join(' '), /malformed clock value/);
   const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },
