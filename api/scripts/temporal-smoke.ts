@@ -298,6 +298,17 @@ async function main() {
   );
   assert.equal(compactMinuteMeridiemClock.status, 'resolved', compactMinuteMeridiemClock.validation.warnings.join(' | '));
   assert.equal(compactMinuteMeridiemClock.epoch, 1785706200);
+  const dottedCompactMinuteMeridiemClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5.30p',
+    '<t:1785643200:t>',
+    '5.30p',
+  );
+  assert.equal(
+    dottedCompactMinuteMeridiemClock.status,
+    'resolved',
+    dottedCompactMinuteMeridiemClock.validation.warnings.join(' | '),
+  );
+  assert.equal(dottedCompactMinuteMeridiemClock.epoch, 1785706200);
   const rejectedUnrelatedDurationCommand = await executeModelReferenceShift(
     'I copied <t:1785643200:t>, then set the table one hour later',
     '<t:1785643200:t>',
@@ -553,6 +564,18 @@ async function main() {
   );
   assert.equal(acceptedAnchoredTwentyFourHourRange.range?.start.epoch, 1785697200);
   assert.equal(acceptedAnchoredTwentyFourHourRange.range?.end.epoch, 1785704400);
+  const acceptedAnchoredDottedRange = await executeTemporalPlanPlannerOutput(
+    anchoredTwentyFourHourRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 15.00 to 17.00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredDottedRange.status,
+    'resolved',
+    acceptedAnchoredDottedRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredDottedRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredDottedRange.range?.end.epoch, 1785704400);
   const anchoredNamedClockRangePlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

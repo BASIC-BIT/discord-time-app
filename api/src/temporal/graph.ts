@@ -51,7 +51,7 @@ const CalendarContextSchema = z.object({
 const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TOP_LEVEL_NEXT_WEEKDAY_PATTERN = new RegExp(`^\\s*next\\s+(?:${PLAN_WEEKDAYS.join('|')})(?:\\b[\\s\\S]*)?$`, 'i');
 const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?\b/i;
-const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*([ap])(?:\.?m\.?)?(?![\w.])/gi;
+const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?:[:.]([0-5]\d))?\s*([ap])(?:\.?m\.?)?(?![\w.])/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
@@ -59,7 +59,7 @@ const DISCORD_SHIFT_DIRECTION_SOURCE = String.raw`(?:later|after|afetr|ltaer|lat
 const AMBIGUOUS_BOUNDED_BARE_HOUR_PATTERN = /\b(0?[1-9]|1[0-2])\b(?=\s*,?\s*(?:keeping\s+the\s+same\s+calendar\s+day|on\s+(?:the\s+)?(?:following|previous|prior|next)\s+day))/gi;
 const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'] as const;
 const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
-const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
+const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
 const EXPLICIT_DATED_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<dateText>.+?)\s+(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
 const EXPLICIT_BARE_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
 const EXPLICIT_RANGE_DATE_SIGNAL_PATTERN = new RegExp(String.raw`\b(?:${MONTH_DATE_QUERY_PATTERN.source}|\d{4}-\d{2}-\d{2}|today|tomorrow|tonight|(?:${PLAN_WEEKDAYS.join('|')}))\b`, 'i');
@@ -3857,7 +3857,7 @@ function discordReferenceCandidateIsGrounded(
 function discordReferenceRequestsRange(text: string, reference: string): boolean {
   let residue = text.replace(reference, ' ');
   const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
-  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   residue = residue
@@ -5127,7 +5127,7 @@ function requestedDiscordReferenceOrderedRangeClocks(
   text: string,
 ): [{ hour: number; minute: number }, { hour: number; minute: number }] | undefined {
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
-  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d|noon|midnight)`;
   const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const anchoredRange = new RegExp(
     String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?(${clock})\s*${separator}\s*(${clock})`,
@@ -5171,7 +5171,7 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
   const targets = new Set<'start' | 'end'>();
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
-  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
   const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
@@ -5213,7 +5213,7 @@ function discordReferenceHasMalformedClockSetter(text: string): boolean {
     const dottedBareClock = /^(\d{1,2})\.(\d{2})$/u.exec(token);
     const validDottedBareClock = dottedBareClock !== null
       && parsePlanClockText(`${dottedBareClock[1]}:${dottedBareClock[2]}`).length > 0;
-    const validConventionalClock = /^(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d)$/iu.test(token);
+    const validConventionalClock = /^(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d)$/iu.test(token);
     const validCompactClock = /^(?:0?[1-9]|1[0-2])[0-5]\d$/u.test(token);
     if (
       !validDottedBareClock
@@ -5246,7 +5246,7 @@ function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; mi
   }
   if (/\bmidnight\b/iu.test(text)) clocks.push({ hour: 0, minute: 0 });
   if (/\bnoon\b/iu.test(text)) clocks.push({ hour: 12, minute: 0 });
-  for (const match of text.matchAll(/(?<![\d:.])([01]?\d|2[0-3])([:.])([0-5]\d)(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)) {
+  for (const match of text.matchAll(/(?<![\d:.])([01]?\d|2[0-3])([:.])([0-5]\d)(?!\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?)\b)/giu)) {
     const hour = Number(match[1]);
     if (match[2] === '.' || hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[3]) });
   }
