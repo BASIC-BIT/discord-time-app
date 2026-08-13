@@ -24,6 +24,10 @@ const AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE = new RegExp(
   String.raw`\b(?:set|change|move|make|use|keep)\s+(?:(?:the\s+)?time\s+of\s+)?${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}\s+(?:utc|gmt|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+|[+-]\d{2}:\d{2})\b`,
   "i",
 );
+const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
+  String.raw`(?:\b(?:starts?|begins?)\s+at\s+${TIMESTAMP_SOURCE}\s+and(?:\s+then)?\s+(?:ends?|finishes?)\s+at\s+${CLOCK_SOURCE}|${TIMESTAMP_SOURCE}\s*(?:to|through|until)\s*${CLOCK_SOURCE})\s+(?:utc|gmt|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+|[+-]\d{2}:\d{2})\b`,
+  "i",
+);
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;
 const CONDITIONAL_OR_UNCERTAIN = /\b(?:if|unless|maybe|perhaps|possibly|probably|tentative|tbd|unknown|unsure|might|could|would)\b|\?/i;
 const COMPARISON = /\b(?:compare|versus|vs\.?|difference|between|earlier\s+of|later\s+of|which\s+(?:is\s+)?(?:first|earlier|later))\b/i;
@@ -97,7 +101,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
     if (signals.includes("scheduling")) {
       return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
     }
-    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !REFERENCE_RELATIONSHIP.test(text)) {
+    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text)) {
       return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
     }
     if (signals.includes("negation_or_correction")) {
@@ -135,7 +139,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
   if (signals.includes("scheduling")) {
     return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
   }
-  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !REFERENCE_RELATIONSHIP.test(text)) {
+  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text)) {
     return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
   }
   if (signals.includes("negation_or_correction")) {

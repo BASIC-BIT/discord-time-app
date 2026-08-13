@@ -121,6 +121,10 @@ test('fails closed for unsupported relationships and ambiguous contexts', () => 
     'multiple_timestamps_without_relationship',
   );
   assert.equal(classify('Show <t:1785643200:t> in Pacific time').reason, 'unsupported_timezone_presentation');
+  assert.equal(
+    classify('starts at <t:1785643200:t> and ends at 5 pm; add the literal label UTC').reason,
+    'unsupported_timezone_presentation',
+  );
   assert.equal(classify('Schedule <t:1785643200:t> on my calendar').reason, 'unsupported_scheduling');
   assert.equal(classify('`note <t:1785643200:t>`').reason, 'ambiguous_code_or_url_context');
   assert.equal(classify('```\nnote <t:1785643200:t>\n```').reason, 'ambiguous_code_or_url_context');

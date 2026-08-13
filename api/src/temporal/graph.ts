@@ -53,7 +53,7 @@ const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|satu
 const TOP_LEVEL_NEXT_WEEKDAY_PATTERN = new RegExp(`^\\s*next\\s+(?:${PLAN_WEEKDAYS.join('|')})(?:\\b[\\s\\S]*)?$`, 'i');
 const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?\b/i;
 const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?:[:.]([0-5]\d))?\s*([ap])(?:\.?m\.?)?(?![\w.])/gi;
-const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.+-])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
+const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
 const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
 const DISCORD_SHIFT_DIRECTION_SOURCE = String.raw`(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
@@ -3533,7 +3533,8 @@ async function bareMeridiemClockAmbiguityPolicy(
 
 function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
   const mentions: AmbiguousBareClockMention[] = [];
-  for (const match of text.matchAll(AMBIGUOUS_BARE_COLON_CLOCK_PATTERN)) {
+  const clockText = text.replace(/(?:\b(?:utc|gmt)\s*)?[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
+  for (const match of clockText.matchAll(AMBIGUOUS_BARE_COLON_CLOCK_PATTERN)) {
     const hour = Number(match[1]);
     const minute = Number(match[2]);
     if (match.index !== undefined) {
