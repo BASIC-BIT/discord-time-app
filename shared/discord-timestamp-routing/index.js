@@ -30,7 +30,7 @@ const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
   "i",
 );
 const AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK = new RegExp(
-  String.raw`\bbetween\s+(?:${TIMESTAMP_SOURCE}\s+and\s+${CLOCK_SOURCE}|${CLOCK_SOURCE}\s+and\s+${TIMESTAMP_SOURCE})(?![\w:])`,
+  String.raw`^\s*between\s+(?:${TIMESTAMP_SOURCE}\s+and\s+${CLOCK_SOURCE}|${CLOCK_SOURCE}\s+and\s+${TIMESTAMP_SOURCE})(?![\w:])\s*[.!]?\s*$`,
   "i",
 );
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;

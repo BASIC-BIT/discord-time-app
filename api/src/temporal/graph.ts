@@ -4992,7 +4992,11 @@ function discordReferencePlanSemanticsError(
   if (!requestsRange && returnsRange) {
     return 'Model plan returned a range for a singular Discord-reference request.';
   }
-  const expectedDelta = expectedDiscordReferenceShift(originalText, references);
+  const extractedEndpointShifts = isTimeRangePlan(plan) ? requestedDiscordRangeEndpointShifts(originalText) : new Map();
+  const requestedEndpointShifts = extractedEndpointShifts.size > 1 ? extractedEndpointShifts : new Map();
+  const expectedDelta = requestedEndpointShifts.size > 0
+    ? Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>
+    : expectedDiscordReferenceShift(originalText, references);
   if (expectedDelta === undefined) {
     return 'Model plan used surrounding Discord-reference shift language that could not be validated safely.';
   }
@@ -5044,6 +5048,13 @@ function discordReferencePlanSemanticsError(
   ) {
     return `Model range plan omitted the explicit timezone from the ${ownedClockEndpoint} clock endpoint.`;
   }
+  if (isTimeRangePlan(plan)) {
+    for (const [endpoint, timeZone] of requestedDiscordOwnedEndpointTimeZones(originalText, requestTimeZone)) {
+      if (!terminalTimeZonesByTerminal[endpoint === 'start' ? 0 : 1]!.some((candidate) => candidate.toLowerCase() === timeZone.toLowerCase())) {
+        return `Model range plan omitted the explicit timezone from the ${endpoint} clock endpoint.`;
+      }
+    }
+  }
   for (const { step } of terminalSteps) {
     const allowedTimeZone = requestedTimeZone ?? requestTimeZone;
     if (step.timeZone !== null && step.timeZone.toLowerCase() !== allowedTimeZone.toLowerCase()) {
@@ -5065,7 +5076,15 @@ function discordReferencePlanSemanticsError(
   const arithmeticShiftSteps = shiftSteps.filter(({ step }) =>
     DISCORD_SHIFT_DELTA_KEYS.some((key) => (step.delta[key] ?? 0) !== 0),
   );
-  const rangeTargetError = discordReferenceRangeShiftTargetError(plan, terminalDependencies, arithmeticShiftSteps, originalText);
+  const endpointShiftError = requestedEndpointShifts.size > 0
+    ? discordReferenceEndpointShiftsError(terminalDependencies, arithmeticShiftSteps, requestedEndpointShifts)
+    : undefined;
+  if (endpointShiftError !== undefined) {
+    return endpointShiftError;
+  }
+  const rangeTargetError = requestedEndpointShifts.size === 0
+    ? discordReferenceRangeShiftTargetError(plan, terminalDependencies, arithmeticShiftSteps, originalText)
+    : undefined;
   if (rangeTargetError !== undefined) {
     return rangeTargetError;
   }
@@ -5074,6 +5093,9 @@ function discordReferencePlanSemanticsError(
     return clockSemanticsError;
   }
   const expectedIsZero = DISCORD_SHIFT_DELTA_KEYS.every((key) => expectedDelta[key] === 0);
+  if (requestedEndpointShifts.size > 0) {
+    return undefined;
+  }
   if (!expectedIsZero && arithmeticShiftSteps.length !== 1) {
     return 'Model plan shift structure did not match the requested Discord-reference transformation.';
   }
@@ -5114,6 +5136,31 @@ function discordReferenceRangeShiftTargetError(
   return targetHasShift && !otherHasShift
     ? undefined
     : `Model range plan did not apply the requested shift to the ${target} endpoint only.`;
+}
+
+function discordReferenceEndpointShiftsError(
+  terminalDependencies: Set<number>[],
+  shiftSteps: Array<{ step: TemporalPlanStep; index: number }>,
+  requested: Map<'start' | 'end', Record<DiscordShiftDeltaKey, number>>,
+): string | undefined {
+  const shiftIndexes = new Set(shiftSteps.map(({ index }) => index));
+  for (const target of ['start', 'end'] as const) {
+    const targetSteps = shiftSteps.filter(({ index }) => terminalDependencies[target === 'start' ? 0 : 1]!.has(index));
+    const expected = requested.get(target);
+    if (expected === undefined) {
+      if (targetSteps.length > 0) return `Model range plan applied an unrequested shift to the ${target} endpoint.`;
+      continue;
+    }
+    const actual = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [
+      key,
+      targetSteps.reduce((sum, { step }) => sum + (step.operation === 'shift_datetime' ? (step.delta[key] ?? 0) : 0), 0),
+    ])) as Record<DiscordShiftDeltaKey, number>;
+    if (targetSteps.length === 0 || DISCORD_SHIFT_DELTA_KEYS.some((key) => actual[key] !== expected[key])) {
+      return `Model range plan did not apply the requested shift to the ${target} endpoint.`;
+    }
+  }
+  const used = new Set(terminalDependencies.flatMap((dependencies) => [...dependencies]).filter((index) => shiftIndexes.has(index)));
+  return used.size === shiftSteps.length ? undefined : 'Model range plan used a shift outside the requested endpoints.';
 }
 
 function discordReferenceClockSemanticsError(
@@ -5366,6 +5413,9 @@ function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' 
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
+  if (/\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+\d{1,2}\s*(?:[ap](?:\.?m\.?)?)?\s*[:.,]\s*\d+/iu.test(normalized)) {
+    return true;
+  }
   const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\breference\s+(?:to|through|thru|until|til|till)\s+|\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+|\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+|\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+)`;
   const setterClock = new RegExp(
     String.raw`${setter}(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
@@ -5423,6 +5473,52 @@ function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; mi
 
 function maskRecognizedFixedOffsetText(text: string): string {
   return text.replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
+}
+
+function requestedDiscordOwnedEndpointTimeZones(text: string, requestTimeZone: string): Map<'start' | 'end', string> {
+  const result = new Map<'start' | 'end', string>();
+  for (const clause of discordReferenceEndpointClockClauses(text)) {
+    const target = requestedDiscordRangeClockEndpoint(clause);
+    if (target === undefined) continue;
+    const resolution = resolveTimeZone({
+      text: clause,
+      calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+    });
+    const timeZone = resolution.status === 'resolved' ? resolution.candidates[0]?.timeZone : undefined;
+    if (timeZone !== undefined) result.set(target, timeZone);
+  }
+  return result;
+}
+
+function requestedDiscordRangeEndpointShifts(text: string): Map<'start' | 'end', Record<DiscordShiftDeltaKey, number>> {
+  const result = new Map<'start' | 'end', Record<DiscordShiftDeltaKey, number>>();
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const pattern = new RegExp(
+    String.raw`\b(move|shift|push|pull|extend|shorten)\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s*(?:by\s+)?(${amount})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)(?:\s+(${DISCORD_SHIFT_DIRECTION_SOURCE}))?\b`,
+    'giu',
+  );
+  for (const match of text.matchAll(pattern)) {
+    const verb = match[1]!.toLowerCase();
+    const target = match[2]!.toLowerCase() as 'start' | 'end';
+    const explicitDirection = match[5];
+    let direction: number | undefined;
+    if (explicitDirection !== undefined) {
+      direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(explicitDirection) ? 1 : -1;
+    } else if (verb === 'push') {
+      direction = 1;
+    } else if (verb === 'pull') {
+      direction = -1;
+    } else if (verb === 'extend') {
+      direction = target === 'start' ? -1 : 1;
+    } else if (verb === 'shorten') {
+      direction = target === 'start' ? 1 : -1;
+    }
+    if (direction === undefined || result.has(target)) return new Map();
+    const delta = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+    delta[discordShiftDeltaKey(match[4]!)] = direction * discordShiftAmount(match[3]!);
+    result.set(target, delta);
+  }
+  return result;
 }
 
 function consumedPlanStepClocks(
@@ -5520,6 +5616,12 @@ function expectedDiscordReferenceShift(
   }
   for (const match of residue.matchAll(new RegExp(String.raw`\bpush\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
     recordShift(match, 1, 2, 1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bpull\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 1, 2, -1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bshorten\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 2, 3, match[1]!.toLowerCase() === 'start' ? 1 : -1);
   }
   for (const match of residue.matchAll(new RegExp(String.raw`\badd\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(?:start|end)\b`, 'giu'))) {
     recordShift(match, 1, 2, 1);

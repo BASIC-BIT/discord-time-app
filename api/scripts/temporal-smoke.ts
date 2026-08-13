@@ -664,6 +664,38 @@ async function main() {
   );
   assert.equal(rejectedMalformedConjoinedFinishClockRange.status, 'failed');
   assert.match(rejectedMalformedConjoinedFinishClockRange.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedTrailingMalformedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm:99', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedTrailingMalformedFinishClockRange.status, 'failed');
+  assert.match(rejectedTrailingMalformedFinishClockRange.validation.warnings.join(' '), /malformed clock value/);
+  const misplacedDualClockTimeZonePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Timezone attached only to the wrong changed endpoint',
+      startStep: 3,
+      endStep: 6,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785654000:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '6 pm' },
+        { op: 'combine_date_time', baseStep: 4, timeStep: 5, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMisplacedDualClockTimeZone = await executeTemporalPlanPlannerOutput(
+    misplacedDualClockTimeZonePlan,
+    { text: '<t:1785643200:t> to <t:1785654000:t>; set the start to 5 pm UTC; set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMisplacedDualClockTimeZone.status, 'failed');
+  assert.equal(rejectedMisplacedDualClockTimeZone.range, undefined);
   const acceptedConjoinedFinishClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'starts at <t:1785643200:t> and ends at 5 pm', calendarContext },
@@ -1068,6 +1100,43 @@ async function main() {
   );
   assert.equal(acceptedClockThenArithmeticRange.range?.start.epoch, 1785643200);
   assert.equal(acceptedClockThenArithmeticRange.range?.end.epoch, 1785790800);
+  const dualEndpointShiftPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independently shifted reference endpoints',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785654000:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: -1 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 1, delta: { hours: 2 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedDualEndpointShift = await executeTemporalPlanPlannerOutput(
+    dualEndpointShiftPlan,
+    { text: '<t:1785643200:t> to <t:1785654000:t>; move the start one hour earlier; move the end two hours later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedDualEndpointShift.status, 'resolved', acceptedDualEndpointShift.validation.warnings.join(' | '));
+  assert.equal(acceptedDualEndpointShift.range?.start.epoch, 1785639600);
+  assert.equal(acceptedDualEndpointShift.range?.end.epoch, 1785661200);
+  for (const text of [
+    '<t:1785643200:t> to <t:1785654000:t>; pull the end by one hour',
+    '<t:1785643200:t> to <t:1785654000:t>; shorten the end by one hour',
+  ]) {
+    const acceptedImpliedEndShift = await executeModelReferenceRangeShift(
+      text,
+      '<t:1785643200:t>',
+      '<t:1785654000:t>',
+      'end',
+      { hours: -1 },
+    );
+    assert.equal(acceptedImpliedEndShift.status, 'resolved', `${text}: ${acceptedImpliedEndShift.validation.warnings.join(' | ')}`);
+    assert.equal(acceptedImpliedEndShift.range?.end.epoch, 1785650400);
+  }
   const anchoredTwentyFourHourRangePlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{
