@@ -5031,7 +5031,7 @@ function discordReferenceRangeShiftTargetError(
   if (!isTimeRangePlan(plan) || terminalDependencies.length !== 2 || shiftSteps.length === 0) {
     return undefined;
   }
-  const target = requestedDiscordRangeEndpoint(originalText);
+  const target = requestedDiscordRangeArithmeticEndpoint(originalText);
   if (target === undefined) {
     return 'Model range plan used a shift whose target endpoint could not be validated safely.';
   }
@@ -5106,8 +5106,11 @@ function discordReferenceClockSemanticsError(
         ? undefined
         : 'Model range plan did not apply the requested clocks to their ordered endpoints.';
     }
-    const target = requestedDiscordRangeEndpoint(originalText);
+    const target = requestedDiscordRangeClockEndpoint(originalText);
     if (target !== undefined) {
+      if (singularClockMentionCount !== 1) {
+        return 'Model range plan included clocks outside the validated Discord-reference endpoint clause.';
+      }
       const targetIndex = target === 'start' ? 0 : 1;
       const otherIndex = targetIndex === 0 ? 1 : 0;
       const targetKeys = new Set(clocksByTerminal[targetIndex]!.map(clockKey));
@@ -5176,13 +5179,11 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
     || new RegExp(String.raw`\b${endEndpoint}\s+at\s+${clock}${endpointJoin}${startEndpoint}\s+at\s+${reference}`, 'iu').test(text);
 }
 
-function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
+function requestedDiscordRangeClockEndpoint(text: string): 'start' | 'end' | undefined {
   const targets = new Set<'start' | 'end'>();
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
   const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
-  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
-  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   const referenceCount = [...text.matchAll(new RegExp(reference, 'giu'))].length;
   if (referenceCount === 1) {
     if (new RegExp(String.raw`${reference}\s*${separator}\s*${clock}`, 'iu').test(text)) targets.add('end');
@@ -5192,6 +5193,18 @@ function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefine
   }
   if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
+  for (const match of text.matchAll(new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'giu'))) {
+    targets.add(match[1]!.toLowerCase() as 'start' | 'end');
+  }
+  return targets.size === 1 ? [...targets][0] : undefined;
+}
+
+function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' | undefined {
+  const targets = new Set<'start' | 'end'>();
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');

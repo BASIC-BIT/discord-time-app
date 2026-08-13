@@ -540,6 +540,56 @@ async function main() {
   );
   assert.equal(rejectedDuplicateEndClockRange.status, 'failed');
   assert.equal(rejectedDuplicateEndClockRange.range, undefined);
+  const clockAndStartArithmeticRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'End clock with independent start arithmetic',
+      startStep: 3,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedClockAndStartArithmeticRange = await executeTemporalPlanPlannerOutput(
+    clockAndStartArithmeticRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm; move the start one hour earlier', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedClockAndStartArithmeticRange.status,
+    'resolved',
+    acceptedClockAndStartArithmeticRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedClockAndStartArithmeticRange.range?.start.epoch, 1785639600);
+  assert.equal(acceptedClockAndStartArithmeticRange.range?.end.epoch, 1785704400);
+  const unrelatedClockChainRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Incorrectly chained unrelated publishing clock',
+      startStep: 0,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '6 pm' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnrelatedClockChainRange = await executeTemporalPlanPlannerOutput(
+    unrelatedClockChainRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm; publish at 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnrelatedClockChainRange.status, 'failed');
+  assert.equal(rejectedUnrelatedClockChainRange.range, undefined);
   const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },
