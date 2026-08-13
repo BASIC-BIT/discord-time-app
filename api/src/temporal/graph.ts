@@ -3861,7 +3861,8 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
   const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   residue = residue
-    .replace(new RegExp(String.raw`\b(?:set|move)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
+    .replace(new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
+    .replace(new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+<t:\d+(?::[tTdDfFR])?>\s+to\s+${clock}`, 'giu'), ' ')
     .replace(new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
   return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
@@ -5096,9 +5097,25 @@ function discordReferenceClockSemanticsError(
         ? undefined
         : 'Model range plan did not apply the requested clocks to their ordered endpoints.';
     }
+    const ownedEndpointClocks = requestedDiscordOwnedEndpointClocks(originalText);
+    if (ownedEndpointClocks.size > 0) {
+      const ownedClockCount = discordReferenceOwnedEndpointClockMentionCount(originalText);
+      if (ownedClockCount !== singularClockMentionCount) {
+        return 'Model range plan included clocks outside the validated Discord-reference endpoint clause.';
+      }
+      for (const [target, clocks] of ownedEndpointClocks) {
+        const targetIndex = target === 'start' ? 0 : 1;
+        const targetKeys = new Set(clocksByTerminal[targetIndex]!.map(clockKey));
+        const ownedKeys = new Set(clocks.map(clockKey));
+        if (targetKeys.size !== ownedKeys.size || [...targetKeys].some((key) => !ownedKeys.has(key))) {
+          return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
+        }
+      }
+      return undefined;
+    }
     const target = requestedDiscordRangeClockEndpoint(originalText);
     if (target !== undefined) {
-      if (discordReferenceOwnedRangeClockMentionCount(originalText, target) !== singularClockMentionCount) {
+      if (singularClockMentionCount !== 1) {
         return 'Model range plan included clocks outside the validated Discord-reference endpoint clause.';
       }
       const targetIndex = target === 'start' ? 0 : 1;
@@ -5203,11 +5220,34 @@ function discordReferenceClockMentionCount(text: string): number {
     + embeddedBareHourMentionCount;
 }
 
-function discordReferenceOwnedRangeClockMentionCount(text: string, target: 'start' | 'end'): number {
-  return text
-    .split(/[;.!?]+/u)
-    .filter((clause) => requestedDiscordRangeClockEndpoint(clause) === target)
-    .reduce((count, clause) => count + discordReferenceClockMentionCount(clause), 0);
+function requestedDiscordOwnedEndpointClocks(
+  text: string,
+): Map<'start' | 'end', Array<{ hour: number; minute: number }>> {
+  const owned = new Map<'start' | 'end', Array<{ hour: number; minute: number }>>();
+  const reference = /<t:\d+(?::[tTdDfFR])?>/iu;
+  for (const clause of text.split(/[;.!?]+/u)) {
+    const target = requestedDiscordRangeClockEndpoint(clause);
+    if (target === undefined) continue;
+    const explicitEndpointSetter = /\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\b/iu.test(clause);
+    const referenceLinkedRange = reference.test(clause) && discordReferenceHasSupportedClockRelationship(clause);
+    if (!explicitEndpointSetter && !referenceLinkedRange) continue;
+    const clocks = requestedDiscordReferenceClocks(clause);
+    if (clocks.length === 0) continue;
+    owned.set(target, uniqueClocks([...(owned.get(target) ?? []), ...clocks]));
+  }
+  return owned;
+}
+
+function discordReferenceOwnedEndpointClockMentionCount(text: string): number {
+  const reference = /<t:\d+(?::[tTdDfFR])?>/iu;
+  return text.split(/[;.!?]+/u).reduce((count, clause) => {
+    if (requestedDiscordRangeClockEndpoint(clause) === undefined) return count;
+    const explicitEndpointSetter = /\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\b/iu.test(clause);
+    const referenceLinkedRange = reference.test(clause) && discordReferenceHasSupportedClockRelationship(clause);
+    return explicitEndpointSetter || referenceLinkedRange
+      ? count + discordReferenceClockMentionCount(clause)
+      : count;
+  }, 0);
 }
 
 function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' | undefined {
@@ -5222,14 +5262,19 @@ function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' 
   if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
   if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+${shift}\b`, 'iu').test(text)) targets.add('end');
   if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+${shift}\b`, 'iu').test(text)) targets.add('start');
-  for (const match of text.matchAll(new RegExp(String.raw`\b(?:move|shift|extend|shorten|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
-    targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+  const commandSegments = text.split(/[,;.!?]+|\band\s+(?=(?:move|shift|extend|shorten|pull|push|add)\b)/iu);
+  for (const segment of commandSegments) {
+    for (const match of segment.matchAll(new RegExp(String.raw`\b(?:move|shift|extend|shorten|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
+      targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+    }
   }
   for (const match of text.matchAll(new RegExp(String.raw`\badd\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b`, 'giu'))) {
     targets.add(match[1]!.toLowerCase() as 'start' | 'end');
   }
-  for (const match of text.matchAll(new RegExp(String.raw`\b(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
-    targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+  for (const segment of commandSegments) {
+    for (const match of segment.matchAll(new RegExp(String.raw`\b(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
+      targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+    }
   }
   return targets.size === 1 ? [...targets][0] : undefined;
 }

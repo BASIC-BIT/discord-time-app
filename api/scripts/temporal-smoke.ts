@@ -242,6 +242,13 @@ async function main() {
   );
   assert.equal(compactMeridiemClock.status, 'resolved', compactMeridiemClock.validation.warnings.join(' | '));
   assert.equal(compactMeridiemClock.epoch, 1785704400);
+  const makeClockSetter = await executeModelReferenceClockComposition(
+    'make <t:1785643200:t> to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(makeClockSetter.status, 'resolved', makeClockSetter.validation.warnings.join(' | '));
+  assert.equal(makeClockSetter.epoch, 1785697200);
   const dottedTwentyFourHourClock = await executeModelReferenceClockComposition(
     'set <t:1785643200:t> to 15.00',
     '<t:1785643200:t>',
@@ -590,6 +597,13 @@ async function main() {
   );
   assert.equal(rejectedUnrelatedClockChainRange.status, 'failed');
   assert.equal(rejectedUnrelatedClockChainRange.range, undefined);
+  const rejectedSameEndpointUnrelatedClockRange = await executeTemporalPlanPlannerOutput(
+    unrelatedClockChainRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm; the broadcast ends at 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSameEndpointUnrelatedClockRange.status, 'failed');
+  assert.equal(rejectedSameEndpointUnrelatedClockRange.range, undefined);
   const endpointClockAlternativesPlan = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
     clarificationQuestion: 'Should the range end at 5 PM or 6 PM?',
@@ -643,6 +657,41 @@ async function main() {
     acceptedIndependentClockSetterAndArithmetic.status,
     'resolved',
     acceptedIndependentClockSetterAndArithmetic.validation.warnings.join(' | '),
+  );
+  const acceptedMoveClockSetterAndArithmetic = await executeTemporalPlanPlannerOutput(
+    independentClockSetterAndArithmeticPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; move the start to 5 pm and move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedMoveClockSetterAndArithmetic.status,
+    'resolved',
+    acceptedMoveClockSetterAndArithmetic.validation.warnings.join(' | '),
+  );
+  const twoEndpointClockSettersPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independent clocks for both endpoints',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 1, time: { hour: 18, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedTwoEndpointClockSetters = await executeTemporalPlanPlannerOutput(
+    twoEndpointClockSettersPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm; set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedTwoEndpointClockSetters.status,
+    'resolved',
+    acceptedTwoEndpointClockSetters.validation.warnings.join(' | '),
   );
   const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
