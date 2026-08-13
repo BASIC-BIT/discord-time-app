@@ -3,24 +3,24 @@ param(
     [switch]$Install,
     [switch]$StopProductionForManualSmoke,
     [string]$MsiPath = "",
-    [string]$ExpectedMsiSha256 = "9FC320CADF6A3C7B1D7578DEF2802A4719039AB94A77B9BB73862E22D52F01E1",
+    [string]$ExpectedMsiSha256 = "AAF4F4CDD5ECAB335B0E9140A6F3C9126D6E66517E0A3E1A80F055C03D9DEBF8",
     [string]$ExpectedInstalledExeSha256 = "",
     [string]$InstallRoot = "C:\Program Files\HammerOverlay Routing Smoke",
     [string]$ApiBaseUrl = "http://127.0.0.1:8858",
     [int]$ExpectedApiPort = 8858,
     [string]$ModelBaseUrl = "http://127.0.0.1:8771/v1",
-    [string]$ExpectedModel = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11",
-    [string]$ReportSchema = "discord-reference-v11-installed-routing-smoke-v1",
+    [string]$ExpectedModel = "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
+    [string]$ReportSchema = "discord-reference-v22-installed-routing-smoke-v1",
     [string]$VerificationLabel = "routing-smoke",
     [string]$Output = ""
 )
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($MsiPath)) {
-    $MsiPath = Join-Path $PSScriptRoot "..\src-tauri\target\release\bundle\msi\HammerOverlay Routing Smoke_0.1.0_x64_en-US.current.msi"
+    $MsiPath = Join-Path $PSScriptRoot "..\src-tauri\target\release\bundle\msi\HammerOverlay Routing Smoke_0.1.0_x64_en-US.msi"
 }
 if ([string]::IsNullOrWhiteSpace($Output)) {
-    $Output = Join-Path $PSScriptRoot "..\api\reports\temporal-ml\discord-reference-v11-installed-routing-smoke.json"
+    $Output = Join-Path $PSScriptRoot "..\api\reports\temporal-ml\discord-reference-v22-installed-routing-smoke.json"
 }
 $expectedEndpoint = $ModelBaseUrl.TrimEnd("/")
 $expectedApiBase = $ApiBaseUrl.TrimEnd("/")
@@ -159,11 +159,20 @@ function Assert-Resolved {
 function Assert-Clarification {
     param(
         [string]$Id,
-        [string]$Text
+        [string]$Text,
+        [long[]]$ExpectedEpochs = @()
     )
     $result = Invoke-Parse -Text $Text
     Assert-Equal $result.StatusCode 400 "$Id should return HTTP 400."
     Assert-Equal ([string]$result.Body.error) "needs_clarification" "$Id should request clarification."
+    if ($ExpectedEpochs.Count -gt 0) {
+        $actualEpochs = @($result.Body.alternatives | ForEach-Object { [long]$_.epoch } | Sort-Object)
+        $expectedSorted = @($ExpectedEpochs | Sort-Object)
+        Assert-Equal $actualEpochs.Count $expectedSorted.Count "$Id alternative count mismatch."
+        for ($index = 0; $index -lt $expectedSorted.Count; $index++) {
+            Assert-Equal $actualEpochs[$index] $expectedSorted[$index] "$Id alternative epoch mismatch at index $index."
+        }
+    }
     $script:probeResults.Add([pscustomobject]@{
         id = $Id
         text = $Text
@@ -193,6 +202,53 @@ function Stop-ExactProcess {
         ) {
             Stop-Process -Id $process.Id -Force
             Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Find-ByteSequence {
+    param(
+        [byte[]]$Bytes,
+        [byte[]]$Needle
+    )
+    for ($offset = 0; $offset -le $Bytes.Length - $Needle.Length; $offset++) {
+        $matches = $true
+        for ($index = 0; $index -lt $Needle.Length; $index++) {
+            if ($Bytes[$offset + $index] -ne $Needle[$index]) {
+                $matches = $false
+                break
+            }
+        }
+        if ($matches) {
+            return $offset
+        }
+    }
+    return -1
+}
+
+function Assert-SealedMsiExecutableMatchesRelease {
+    param(
+        [string]$ReleaseExecutable,
+        [string]$SealedExecutable
+    )
+    $releaseBytes = [System.IO.File]::ReadAllBytes($ReleaseExecutable)
+    $sealedBytes = [System.IO.File]::ReadAllBytes($SealedExecutable)
+    Assert-Equal $sealedBytes.Length $releaseBytes.Length "Sealed MSI executable length does not match the current release executable."
+
+    $releaseMarker = [System.Text.Encoding]::ASCII.GetBytes("__TAURI_BUNDLE_TYPE_VAR_UNK")
+    $sealedMarker = [System.Text.Encoding]::ASCII.GetBytes("__TAURI_BUNDLE_TYPE_VAR_MSI")
+    $releaseMarkerOffset = Find-ByteSequence -Bytes $releaseBytes -Needle $releaseMarker
+    $sealedMarkerOffset = Find-ByteSequence -Bytes $sealedBytes -Needle $sealedMarker
+    Assert-True ($releaseMarkerOffset -ge 0) "Current release executable is missing the expected Tauri UNK bundle marker."
+    Assert-Equal $sealedMarkerOffset $releaseMarkerOffset "Sealed MSI executable has an unexpected Tauri bundle marker location."
+
+    $bundleTypeOffset = $releaseMarkerOffset + $releaseMarker.Length - 3
+    for ($index = 0; $index -lt $releaseBytes.Length; $index++) {
+        if ($index -ge $bundleTypeOffset -and $index -lt ($bundleTypeOffset + 3)) {
+            continue
+        }
+        if ($releaseBytes[$index] -ne $sealedBytes[$index]) {
+            throw "Sealed MSI executable differs from the current release executable at byte offset $index outside the expected Tauri bundle marker."
         }
     }
 }
@@ -248,9 +304,34 @@ foreach ($requiredPath in @(
     Assert-True (Test-Path -LiteralPath $requiredPath -PathType Leaf) "Required installed-build evidence is missing: $requiredPath"
 }
 
+$msiEvidenceRoot = Join-Path $env:TEMP "hammer-overlay-msi-evidence-$([guid]::NewGuid().ToString('N'))"
+$sealedExe = $null
+try {
+    New-Item -ItemType Directory -Path $msiEvidenceRoot -Force | Out-Null
+    $adminInstallLog = Join-Path $env:TEMP "hammer-overlay-msi-evidence-current.log"
+    $adminArguments = "/a `"$resolvedMsi`" /qn /norestart TARGETDIR=`"$msiEvidenceRoot`" /l*v `"$adminInstallLog`""
+    $adminInstaller = Start-Process `
+        -FilePath "msiexec.exe" `
+        -ArgumentList $adminArguments `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+    Assert-Equal $adminInstaller.ExitCode 0 "MSI administrative extraction failed. See $adminInstallLog."
+    $sealedExecutables = @(Get-ChildItem -LiteralPath $msiEvidenceRoot -Filter "hammer-overlay.exe" -File -Recurse)
+    Assert-Equal $sealedExecutables.Count 1 "Expected exactly one sealed hammer-overlay.exe in the MSI payload."
+    $sealedExe = $sealedExecutables[0].FullName
+    Assert-SealedMsiExecutableMatchesRelease -ReleaseExecutable $releaseExe -SealedExecutable $sealedExe
+    $sealedExecutableHash = (Get-FileHash $sealedExe -Algorithm SHA256).Hash
+} finally {
+    if (Test-Path -LiteralPath $msiEvidenceRoot) {
+        [System.IO.Directory]::Delete($msiEvidenceRoot, $true)
+    }
+}
+
 $artifactHashes = [ordered]@{
     msi = $msiHash
     installedExecutable = (Get-FileHash $installedExe -Algorithm SHA256).Hash
+    sealedMsiExecutable = $sealedExecutableHash
     releaseExecutable = (Get-FileHash $releaseExe -Algorithm SHA256).Hash
     installedEntrypoint = (Get-FileHash $installedEntrypoint -Algorithm SHA256).Hash
     stagedEntrypoint = (Get-FileHash $stagedEntrypoint -Algorithm SHA256).Hash
@@ -258,12 +339,13 @@ $artifactHashes = [ordered]@{
     stagedNode = (Get-FileHash $stagedNode -Algorithm SHA256).Hash
 }
 $expectedInstalledExecutable = if ([string]::IsNullOrWhiteSpace($ExpectedInstalledExeSha256)) {
-    $artifactHashes.releaseExecutable
+    $artifactHashes.sealedMsiExecutable
 } else {
     $ExpectedInstalledExeSha256.ToUpperInvariant()
 }
 $artifactHashes.expectedInstalledExecutable = $expectedInstalledExecutable
 Assert-Equal $artifactHashes.installedExecutable $expectedInstalledExecutable "Installed executable does not match the expected MSI payload."
+Assert-Equal $artifactHashes.installedExecutable $artifactHashes.sealedMsiExecutable "Installed executable does not match the administratively extracted MSI payload."
 Assert-Equal $artifactHashes.installedEntrypoint $artifactHashes.stagedEntrypoint "Installed API entrypoint is not the current staged sidecar."
 Assert-Equal $artifactHashes.installedNode $artifactHashes.stagedNode "Installed Node runtime is not the current staged sidecar runtime."
 
@@ -409,7 +491,8 @@ Assert-Clarification `
 
 Assert-Clarification `
     -Id "typo-shift-clock-ambiguous" `
-    -Text "<t:1785643200:t> 1 day ebefore at 2"
+    -Text "<t:1785643200:t> 1 day ebefore at 2" `
+    -ExpectedEpochs @(1785564000, 1785607200)
 
 $modelDurations.Add((Assert-Resolved `
     -Id "typo-shift-clock-explicit" `

@@ -8,6 +8,9 @@ param(
     [string]$BaseModel = "Qwen/Qwen3.5-0.8B",
 
     [Parameter(ParameterSetName = "Start")]
+    [string]$ContinueAdapter = "",
+
+    [Parameter(ParameterSetName = "Start")]
     [ValidateSet("none", "minimal", "detailed")]
     [string]$InstructionPreset = "minimal",
 
@@ -22,6 +25,9 @@ param(
 
     [Parameter(ParameterSetName = "Start")]
     [double]$Epochs = 0,
+
+    [Parameter(ParameterSetName = "Start")]
+    [double]$LearningRate = 0,
 
     [Parameter(ParameterSetName = "Start")]
     [int]$TrainLimit = 0,
@@ -63,6 +69,7 @@ function Assert-NoSingleQuote([string]$Name, [string]$Value) {
 
 Assert-NoSingleQuote "AdapterName" $AdapterName
 Assert-NoSingleQuote "BaseModel" $BaseModel
+Assert-NoSingleQuote "ContinueAdapter" $ContinueAdapter
 Assert-NoSingleQuote "InstructionPreset" $InstructionPreset
 Assert-NoSingleQuote "Dataset" $Dataset
 Assert-NoSingleQuote "PromptFormat" $PromptFormat
@@ -72,6 +79,15 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 $datasetPath = Join-Path $repoRoot $Dataset
 if (-not (Test-Path -LiteralPath $datasetPath -PathType Leaf)) {
     throw "Temporal IR dataset not found: $datasetPath"
+}
+if ($ContinueAdapter.Trim().Length -gt 0) {
+    $continueAdapterPath = Join-Path $repoRoot $ContinueAdapter
+    if (-not (Test-Path -LiteralPath $continueAdapterPath -PathType Container)) {
+        throw "Continuation adapter not found: $continueAdapterPath"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $continueAdapterPath "adapter_config.json") -PathType Leaf)) {
+        throw "Continuation adapter is missing adapter_config.json: $continueAdapterPath"
+    }
 }
 $reportDir = Join-Path $repoRoot "api\reports\temporal-ml"
 if (-not (Test-Path -LiteralPath $reportDir)) {
@@ -126,11 +142,17 @@ $envArgs = @(
     "HF_HUB_DISABLE_PROGRESS_BARS=1"
 )
 $envArgs += "TEMPORAL_IR_DATASET=$Dataset"
+if ($ContinueAdapter.Trim().Length -gt 0) {
+    $envArgs += "TEMPORAL_IR_CONTINUE_ADAPTER=$ContinueAdapter"
+}
 if ($ExpectedDatasetSha256.Trim().Length -gt 0) {
     $envArgs += "TEMPORAL_IR_EXPECTED_DATASET_SHA256=$ExpectedDatasetSha256"
 }
 if ($Epochs -gt 0) {
     $envArgs += "TEMPORAL_IR_EPOCHS=$Epochs"
+}
+if ($LearningRate -gt 0) {
+    $envArgs += "TEMPORAL_IR_LR=$LearningRate"
 }
 if ($TrainLimit -gt 0) {
     $envArgs += "TEMPORAL_IR_TRAIN_LIMIT=$TrainLimit"

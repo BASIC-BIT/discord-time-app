@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from temporal_ir_prompts import PROMPT_PRESETS, compact_plan, format_chat_user_content, format_prompt
+from temporal_ir_prompts import PROMPT_PRESETS, compact_plan, compact_step, format_chat_user_content, format_prompt
 
 
 ROW = {
@@ -43,6 +43,15 @@ class PromptPresetTests(unittest.TestCase):
         compact = compact_plan({"label": "Shifted timestamp", "presentationFormat": "f", "steps": []})
 
         self.assertEqual(compact["format"], "f")
+
+    def test_compact_step_preserves_bounded_clock_options(self) -> None:
+        options = [
+            {"label": "2 AM", "text": "2 am"},
+            {"label": "2 PM", "text": "2 pm"},
+        ]
+        compact = compact_step({"operation": "resolve_clock_time", "options": options})
+
+        self.assertEqual(compact["options"], options)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import * as z from 'zod';
 import { TemporalPlanPlannerSchema, type TemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
+import { temporalEvalCases } from './temporal-model-eval';
 
 type Split = 'train' | 'validation' | 'holdout';
 
@@ -46,7 +47,14 @@ const modelName = process.env['TEMPORAL_IR_PARAPHRASE_MODEL'] ?? process.env['OP
 const reasoningEffort = process.env['OPENAI_REASONING_EFFORT'] ?? 'low';
 
 async function main() {
-  const seedRows = (await readJsonl(inputPath)).map(validateRow);
+  const requiredEvalTexts = new Set(temporalEvalCases
+    .filter((evalCase) => evalCase.required ?? true)
+    .map((evalCase) => normalizedTrainingText(evalCase.text)));
+  const seedRows = (await readJsonl(inputPath))
+    .map(validateRow)
+    .map((row) => requiredEvalTexts.has(normalizedTrainingText(row.input.text))
+      ? { ...row, split: 'holdout' as const, tags: unique([...row.tags, 'required-eval-holdout']) }
+      : row);
   const sourceRows = seedRows.filter((row) => row.split === sourceSplit);
   const selectedRows = limit === undefined ? sourceRows : sourceRows.slice(0, limit);
   const outputRows: TemporalIrTrainingRow[] = [...seedRows];
@@ -67,7 +75,7 @@ async function main() {
         outputRows.push(validateRow({
           ...row,
           id: `${row.id}__p${index + 1}`,
-          split: generatedSplit ?? row.split,
+          split: row.tags.includes('required-eval-holdout') ? 'holdout' : (generatedSplit ?? row.split),
           tags: unique([...row.tags, ...paraphrase.tags, 'llm-paraphrase']),
           input: { ...row.input, text: paraphrase.text },
           sourceId: row.id,
@@ -78,9 +86,26 @@ async function main() {
     }
   }
 
+  const guardedOutputRows = outputRows.map((row) => requiredEvalTexts.has(normalizedTrainingText(row.input.text))
+    ? { ...row, split: 'holdout' as const, tags: unique([...row.tags, 'required-eval-holdout']) }
+    : row);
+  const requiredEvalSeedIds = new Set(seedRows
+    .filter((row) => row.tags.includes('required-eval-holdout'))
+    .map((row) => row.id));
+  const leakedRequiredEvalRows = guardedOutputRows.filter((row) =>
+    row.split !== 'holdout'
+      && (
+        requiredEvalTexts.has(normalizedTrainingText(row.input.text))
+        || (row.sourceId !== undefined && requiredEvalSeedIds.has(row.sourceId))
+      ),
+  );
+  if (leakedRequiredEvalRows.length > 0) {
+    throw new Error(`Required eval phrases leaked outside holdout: ${leakedRequiredEvalRows.map((row) => row.id).join(', ')}`);
+  }
+
   await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${outputRows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
-  console.log(`Wrote ${outputRows.length} Temporal IR rows to ${outputPath}`);
+  await writeFile(outputPath, `${guardedOutputRows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+  console.log(`Wrote ${guardedOutputRows.length} Temporal IR rows to ${outputPath}`);
 }
 
 function systemPrompt(): string {
@@ -125,6 +150,10 @@ function validateRow(row: TemporalIrTrainingRow): TemporalIrTrainingRow {
     ...row,
     output: TemporalPlanPlannerSchema.parse(row.output),
   };
+}
+
+function normalizedTrainingText(text: string): string {
+  return text.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US');
 }
 
 function normalizeReasoningEffort(effort: string): 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' {

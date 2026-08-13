@@ -9,11 +9,14 @@ import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
 import {
   classifyDiscordTimestampInput,
+  DISCORD_TIMESTAMP_AMOUNT_SOURCE,
+  parseDiscordTimestampAmount,
   type DiscordTimestampClassification,
 } from '@hammer-overlay/discord-timestamp-routing';
 import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalModelCostConfig, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
+import { resolveTimeZone } from './timezones';
 import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
@@ -49,12 +52,15 @@ const CalendarContextSchema = z.object({
 const WEEKDAY_TEXT_PATTERN = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TOP_LEVEL_NEXT_WEEKDAY_PATTERN = new RegExp(`^\\s*next\\s+(?:${PLAN_WEEKDAYS.join('|')})(?:\\b[\\s\\S]*)?$`, 'i');
 const MONTH_DATE_QUERY_PATTERN = /\b(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?\b/i;
-const AM_PM_CLOCK_MENTION_PATTERN = /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/gi;
+const AM_PM_CLOCK_MENTION_PATTERN = /\b(0?[1-9]|1[0-2])(?:[:.]([0-5]\d))?\s*([ap])(?:\.?m\.?)?(?![\w.])/gi;
 const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?\b|:))/gi;
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/gi;
+const AMBIGUOUS_OCLOCK_PATTERN = /\b(0?[1-9]|1[0-2])\s+o['\u2019]clock\b(?!\s*(?:[ap](?:\.?m)?\b))/gi;
+const DISCORD_SHIFT_DIRECTION_SOURCE = String.raw`(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier)`;
+const AMBIGUOUS_BOUNDED_BARE_HOUR_PATTERN = /\b(0?[1-9]|1[0-2])\b(?=\s*,?\s*(?:keeping\s+the\s+same\s+calendar\s+day|on\s+(?:the\s+)?(?:following|previous|prior|next)\s+day))/gi;
 const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'] as const;
 const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
-const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
+const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p))`;
 const EXPLICIT_DATED_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<dateText>.+?)\s+(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
 const EXPLICIT_BARE_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
 const EXPLICIT_RANGE_DATE_SIGNAL_PATTERN = new RegExp(String.raw`\b(?:${MONTH_DATE_QUERY_PATTERN.source}|\d{4}-\d{2}-\d{2}|today|tomorrow|tonight|(?:${PLAN_WEEKDAYS.join('|')}))\b`, 'i');
@@ -96,8 +102,10 @@ type RawTemporalPlan = {
 type TemporalPlanStepOutput =
   | { kind: 'candidates'; candidates: PlanCandidateOutput[] }
   | { kind: 'time'; time: { hour: number; minute: number } }
+  | { kind: 'time_options'; options: PlanTimeOptionOutput[] }
   | { kind: 'timezone'; timeZone: TimeZoneResolutionCandidate };
-type PlanCandidateOutput = { candidate: Candidate; label?: string | undefined };
+type PlanCandidateOutput = { candidate: Candidate; label?: string | undefined; lineage?: string[] | undefined };
+type PlanTimeOptionOutput = { label: string; time: { hour: number; minute: number } };
 type PlanCandidateResult = { enriched: EnrichedCandidate; label?: string | undefined };
 type PlanRangeResult = {
   start: PlanCandidateResult;
@@ -216,7 +224,11 @@ export async function runTemporalCoalescingGraph(
     referenceRouting.route === 'model'
     || (!referenceRoutingEnabled && referenceRouting.route === 'copied_prose')
   );
-  const useDeterministicPreflight = !forceSemanticReferencePath && (deterministicPreflightEnabled(options.features) || !hasAgentPath);
+  const useDeterministicPreflight = !forceSemanticReferencePath && (
+    deterministicPreflightEnabled(options.features)
+    || !hasAgentPath
+    || isExplicitUnixEpochZero(request.text)
+  );
   let fallback: TemporalParseResponse;
 
   const terminalReferenceResponse = responseFromTerminalReferenceRouting(referenceRouting);
@@ -240,14 +252,16 @@ export async function runTemporalCoalescingGraph(
     return directResult;
   }
 
-  const ambiguityPolicyStartedAt = nowMs();
-  throwIfCancelled(options.signal);
-  const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
-  if (ambiguityPolicyResult !== null) {
-    const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
-    attachReferenceRoutingDebug(response, referenceRouting, options.features);
-    attachTopLevelTiming(response, totalStartedAt, undefined, undefined, options.features);
-    return response;
+  if (!forceSemanticReferencePath) {
+    const ambiguityPolicyStartedAt = nowMs();
+    throwIfCancelled(options.signal);
+    const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
+    if (ambiguityPolicyResult !== null) {
+      const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
+      attachReferenceRoutingDebug(response, referenceRouting, options.features);
+      attachTopLevelTiming(response, totalStartedAt, undefined, undefined, options.features);
+      return response;
+    }
   }
 
   if (forceSemanticReferencePath) {
@@ -570,7 +584,15 @@ export async function executeTemporalPlanPlannerOutput(
   const startedAt = nowMs();
   const trace: TemporalAgentTraceStep[] = [];
   const method = options.method ?? 'agent+plan';
+  planResult = groundBareClockPlanClarification(planResult, request.text);
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
+
+  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans, request.text);
+  if (clockChoiceContractError !== undefined) {
+    const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 0);
+    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+    return response;
+  }
 
   if (planResult.outcome === 'clarification' && plans.length === 0 && planResult.clarificationQuestion !== null) {
     const response = responseFromQuestionOnlyPlanClarification(planResult.clarificationQuestion, planResult.reason, trace, method);
@@ -584,7 +606,7 @@ export async function executeTemporalPlanPlannerOutput(
     return response;
   }
 
-  const referencePlanError = discordReferencePlanError(plans, request.text);
+  const referencePlanError = discordReferencePlanError(plans, request.text, request.calendarContext.timeZone);
   if (referencePlanError !== undefined) {
     const response = responseFromFailedPlanIr(referencePlanError, trace, 0, 0, 0);
     attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
@@ -598,12 +620,15 @@ export async function executeTemporalPlanPlannerOutput(
     graphOptions.features = options.features;
   }
 
-  const ambiguityPolicyStartedAt = nowMs();
-  const ambiguityPolicyResult = await runAmbiguityPolicy(request, options.implementations, options.features);
-  if (ambiguityPolicyResult !== null) {
-    const response = responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
-    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
-    return response;
+  const ambiguityPolicyResponse = await runPlanIrAmbiguityPolicy(
+    planResult,
+    request,
+    options.implementations,
+    options.features,
+  );
+  if (ambiguityPolicyResponse !== null) {
+    attachPlanExecutionDebug(ambiguityPolicyResponse, startedAt, options.modelName, options.planningDurationMs);
+    return ambiguityPolicyResponse;
   }
 
   const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, graphOptions)));
@@ -816,7 +841,11 @@ async function runAgentGraph(
   };
   const autoFinalizeSoleCandidate = (rationale: string) => {
     const autoFinalized = onlyFinalizableCandidate(enrichedCandidates);
-    if (autoFinalized === null || blocksAutoFinalize(autoFinalized, request.text)) {
+    if (
+      autoFinalized === null
+      || blocksAutoFinalize(autoFinalized, request.text)
+      || !discordReferenceFinalCandidateIsGrounded(autoFinalized, request.text, request.calendarContext.timeZone)
+    ) {
       return false;
     }
     finalizedCandidateId = autoFinalized.candidate.id;
@@ -1053,7 +1082,11 @@ async function runAgentGraph(
     async (input) => {
       const startedAt = nowMs();
       const candidate = enrichedCandidates.get(input.candidateId);
-      if (!candidate || !candidate.finalizable) {
+      if (
+        !candidate
+        || !candidate.finalizable
+        || !discordReferenceFinalCandidateIsGrounded(candidate, request.text, request.calendarContext.timeZone)
+      ) {
         const output = { accepted: false, error: 'Candidate must be proposed or resolved by a tool, enriched, and validation-passing before finalization.' };
         recordTool('finalize_candidate', input, output, startedAt);
         return JSON.stringify(output);
@@ -1084,11 +1117,20 @@ async function runAgentGraph(
       const requestedAlternatives = input.alternatives
         .map((alternative) => {
           const enriched = enrichedCandidates.get(alternative.candidateId);
-          if (!enriched || !canUseForClarification(enriched)) {
+          if (
+            !enriched
+            || !canUseForClarification(enriched)
+            || !discordReferenceClarificationCandidateIsGrounded(enriched, request.text, request.calendarContext.timeZone)
+          ) {
             return null;
           }
           return alternativeFromEnrichedCandidate(
-            conciseClarificationLabel(alternative.label, enriched),
+            clarificationLabelForCandidate(
+              alternative.label,
+              enriched,
+              request.text,
+              request.calendarContext.timeZone,
+            ),
             enriched,
             'agent+tools',
             0.8,
@@ -1347,7 +1389,7 @@ async function runPlanIrPath(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     runName: 'temporal-plan-ir',
   });
-  const planResult = TemporalPlanPlannerSchema.parse({
+  const modelPlanResult = TemporalPlanPlannerSchema.parse({
     ...structuredPlanResult,
     plans: structuredPlanResult.plans.map((plan) => ({
       ...plan,
@@ -1370,16 +1412,50 @@ async function runPlanIrPath(
       totalMessageChars: system.length + human.length,
     },
     output: {
-      planResult: summarizeValue(planResult),
+      planResult: summarizeValue(modelPlanResult),
       usage: summarizeValue(rawMessage.usage_metadata ?? rawMessage.response_metadata),
     },
   });
 
+  const planResult = groundBareClockPlanClarification(modelPlanResult, request.text);
+  if (planResult !== modelPlanResult) {
+    trace.push({
+      index: trace.length + 1,
+      type: 'router',
+      name: 'plan_ir_ambiguity_guard',
+      output: { outcome: planResult.outcome, clarificationQuestion: planResult.clarificationQuestion },
+    });
+  }
+
   const plans = (planResult.plans ?? []).map(normalizeTemporalPlan);
+  const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans, request.text);
+  if (clockChoiceContractError !== undefined) {
+    const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
   if (planResult.outcome === 'no_plan' || plans.length === 0) {
     const response = responseFromFailedPlanIr(planResult.reason, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
     attachPlanDebug(response);
     return response;
+  }
+
+  const referencePlanError = discordReferencePlanError(plans, request.text, request.calendarContext.timeZone);
+  if (referencePlanError !== undefined) {
+    const response = responseFromFailedPlanIr(referencePlanError, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
+
+  const ambiguityPolicyResponse = await runPlanIrAmbiguityPolicy(
+    planResult,
+    request,
+    options.implementations,
+    options.features,
+  );
+  if (ambiguityPolicyResponse !== null) {
+    attachPlanDebug(ambiguityPolicyResponse);
+    return ambiguityPolicyResponse;
   }
 
   const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, options)));
@@ -2033,6 +2109,23 @@ async function executePlanStep(
       return { kind: 'timezone', timeZone };
     }
     case 'resolve_clock_time': {
+      if (step.options !== null) {
+        const optionsOutput = await Promise.all(step.options.map(async (option) => {
+          const resolved = await options.implementations.resolveClockTime({ text: option.text, calendarContext: request.calendarContext });
+          const uniqueClocks = new Map(resolved.candidates.map((clock) => [`${clock.hour}:${clock.minute}`, clock]));
+          if (uniqueClocks.size !== 1) {
+            throw new Error(`resolve_clock_time option ${option.label} must resolve to exactly one unique clock.`);
+          }
+          const clock = uniqueClocks.values().next().value!;
+          return { label: formatClockMentionLabel(clock.hour, clock.minute), time: { hour: clock.hour, minute: clock.minute } };
+        }));
+        const uniqueClocks = new Set(optionsOutput.map((option) => `${option.time.hour}:${option.time.minute}`));
+        if (uniqueClocks.size !== optionsOutput.length) {
+          throw new Error('resolve_clock_time options must resolve to distinct clocks.');
+        }
+        recordTool(stepIndex, step, optionsOutput, startedAt);
+        return { kind: 'time_options', options: optionsOutput };
+      }
       const text = requirePlanString(step.text ?? step.query, step, 'text');
       const resolved = await options.implementations.resolveClockTime({ text, calendarContext: request.calendarContext });
       const clock = resolved.candidates[0];
@@ -2051,44 +2144,52 @@ async function executePlanStep(
     case 'shift_datetime': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
       const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
-      const [base, time] = await Promise.all([
+      const [base, times] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
-        timeFromPlanStep(step, executeStep),
+        timeOptionsFromPlanStep(step, executeStep),
       ]);
-      const candidates = await Promise.all(base.map(async (baseCandidate) => {
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => {
         const shiftInput: Parameters<TemporalToolImplementations['shiftDateTime']>[0] = {
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
           delta: cleanDelta(step.delta),
           calendarContext,
         };
-        if (time !== undefined) {
-          shiftInput.time = time;
+        if (timeOption.time !== undefined) {
+          shiftInput.time = timeOption.time;
+        }
+        const candidate = await options.implementations.shiftDateTime(shiftInput);
+        if (timeOption.time !== undefined && !candidateHasExactClock(candidate, timeOption.time, calendarContext.timeZone)) {
+          throw new Error('shift_datetime normalized the requested clock to a different local time.');
         }
         return {
-          label: baseCandidate.label,
-          candidate: await options.implementations.shiftDateTime(shiftInput),
+          label: timeOption.label ?? baseCandidate.label,
+          candidate,
+          lineage: planCandidateLineage(baseCandidate),
         };
-      }));
+      })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
     }
     case 'set_clock_time': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
       const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
-      const [base, time] = await Promise.all([
+      const [base, times] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
-        timeFromPlanStep(step, executeStep),
+        timeOptionsFromPlanStep(step, executeStep),
       ]);
-      if (time === undefined) {
+      if (times.length === 1 && times[0]?.time === undefined) {
         throw new Error('set_clock_time requires either time or timeStep.');
       }
-      const candidates = await Promise.all(base.map(async (baseCandidate) => ({
-        label: baseCandidate.label,
-        candidate: await options.implementations.setClockTime({
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => {
+        const candidate = await options.implementations.setClockTime({
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
-          time,
+          time: timeOption.time!,
           calendarContext,
-        }),
+        });
+        if (!candidateHasExactClock(candidate, timeOption.time!, calendarContext.timeZone)) {
+          throw new Error('set_clock_time normalized the requested clock to a different local time.');
+        }
+        return { label: timeOption.label ?? baseCandidate.label, candidate, lineage: planCandidateLineage(baseCandidate) };
       })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
@@ -2096,20 +2197,23 @@ async function executePlanStep(
     case 'combine_date_time': {
       const baseStep = requirePlanNumber(step.baseStep, step, 'baseStep');
       const calendarContext = await calendarContextForPlanStep(step, executeStep, request, options.implementations);
-      const [base, time] = await Promise.all([
+      const [base, times] = await Promise.all([
         candidateOutputsFromPlanStep(baseStep, executeStep),
-        timeFromPlanStep(step, executeStep),
+        timeOptionsFromPlanStep(step, executeStep),
       ]);
-      if (time === undefined) {
+      if (times.length === 1 && times[0]?.time === undefined) {
         throw new Error('combine_date_time requires either time or timeStep.');
       }
-      const candidates = await Promise.all(base.map(async (baseCandidate) => ({
-        label: baseCandidate.label,
-        candidate: await options.implementations.setClockTime({
+      const candidates = await Promise.all(base.flatMap((baseCandidate) => times.map(async (timeOption) => {
+        const candidate = await options.implementations.setClockTime({
           base: baseForPlanCandidate(baseCandidate.candidate, calendarContext),
-          time,
+          time: timeOption.time!,
           calendarContext,
-        }),
+        });
+        if (!candidateHasExactClock(candidate, timeOption.time!, calendarContext.timeZone)) {
+          throw new Error('combine_date_time normalized the requested clock to a different local time.');
+        }
+        return { label: timeOption.label ?? baseCandidate.label, candidate, lineage: planCandidateLineage(baseCandidate) };
       })));
       recordTool(stepIndex, step, candidates, startedAt);
       return { kind: 'candidates', candidates };
@@ -2140,21 +2244,26 @@ async function candidateOutputsFromPlanStep(
   return output.candidates;
 }
 
-async function timeFromPlanStep(
+async function timeOptionsFromPlanStep(
   step: TemporalPlanStep,
   executeStep: (stepIndex: number) => Promise<TemporalPlanStepOutput>,
-): Promise<{ hour: number; minute: number } | undefined> {
+): Promise<Array<{ label?: string; time?: { hour: number; minute: number } }>> {
   if (step.time !== null) {
-    return step.time;
+    return [{ time: step.time }];
   }
   if (step.timeStep === null) {
-    return undefined;
+    return [{}];
   }
   const output = await executeStep(step.timeStep);
-  if (output.kind !== 'time') {
+  if (output.kind === 'time') {
+    return [{ time: output.time }];
+  }
+  if (output.kind === 'time_options') {
+    return output.options;
+  }
+  {
     throw new Error(`Step ${step.timeStep} produced ${output.kind}, not a time.`);
   }
-  return output.time;
 }
 
 async function calendarContextForPlanStep(
@@ -2248,9 +2357,9 @@ async function enrichedRangesFromPlanOutput(
   }
 
   const pairs = pairRangeCandidateOutputs(startOutput.candidates, endOutput.candidates);
-  const startValidationText = rangeEndpointValidationText(plan, startStep, request.text);
-  const endValidationText = rangeEndpointValidationText(plan, endStep, request.text);
   return Promise.all(pairs.map(async (pair) => {
+    const startValidationText = rangeEndpointValidationText(plan, startStep, request.text, pair.start);
+    const endValidationText = rangeEndpointValidationText(plan, endStep, request.text, pair.end);
     const [start, end] = await Promise.all([
       enrichCandidate(pair.start.candidate, request, implementations, startValidationText),
       enrichCandidate(pair.end.candidate, request, implementations, endValidationText),
@@ -2267,11 +2376,18 @@ async function enrichedRangesFromPlanOutput(
   }));
 }
 
-function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string): string {
-  return planStepValidationText(plan, stepIndex, new Set()) ?? fallback;
+function rangeEndpointValidationText(plan: TemporalPlan, stepIndex: number, fallback: string, choice: PlanCandidateOutput): string {
+  const zoned = Temporal.ZonedDateTime.from(choice.candidate.zonedDateTime);
+  return planStepValidationText(plan, stepIndex, new Set(), choice.label, { hour: zoned.hour, minute: zoned.minute }) ?? fallback;
 }
 
-function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set<number>): string | null {
+function planStepValidationText(
+  plan: TemporalPlan,
+  stepIndex: number,
+  seen: Set<number>,
+  choiceLabel?: string,
+  choiceClock?: { hour: number; minute: number },
+): string | null {
   if (seen.has(stepIndex)) {
     return null;
   }
@@ -2283,19 +2399,19 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
 
   const parts: string[] = [];
   if (step.baseStep !== null) {
-    const baseText = planStepValidationText(plan, step.baseStep, seen);
+    const baseText = planStepValidationText(plan, step.baseStep, seen, choiceLabel, choiceClock);
     if (baseText !== null) {
       parts.push(baseText);
     }
   }
   if (step.timeStep !== null) {
-    const timeText = planStepValidationText(plan, step.timeStep, seen);
+    const timeText = planStepValidationText(plan, step.timeStep, seen, choiceLabel, choiceClock);
     if (timeText !== null) {
       parts.push(timeText);
     }
   }
   if (step.timeZoneStep !== null) {
-    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen);
+    const timeZoneText = planStepValidationText(plan, step.timeZoneStep, seen, choiceLabel, choiceClock);
     if (timeZoneText !== null) {
       parts.push(timeZoneText);
     }
@@ -2306,6 +2422,14 @@ function planStepValidationText(plan: TemporalPlan, stepIndex: number, seen: Set
       parts.push(...optionalPlanText(step.query));
       break;
     case 'resolve_clock_time':
+      if (step.options !== null) {
+        const matchingOption = choiceClock !== undefined
+          ? step.options.find((option) => parsePlanClockText(option.text).some((clock) => clockKey(clock) === clockKey(choiceClock)))
+          : step.options.find((option) => choiceLabel !== undefined && option.label.toLocaleLowerCase('en-US') === choiceLabel.toLocaleLowerCase('en-US'));
+        parts.push(...(matchingOption === undefined ? step.options.map((option) => option.text) : [matchingOption.text]));
+      }
+      parts.push(...optionalPlanText(step.text));
+      break;
     case 'interpret_clock_phrase':
     case 'resolve_timezone':
       parts.push(...optionalPlanText(step.text));
@@ -2365,6 +2489,17 @@ function pairRangeCandidateOutputs(
   }
   if (ends.length === 1) {
     return starts.map((start) => ({ start, end: ends[0]!, label: start.label ?? ends[0]!.label }));
+  }
+  const sharesLineage = (left: PlanCandidateOutput, right: PlanCandidateOutput) => {
+    const rightLineage = new Set(planCandidateLineage(right));
+    return planCandidateLineage(left).some((candidateId) => rightLineage.has(candidateId));
+  };
+  const startsCovered = starts.every((start) => ends.some((end) => sharesLineage(start, end)));
+  const endsCovered = ends.every((end) => starts.some((start) => sharesLineage(start, end)));
+  if (startsCovered && endsCovered) {
+    return starts.flatMap((start) => ends
+      .filter((end) => sharesLineage(start, end))
+      .map((end) => ({ start, end, label: end.label ?? start.label })));
   }
   throw new Error(`Cannot pair ${starts.length} range starts with ${ends.length} range ends.`);
 }
@@ -3132,6 +3267,10 @@ async function runAmbiguityPolicy(
   implementations: TemporalToolImplementations,
   features?: TemporalFeatureFlags,
 ): Promise<AmbiguityPolicyResult | null> {
+  const ambiguousRange = ambiguousBareClockRangePolicy(request.text);
+  if (ambiguousRange !== null) {
+    return ambiguousRange;
+  }
   const bareClock = await bareMeridiemClockAmbiguityPolicy(request, implementations, features);
   if (bareClock !== null) {
     return bareClock;
@@ -3142,6 +3281,132 @@ async function runAmbiguityPolicy(
     return multiClock;
   }
   return null;
+}
+
+function ambiguousBareClockRangePolicy(text: string): AmbiguityPolicyResult | null {
+  const mentions = ambiguousBareClockMentions(text);
+  if (mentions.length < 2 || (parseExplicitDatedTimeRangeParts(text) === null && parseExplicitBareTimeRangeParts(text) === null)) {
+    return null;
+  }
+  return {
+    name: 'ambiguous_bare_clock_range',
+    question: 'Please specify AM or PM for each range endpoint.',
+    alternatives: [],
+  };
+}
+
+function planCandidateLineage(output: PlanCandidateOutput): string[] {
+  return output.lineage ?? [output.candidate.id];
+}
+
+async function runPlanIrAmbiguityPolicy(
+  planResult: TemporalPlanPlannerOutput,
+  request: TemporalParseRequest,
+  implementations: TemporalToolImplementations,
+  features?: TemporalFeatureFlags,
+): Promise<TemporalParseResponse | null> {
+  if (hasGroundedBareClockChoice(planResult, request.text)) {
+    return null;
+  }
+
+  const ambiguityPolicyStartedAt = nowMs();
+  const ambiguityPolicyResult = await runAmbiguityPolicy(request, implementations, features);
+  if (ambiguityPolicyResult !== null) {
+    return responseFromAmbiguityPolicy(ambiguityPolicyResult, elapsedMs(ambiguityPolicyStartedAt));
+  }
+  if (
+    classifyDiscordTimestampInput(request.text).route === 'model'
+    && ambiguousBareClockMentions(request.text).length > 0
+  ) {
+    return responseFromQuestionOnlyPlanClarification(
+      'Did you mean AM or PM?',
+      'The clock time needs an explicit meridiem.',
+      [],
+      'fallback',
+    );
+  }
+  return null;
+}
+
+function hasGroundedBareClockChoice(
+  planResult: TemporalPlanPlannerOutput,
+  text: string,
+): boolean {
+  if (
+    planResult.outcome !== 'clarification'
+    || classifyDiscordTimestampInput(text).route !== 'model'
+    || planResult.plans.length !== 1
+  ) {
+    return false;
+  }
+
+  const mentions = ambiguousBareClockMentions(text);
+  if (mentions.length !== 1) {
+    return false;
+  }
+
+  const clockSteps = planResult.plans[0]!.steps.filter((step) => step.operation === 'resolve_clock_time');
+  if (clockSteps.length !== 1 || clockSteps[0]!.options === null) {
+    return false;
+  }
+
+  const expectedTexts = new Set([
+    `${mentions[0]!.replacementBase}am`,
+    `${mentions[0]!.replacementBase}pm`,
+  ]);
+  const optionTexts = clockSteps[0]!.options.map((option) => option.text.toLowerCase().replace(/\s+/g, ''));
+  return optionTexts.length === expectedTexts.size
+    && optionTexts.every((optionText) => expectedTexts.has(optionText));
+}
+
+function groundBareClockPlanClarification(
+  planResult: TemporalPlanPlannerOutput,
+  text: string,
+): TemporalPlanPlannerOutput {
+  if (planResult.outcome === 'no_plan' || classifyDiscordTimestampInput(text).route !== 'model') {
+    return planResult;
+  }
+
+  const mentions = ambiguousBareClockMentions(text);
+  if (mentions.length !== 1 || planResult.plans.length !== 1) {
+    return planResult;
+  }
+
+  const clockStepIndexes = planResult.plans[0]!.steps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.operation === 'resolve_clock_time');
+  if (clockStepIndexes.length !== 1) {
+    return planResult;
+  }
+
+  const mention = mentions[0]!;
+  const amLabel = formatBareMeridiemLabel(mention, 'am');
+  const pmLabel = formatBareMeridiemLabel(mention, 'pm');
+  const shouldProduceClarification = planResult.outcome === 'clarification'
+    || clockStepIndexes[0]!.step.options === null;
+  const clockStepIndex = clockStepIndexes[0]!.index;
+  const plans = planResult.plans.map((plan) => ({
+    ...plan,
+    steps: plan.steps.map((step, index) => index === clockStepIndex
+      ? {
+          ...step,
+          query: null,
+          text: null,
+          options: [
+            { label: amLabel, text: `${mention.replacementBase}am` },
+            { label: pmLabel, text: `${mention.replacementBase}pm` },
+          ],
+        }
+      : step),
+  }));
+  return {
+    ...planResult,
+    outcome: shouldProduceClarification ? 'clarification' : planResult.outcome,
+    clarificationQuestion: shouldProduceClarification
+      ? `Did you mean ${amLabel} or ${pmLabel}?`
+      : planResult.clarificationQuestion,
+    plans,
+  };
 }
 
 function responseFromAmbiguityPolicy(policy: AmbiguityPolicyResult, durationMs: number): TemporalParseResponse {
@@ -3268,7 +3533,8 @@ async function bareMeridiemClockAmbiguityPolicy(
 
 function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
   const mentions: AmbiguousBareClockMention[] = [];
-  for (const match of text.matchAll(AMBIGUOUS_BARE_COLON_CLOCK_PATTERN)) {
+  const clockText = maskRecognizedFixedOffsetText(text);
+  for (const match of clockText.matchAll(AMBIGUOUS_BARE_COLON_CLOCK_PATTERN)) {
     const hour = Number(match[1]);
     const minute = Number(match[2]);
     if (match.index !== undefined) {
@@ -3281,6 +3547,20 @@ function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
     const minute = Number(match[2]);
     if (match.index !== undefined && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length))) {
       mentions.push({ text: match[0], index: match.index, hour, minute, replacementBase: `${hour}:${String(minute).padStart(2, '0')}` });
+    }
+  }
+
+  for (const match of text.matchAll(AMBIGUOUS_OCLOCK_PATTERN)) {
+    const hour = Number(match[1]);
+    if (match.index !== undefined && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length))) {
+      mentions.push({ text: match[0], index: match.index, hour, minute: 0, replacementBase: String(hour) });
+    }
+  }
+
+  for (const match of text.matchAll(AMBIGUOUS_BOUNDED_BARE_HOUR_PATTERN)) {
+    const hour = Number(match[1]);
+    if (match.index !== undefined && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length))) {
+      mentions.push({ text: match[0], index: match.index, hour, minute: 0, replacementBase: String(hour) });
     }
   }
 
@@ -3351,7 +3631,7 @@ function explicitAmPmClockMentions(text: string): ExplicitClockMention[] {
     const hourText = match[1]!;
     const suffix = match[3]!.toLowerCase();
     let hour = Number(hourText) % 12;
-    if (suffix === 'pm') {
+    if (suffix === 'p') {
       hour += 12;
     }
     const minute = Number(match[2] ?? 0);
@@ -3517,7 +3797,129 @@ function canUseForClarification(enriched: EnrichedCandidate): boolean {
   const warnings = enriched.validation?.warnings ?? [];
   return enriched.candidate.precision === 'datetime'
     && warnings.length > 0
-    && warnings.every((warning) => /trailing bare number|unresolved time signal/i.test(warning));
+    && warnings.every((warning) => /trailing bare number|unresolved time signal|bare 1-12 clock/i.test(warning));
+}
+
+function discordReferenceClarificationCandidateIsGrounded(
+  enriched: EnrichedCandidate,
+  originalText: string,
+  timeZone: string,
+): boolean {
+  return discordReferenceCandidateIsGrounded(enriched, originalText, timeZone, true);
+}
+
+function discordReferenceFinalCandidateIsGrounded(
+  enriched: EnrichedCandidate,
+  originalText: string,
+  timeZone: string,
+): boolean {
+  return discordReferenceCandidateIsGrounded(enriched, originalText, timeZone, false);
+}
+
+function discordReferenceCandidateIsGrounded(
+  enriched: EnrichedCandidate,
+  originalText: string,
+  timeZone: string,
+  requiresRequestedClock: boolean,
+): boolean {
+  const classification = classifyDiscordTimestampInput(originalText);
+  if (classification.route !== 'model') {
+    return true;
+  }
+  if (classification.references.length !== 1) {
+    return false;
+  }
+  const reference = classification.references[0]!;
+  if (discordReferenceRequestsRange(originalText, reference.raw)) {
+    return false;
+  }
+  if (discordReferenceHasUnsupportedCalendarTransform(originalText, reference.raw)) {
+    return false;
+  }
+  const expectedDelta = expectedDiscordReferenceShift(originalText, [reference.raw]);
+  if (expectedDelta === undefined) {
+    return false;
+  }
+  try {
+    const anchor = Temporal.Instant.fromEpochMilliseconds(reference.epochSeconds * 1000).toZonedDateTimeISO(timeZone);
+    const expected = anchor.add(expectedDelta);
+    const candidate = Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime).withTimeZone(timeZone);
+    const requestedClockKeys = new Set(requestedDiscordReferenceClocks(originalText).map(clockKey));
+    if (requestedClockKeys.size === 0) {
+      return !requiresRequestedClock && candidate.epochMilliseconds === expected.epochMilliseconds;
+    }
+    if (!requiresRequestedClock && requestedClockKeys.size !== 1) {
+      return false;
+    }
+    const candidateClock = { hour: candidate.hour, minute: candidate.minute };
+    const requestedWallClock = Temporal.ZonedDateTime.from({
+      timeZone,
+      year: candidate.year,
+      month: candidate.month,
+      day: candidate.day,
+      hour: candidateClock.hour,
+      minute: candidateClock.minute,
+    }, { disambiguation: 'reject' });
+    return Temporal.PlainDate.compare(candidate.toPlainDate(), expected.toPlainDate()) === 0
+      && requestedClockKeys.has(clockKey(candidateClock))
+      && requestedWallClock.epochMilliseconds === candidate.epochMilliseconds
+      && candidate.second === 0
+      && candidate.millisecond === 0
+      && candidate.microsecond === 0
+      && candidate.nanosecond === 0;
+  } catch {
+    return false;
+  }
+}
+
+function discordReferenceRequestsRange(text: string, reference: string): boolean {
+  let residue = text.replace(reference, ' ');
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:0?[1-9]|1[0-2])[0-5]\d|(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
+  const rangeClock = String.raw`(?:${clock})(?!\d)(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)`;
+  const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  residue = residue
+    .replace(new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
+    .replace(new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+<t:\d+(?::[tTdDfFR])?>\s+to\s+${clock}`, 'giu'), ' ')
+    .replace(new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ')
+    .replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, ' ');
+  return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
+    || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
+    || new RegExp(String.raw`\bbetween\s*(?:${rangeClock}\s*)?and(?:\s*${rangeClock})?`, 'iu').test(residue)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${rangeClock}`, 'iu').test(residue)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+<t:\d+(?::[tTdDfFR])?>\s*(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+|and\s+)?|\band(?:\s+then)?\s+)(?:it\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'iu').test(text)
+    || new RegExp(String.raw`(?:^|\bfrom\s+)<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}(?:\s+<t:\d+(?::[tTdDfFR])?>(?!\w))?`, 'iu').test(text);
+}
+
+function discordReferenceHasUnsupportedCalendarTransform(text: string, reference: string): boolean {
+  let residue = text.replace(reference, ' ').toLowerCase();
+  residue = residue
+    .replace(new RegExp(String.raw`\b(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\b`, 'giu'), ' ')
+    .replace(/\b(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next)\b/giu, ' ');
+  if (discordReferenceHasSupportedRelativeDayRelationship(text)) {
+    residue = residue.replace(/\b(?:tomorrow|yesterday)\b/giu, ' ');
+  }
+  if (/\b(?:set|change|move|use)\s+(?:the\s+)?(?:month|year)\s+(?:to|as)\s+\d{1,4}\b/iu.test(residue)) {
+    return true;
+  }
+  if (/\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b|\b\d{1,2}[-/]\d{1,2}\b|\b(?:on|for|date)\s+\d{1,2}\.\d{1,2}\b/iu.test(residue)) {
+    return true;
+  }
+  if (/\b(?:christmas|thanksgiving|easter|new\s+year(?:'s)?|memorial\s+day|labor\s+day|independence\s+day|halloween|hanukkah|kwanzaa|ramadan|eid(?:\s+al[- ](?:fitr|adha))?|valentine(?:'s)?\s+day|martin\s+luther\s+king(?:\s+jr\.?)?\s+day|presidents?\s+day|veterans?\s+day)\b/iu.test(residue)) {
+    return true;
+  }
+  const namedCalendarResidue = residue.replace(
+    /\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+(?:the\s+)?same\s+(?:day|date)\s+(?:at|by|around)\b/giu,
+    ' ',
+  );
+  if (/\b(?:(?:on|for)|(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as))\s+[a-z][a-z.,'’-]*(?:\s+[a-z][a-z.,'’-]*){0,5}\s+(?:at|by|around)\b/iu.test(namedCalendarResidue)) {
+    return true;
+  }
+  if (/\b(?:move|set|change|use)(?:\s+it)?\s+(?:to|for|as)\s+(?!the\s+same\s+(?:day|date)\b)[a-z][a-z.,'’-]*(?:\s+[a-z][a-z.,'’-]*){0,5}(?:\s*$|\s*[,.!?;])/iu.test(namedCalendarResidue)) {
+    return true;
+  }
+  return /\b(?:set|change|move|use)\s+(?:the\s+)?(?:day|date)(?:\s+of\s+(?:the\s+)?month)?\s+(?:to|as)\s+\d{1,2}\b|\b(?:\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|thirtieth|thirty-first)\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:start|beginning|end|last)\s+of\s+(?:the\s+|that\s+|this\s+)?(?:day|week|month|quarter|year)\b|\b(?:of|in)\s+(?:the\s+|that\s+|this\s+)?(?:week|month|quarter|year)\b/iu.test(residue);
 }
 
 function canUseForPlanClarification(enriched: EnrichedCandidate): boolean {
@@ -4361,6 +4763,76 @@ function compactFeatureFlags(features: TemporalFeatureFlags): TemporalFeatureFla
   return compact;
 }
 
+function clarificationLabelForCandidate(
+  label: string,
+  enriched: EnrichedCandidate,
+  originalText: string,
+  timeZone: string,
+): string {
+  const classification = classifyDiscordTimestampInput(originalText);
+  if (classification.route === 'model' && classification.references.length > 0) {
+    return formatClockLabel(Temporal.ZonedDateTime.from(enriched.candidate.zonedDateTime).withTimeZone(timeZone));
+  }
+  return conciseClarificationLabel(label, enriched);
+}
+
+function candidateHasExactClock(candidate: Candidate, clock: { hour: number; minute: number }, timeZone: string): boolean {
+  const zdt = Temporal.ZonedDateTime.from(candidate.zonedDateTime).withTimeZone(timeZone);
+  return zdt.hour === clock.hour
+    && zdt.minute === clock.minute
+    && zdt.second === 0
+    && zdt.millisecond === 0
+    && zdt.microsecond === 0
+    && zdt.nanosecond === 0;
+}
+
+function temporalClockChoiceContractError(
+  planResult: TemporalPlanPlannerOutput,
+  plans: TemporalPlan[],
+  originalText: string,
+): string | undefined {
+  const choiceSteps = plans.flatMap((plan) => plan.steps
+    .map((step, stepIndex) => ({ plan, step, stepIndex }))
+    .filter(({ step }) => step.options !== null));
+  if (choiceSteps.length === 0) {
+    return undefined;
+  }
+  if (planResult.outcome !== 'clarification' || planResult.clarificationQuestion === null) {
+    return 'Clock options require a clarification outcome and question.';
+  }
+  if (plans.length !== 1 || choiceSteps.length !== 1) {
+    return 'Compact clock clarification requires exactly one plan and one choice-bearing step.';
+  }
+  const { plan, step, stepIndex } = choiceSteps[0]!;
+  if (step.operation !== 'resolve_clock_time') {
+    return 'Only resolve_clock_time may contain clock options.';
+  }
+  if (step.text !== null || step.query !== null) {
+    return 'resolve_clock_time must use either text or options, not both.';
+  }
+  const labels = new Set(step.options!.map((option) => option.label.trim().toLocaleLowerCase('en-US')));
+  const texts = new Set(step.options!.map((option) => option.text.trim().toLocaleLowerCase('en-US')));
+  if (labels.size !== step.options!.length || texts.size !== step.options!.length) {
+    return 'Clock option labels and texts must be unique.';
+  }
+  const requestedClockKeys = new Set(requestedDiscordReferenceClocks(originalText).map(clockKey));
+  const optionClockKeys = new Set(step.options!.flatMap((option) => parsePlanClockText(option.text).map(clockKey)));
+  if (
+    requestedClockKeys.size === 0
+    || [...optionClockKeys].some((key) => !requestedClockKeys.has(key))
+    || (/\b(?:either|or)\b/iu.test(originalText) && optionClockKeys.size !== requestedClockKeys.size)
+  ) {
+    return 'Clock options must match the clocks requested in the user input.';
+  }
+  const terminalIndexes = isTimeRangePlan(plan)
+    ? [plan.startStep, plan.endStep].filter((index): index is number => index !== null)
+    : [plan.finalStep ?? plan.steps.length - 1];
+  if (!terminalIndexes.some((index) => temporalPlanStepDependencies(plan, index).has(stepIndex))) {
+    return 'Clock option step must feed a final result.';
+  }
+  return undefined;
+}
+
 function planFinalStepExecutesExplicitClockTransform(plan: TemporalPlan): boolean {
   const finalStepIndex = plan.finalStep ?? plan.steps.length - 1;
   const operation = plan.steps[finalStepIndex]?.operation;
@@ -4372,7 +4844,11 @@ function presentationFormatIndex(format: PlanPresentationFormat): number {
   return index >= 0 ? index : 4;
 }
 
-function discordReferencePlanError(plans: TemporalPlan[], originalText: string): string | undefined {
+function discordReferencePlanError(
+  plans: TemporalPlan[],
+  originalText: string,
+  requestTimeZone: string,
+): string | undefined {
   const classification = classifyDiscordTimestampInput(originalText);
   if (classification.route !== 'model' || classification.references.length === 0) {
     return undefined;
@@ -4402,17 +4878,904 @@ function discordReferencePlanError(plans: TemporalPlan[], originalText: string):
 
     if (classification.meaningfulResidue) {
       const allReferenceIndexes = new Set([...referenceStepIndexes.values()].flat());
-      const derivesFromReference = plan.steps.some((step) => (
-        step.operation !== 'resolve_calendar_query'
-        && step.baseStep !== null
-        && allReferenceIndexes.has(step.baseStep)
-      ));
-      if (!derivesFromReference) {
-        return 'Model plan did not derive the requested transformation from an explicit Discord timestamp reference operand.';
+      const terminalIndexes = isTimeRangePlan(plan)
+        ? [plan.startStep, plan.endStep].filter((index): index is number => index !== null)
+        : [plan.finalStep ?? plan.steps.length - 1];
+      const terminalDependencies = terminalIndexes.map((index) => temporalPlanStepDependencies(plan, index));
+      if (
+        terminalDependencies.length === 0
+        || terminalDependencies.some((dependencies) => ![...dependencies].some((index) => allReferenceIndexes.has(index)))
+      ) {
+        return 'Model plan final output did not derive from an explicit Discord timestamp reference operand.';
+      }
+      const usedReferenceIndexes = new Set(terminalDependencies.flatMap((dependencies) => [...dependencies]));
+      const unusedReferences = [...referenceStepIndexes.entries()]
+        .filter(([, indexes]) => !indexes.some((index) => usedReferenceIndexes.has(index)))
+        .map(([raw]) => raw);
+      if (unusedReferences.length > 0) {
+        return `Model plan final output did not derive from required Discord timestamp reference operand(s): ${unusedReferences.join(', ')}.`;
+      }
+      if (isTimeRangePlan(plan) && terminalDependencies.length === 2 && classification.references.length === 2) {
+        const [startReference, endReference] = classification.references;
+        if (startReference!.raw !== endReference!.raw) {
+          const startReferenceIndexes = referenceStepIndexes.get(startReference!.raw)!;
+          const endReferenceIndexes = referenceStepIndexes.get(endReference!.raw)!;
+          const startDependencies = terminalDependencies[0]!;
+          const endDependencies = terminalDependencies[1]!;
+          if (
+            !startReferenceIndexes.some((index) => startDependencies.has(index))
+            || endReferenceIndexes.some((index) => startDependencies.has(index))
+            || !endReferenceIndexes.some((index) => endDependencies.has(index))
+            || startReferenceIndexes.some((index) => endDependencies.has(index))
+          ) {
+            return 'Model range plan did not preserve the requested Discord-reference endpoint order.';
+          }
+        }
+      }
+      const semanticsError = discordReferencePlanSemanticsError(
+        plan,
+        terminalDependencies,
+        originalText,
+        classification.references.map((reference) => reference.raw),
+        requestTimeZone,
+      );
+      if (semanticsError !== undefined) {
+        return semanticsError;
       }
     }
   }
   return undefined;
+}
+
+function temporalPlanStepDependencies(plan: TemporalPlan, stepIndex: number): Set<number> {
+  const dependencies = new Set<number>();
+  const visit = (index: number): void => {
+    if (dependencies.has(index)) {
+      return;
+    }
+    const planStep = plan.steps[index];
+    if (planStep === undefined) {
+      return;
+    }
+    dependencies.add(index);
+    for (const dependency of temporalPlanStepConsumedDependencies(planStep)) {
+      if (dependency !== null) {
+        visit(dependency);
+      }
+    }
+  };
+  visit(stepIndex);
+  return dependencies;
+}
+
+function temporalPlanStepConsumedDependencies(step: TemporalPlanStep): Array<number | null> {
+  switch (step.operation) {
+    case 'resolve_calendar_query':
+    case 'resolve_weekday_anchor':
+    case 'resolve_holiday':
+    case 'propose_candidate':
+      return [step.timeZoneStep];
+    case 'shift_datetime':
+    case 'set_clock_time':
+    case 'combine_date_time':
+      return [step.baseStep, step.time === null ? step.timeStep : null, step.timeZoneStep];
+    case 'resolve_timezone':
+    case 'resolve_clock_time':
+    case 'interpret_clock_phrase':
+      return [];
+  }
+}
+
+const DISCORD_SHIFT_DELTA_KEYS = ['years', 'months', 'weeks', 'days', 'hours', 'minutes'] as const;
+type DiscordShiftDeltaKey = typeof DISCORD_SHIFT_DELTA_KEYS[number];
+
+function discordReferencePlanSemanticsError(
+  plan: TemporalPlan,
+  terminalDependencies: Set<number>[],
+  originalText: string,
+  references: string[],
+  requestTimeZone: string,
+): string | undefined {
+  if (discordReferenceHasMalformedClockSetter(originalText)) {
+    return 'Discord-reference clock setter contained a malformed clock value.';
+  }
+  if (references.some((reference) => discordReferenceHasUnsupportedCalendarTransform(originalText, reference))) {
+    return 'Model plan used a Discord-reference calendar transformation that could not be validated safely.';
+  }
+  const explicitReferenceSpan = /<t:\d+(?::[tTdDfFR])?>\s*(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*<t:\d+(?::[tTdDfFR])?>/iu.test(originalText);
+  const requestsRange = explicitReferenceSpan
+    || references.some((reference) => discordReferenceRequestsRange(originalText, reference));
+  const returnsRange = isTimeRangePlan(plan);
+  if (requestsRange && !returnsRange) {
+    return 'Model plan returned an instant for a Discord-reference range request.';
+  }
+  if (!requestsRange && returnsRange) {
+    return 'Model plan returned a range for a singular Discord-reference request.';
+  }
+  const extractedEndpointShifts = isTimeRangePlan(plan) ? requestedDiscordRangeEndpointShifts(originalText) : new Map();
+  const requestedEndpointShifts = extractedEndpointShifts.size > 1 ? extractedEndpointShifts : new Map();
+  const expectedDelta = requestedEndpointShifts.size > 0
+    ? Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>
+    : expectedDiscordReferenceShift(originalText, references);
+  if (expectedDelta === undefined) {
+    return 'Model plan used surrounding Discord-reference shift language that could not be validated safely.';
+  }
+
+  const terminalIndexes = new Set(terminalDependencies.flatMap((dependencies) => [...dependencies]));
+  const terminalSteps = plan.steps
+    .map((step, index) => ({ step, index }))
+    .filter(({ index }) => terminalIndexes.has(index));
+  const requestedTimeZoneResolution = resolveTimeZone({
+    text: originalText,
+    calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+  });
+  const hasExplicitTimeZoneSignal = classifyDiscordTimestampInput(originalText).signals.includes('timezone');
+  if (requestedTimeZoneResolution.status === 'invalid') {
+    return 'Discord-reference timezone suffix is malformed.';
+  }
+  if (hasExplicitTimeZoneSignal && requestedTimeZoneResolution.status === 'not_found') {
+    return 'Discord-reference timezone suffix could not be resolved safely.';
+  }
+  const requestedTimeZone = requestedTimeZoneResolution.status === 'resolved'
+    ? requestedTimeZoneResolution.candidates[0]?.timeZone
+    : undefined;
+  if (requestedTimeZoneResolution.status === 'ambiguous') {
+    return 'Discord-reference timezone intent could not be validated safely.';
+  }
+  const timeZonesForDependencies = (dependencies: Set<number>): string[] => [...dependencies].flatMap((index) => {
+    const step = plan.steps[index]!;
+    if (step.operation === 'resolve_timezone') {
+      const resolvedText = step.text ?? step.query ?? step.timeZone;
+      if (resolvedText === null) return [];
+      const resolution = resolveTimeZone({
+        text: resolvedText,
+        calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+      });
+      return resolution.status === 'resolved' ? resolution.candidates.map((candidate) => candidate.timeZone) : [];
+    }
+    return step.timeZone === null ? [] : [step.timeZone];
+  });
+  const terminalTimeZonesByTerminal = terminalDependencies.map(timeZonesForDependencies);
+  const terminalTimeZones = terminalTimeZonesByTerminal.flat();
+  if (requestedTimeZone !== undefined && !terminalTimeZones.some((timeZone) => timeZone.toLowerCase() === requestedTimeZone.toLowerCase())) {
+    return 'Model plan omitted the explicit timezone requested for the Discord-reference clock.';
+  }
+  const ownedClockEndpoint = isTimeRangePlan(plan) ? requestedDiscordRangeClockEndpoint(originalText) : undefined;
+  if (
+    requestedTimeZone !== undefined
+    && ownedClockEndpoint !== undefined
+    && !terminalTimeZonesByTerminal[ownedClockEndpoint === 'start' ? 0 : 1]!.some((timeZone) => timeZone.toLowerCase() === requestedTimeZone.toLowerCase())
+  ) {
+    return `Model range plan omitted the explicit timezone from the ${ownedClockEndpoint} clock endpoint.`;
+  }
+  if (isTimeRangePlan(plan)) {
+    for (const [endpoint, timeZone] of requestedDiscordOwnedEndpointTimeZones(originalText, requestTimeZone)) {
+      if (!terminalTimeZonesByTerminal[endpoint === 'start' ? 0 : 1]!.some((candidate) => candidate.toLowerCase() === timeZone.toLowerCase())) {
+        return `Model range plan omitted the explicit timezone from the ${endpoint} clock endpoint.`;
+      }
+    }
+  }
+  for (const { step } of terminalSteps) {
+    const allowedTimeZone = requestedTimeZone ?? requestTimeZone;
+    if (step.timeZone !== null && step.timeZone.toLowerCase() !== allowedTimeZone.toLowerCase()) {
+      return 'Model plan used a timezone override that was not grounded in the Discord-reference request.';
+    }
+    if (step.operation === 'resolve_timezone') {
+      const resolvedText = step.text ?? step.query ?? step.timeZone;
+      const resolution = resolvedText === null ? undefined : resolveTimeZone({
+        text: resolvedText,
+        calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+      });
+      if (resolution?.status !== 'resolved' || !resolution.candidates.some((candidate) => candidate.timeZone.toLowerCase() === allowedTimeZone.toLowerCase())) {
+        return 'Model plan used a timezone step that was not grounded in the Discord-reference request.';
+      }
+    }
+  }
+
+  const shiftSteps = terminalSteps.filter(({ step }) => step.operation === 'shift_datetime');
+  const arithmeticShiftSteps = shiftSteps.filter(({ step }) =>
+    DISCORD_SHIFT_DELTA_KEYS.some((key) => (step.delta[key] ?? 0) !== 0),
+  );
+  const endpointShiftError = requestedEndpointShifts.size > 0
+    ? discordReferenceEndpointShiftsError(terminalDependencies, arithmeticShiftSteps, requestedEndpointShifts)
+    : undefined;
+  if (endpointShiftError !== undefined) {
+    return endpointShiftError;
+  }
+  const rangeTargetError = requestedEndpointShifts.size === 0
+    ? discordReferenceRangeShiftTargetError(plan, terminalDependencies, arithmeticShiftSteps, originalText)
+    : undefined;
+  if (rangeTargetError !== undefined) {
+    return rangeTargetError;
+  }
+  const clockSemanticsError = discordReferenceClockSemanticsError(plan, terminalDependencies, originalText);
+  if (clockSemanticsError !== undefined) {
+    return clockSemanticsError;
+  }
+  const expectedIsZero = DISCORD_SHIFT_DELTA_KEYS.every((key) => expectedDelta[key] === 0);
+  if (requestedEndpointShifts.size > 0) {
+    return undefined;
+  }
+  if (!expectedIsZero && arithmeticShiftSteps.length !== 1) {
+    return 'Model plan shift structure did not match the requested Discord-reference transformation.';
+  }
+  if (expectedIsZero) {
+    const hasUnexpectedShift = shiftSteps.some(({ step }) =>
+      DISCORD_SHIFT_DELTA_KEYS.some((key) => (step.delta[key] ?? 0) !== 0),
+    );
+    return hasUnexpectedShift
+      ? 'Model plan shift did not match the requested Discord-reference transformation.'
+      : undefined;
+  }
+
+  const actualDelta = arithmeticShiftSteps[0]!.step.delta;
+  const mismatch = DISCORD_SHIFT_DELTA_KEYS.some((key) => (actualDelta[key] ?? 0) !== expectedDelta[key]);
+  return mismatch
+    ? 'Model plan shift did not match the requested Discord-reference transformation.'
+    : undefined;
+}
+
+function discordReferenceRangeShiftTargetError(
+  plan: TemporalPlan,
+  terminalDependencies: Set<number>[],
+  shiftSteps: Array<{ step: TemporalPlanStep; index: number }>,
+  originalText: string,
+): string | undefined {
+  if (!isTimeRangePlan(plan) || terminalDependencies.length !== 2 || shiftSteps.length === 0) {
+    return undefined;
+  }
+  const target = requestedDiscordRangeArithmeticEndpoint(originalText);
+  if (target === undefined) {
+    return 'Model range plan used a shift whose target endpoint could not be validated safely.';
+  }
+  const targetIndex = target === 'start' ? 0 : 1;
+  const otherIndex = targetIndex === 0 ? 1 : 0;
+  const shiftIndexes = new Set(shiftSteps.map(({ index }) => index));
+  const targetHasShift = [...terminalDependencies[targetIndex]!].some((index) => shiftIndexes.has(index));
+  const otherHasShift = [...terminalDependencies[otherIndex]!].some((index) => shiftIndexes.has(index));
+  return targetHasShift && !otherHasShift
+    ? undefined
+    : `Model range plan did not apply the requested shift to the ${target} endpoint only.`;
+}
+
+function discordReferenceEndpointShiftsError(
+  terminalDependencies: Set<number>[],
+  shiftSteps: Array<{ step: TemporalPlanStep; index: number }>,
+  requested: Map<'start' | 'end', Record<DiscordShiftDeltaKey, number>>,
+): string | undefined {
+  const shiftIndexes = new Set(shiftSteps.map(({ index }) => index));
+  for (const target of ['start', 'end'] as const) {
+    const targetSteps = shiftSteps.filter(({ index }) => terminalDependencies[target === 'start' ? 0 : 1]!.has(index));
+    const expected = requested.get(target);
+    if (expected === undefined) {
+      if (targetSteps.length > 0) return `Model range plan applied an unrequested shift to the ${target} endpoint.`;
+      continue;
+    }
+    const actual = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [
+      key,
+      targetSteps.reduce((sum, { step }) => sum + (step.operation === 'shift_datetime' ? (step.delta[key] ?? 0) : 0), 0),
+    ])) as Record<DiscordShiftDeltaKey, number>;
+    if (targetSteps.length === 0 || DISCORD_SHIFT_DELTA_KEYS.some((key) => actual[key] !== expected[key])) {
+      return `Model range plan did not apply the requested shift to the ${target} endpoint.`;
+    }
+  }
+  const used = new Set(terminalDependencies.flatMap((dependencies) => [...dependencies]).filter((index) => shiftIndexes.has(index)));
+  return used.size === shiftSteps.length ? undefined : 'Model range plan used a shift outside the requested endpoints.';
+}
+
+function discordReferenceClockSemanticsError(
+  plan: TemporalPlan,
+  terminalDependencies: Set<number>[],
+  originalText: string,
+): string | undefined {
+  if (discordReferenceHasMalformedClockSetter(originalText)) {
+    return 'Discord-reference clock setter contained a malformed clock value.';
+  }
+  const requestedClocks = requestedDiscordReferenceClocks(originalText);
+  const singularClockMentionCount = discordReferenceClockMentionCount(originalText);
+  if (!isTimeRangePlan(plan) && singularClockMentionCount > 1) {
+    return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
+  }
+  const clocksByTerminal = terminalDependencies.map((dependencies) => {
+    const consumed = [...dependencies].map((index) => consumedPlanStepClocks(plan, plan.steps[index]!));
+    return consumed.some((clocks) => clocks === undefined)
+      ? undefined
+      : uniqueClocks(consumed.flatMap((clocks) => clocks ?? []));
+  });
+  if (clocksByTerminal.some((clocks) => clocks === undefined)) {
+    return 'Model plan used a consumed clock operand that could not be validated safely.';
+  }
+  const actualClocks = uniqueClocks(clocksByTerminal.flatMap((clocks) => clocks ?? []));
+  const requestedKeys = new Set(requestedClocks.map(clockKey));
+  const actualKeys = new Set(actualClocks.map(clockKey));
+  if (requestedKeys.size > 0 && !discordReferenceHasSupportedClockRelationship(originalText)) {
+    return 'Discord-reference clock relationship could not be validated safely.';
+  }
+  if (requestedKeys.size === 0) {
+    return actualKeys.size === 0
+      ? undefined
+      : 'Model plan applied a clock change that was not requested for the Discord reference.';
+  }
+  if (
+    actualKeys.size !== requestedKeys.size
+    || [...actualKeys].some((key) => !requestedKeys.has(key))
+  ) {
+    return 'Model plan clock did not match the requested Discord-reference clock.';
+  }
+  if (isTimeRangePlan(plan) && terminalDependencies.length === 2) {
+    const orderedRangeClocks = requestedDiscordReferenceOrderedRangeClocks(originalText);
+    if (orderedRangeClocks !== undefined) {
+      const startKeys = new Set(clocksByTerminal[0]!.map(clockKey));
+      const endKeys = new Set(clocksByTerminal[1]!.map(clockKey));
+      return startKeys.size === 1
+        && endKeys.size === 1
+        && startKeys.has(clockKey(orderedRangeClocks[0]))
+        && endKeys.has(clockKey(orderedRangeClocks[1]))
+        ? undefined
+        : 'Model range plan did not apply the requested clocks to their ordered endpoints.';
+    }
+    const ownedEndpointClocks = requestedDiscordOwnedEndpointClocks(originalText);
+    if (ownedEndpointClocks.size > 0) {
+      const ownedClockCount = discordReferenceOwnedEndpointClockMentionCount(originalText);
+      if (ownedClockCount !== singularClockMentionCount) {
+        return 'Model range plan included clocks outside the validated Discord-reference endpoint clause.';
+      }
+      for (const [target, clocks] of ownedEndpointClocks) {
+        const targetIndex = target === 'start' ? 0 : 1;
+        const targetKeys = new Set(clocksByTerminal[targetIndex]!.map(clockKey));
+        const ownedKeys = new Set(clocks.map(clockKey));
+        if (targetKeys.size !== ownedKeys.size || [...targetKeys].some((key) => !ownedKeys.has(key))) {
+          return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
+        }
+      }
+      for (const target of ['start', 'end'] as const) {
+        if (!ownedEndpointClocks.has(target)) {
+          const targetIndex = target === 'start' ? 0 : 1;
+          if (clocksByTerminal[targetIndex]!.length > 0) {
+            return `Model range plan applied a clock to the unrequested ${target} endpoint.`;
+          }
+        }
+      }
+      return undefined;
+    }
+    const target = requestedDiscordRangeClockEndpoint(originalText);
+    if (target !== undefined) {
+      if (singularClockMentionCount !== 1) {
+        return 'Model range plan included clocks outside the validated Discord-reference endpoint clause.';
+      }
+      const targetIndex = target === 'start' ? 0 : 1;
+      const otherIndex = targetIndex === 0 ? 1 : 0;
+      const targetKeys = new Set(clocksByTerminal[targetIndex]!.map(clockKey));
+      const otherKeys = new Set(clocksByTerminal[otherIndex]!.map(clockKey));
+      if (
+        targetKeys.size !== requestedKeys.size
+        || [...targetKeys].some((key) => !requestedKeys.has(key))
+        || otherKeys.size !== 0
+      ) {
+        return `Model range plan did not apply the requested clock to the ${target} endpoint only.`;
+      }
+    } else if (requestedClocks.length > 1) {
+      return 'Model range plan clock ownership could not be validated safely for each endpoint.';
+    }
+  }
+  return undefined;
+}
+
+function requestedDiscordReferenceOrderedRangeClocks(
+  text: string,
+): [{ hour: number; minute: number }, { hour: number; minute: number }] | undefined {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d|noon|midnight)`;
+  const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const anchoredRange = new RegExp(
+    String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?(${clock})\s*${separator}\s*(${clock})`,
+    'iu',
+  ).exec(text);
+  if (anchoredRange === null) return undefined;
+  const start = parsePlanClockText(anchoredRange[1] ?? '');
+  const end = parsePlanClockText(anchoredRange[2] ?? '');
+  return start.length === 1 && end.length === 1 ? [start[0]!, end[0]!] : undefined;
+}
+
+function discordReferenceHasSupportedClockRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const clock = String.raw`(?:noon\b|midnight\b|\d{1,2}\s+o['\u2019]clock\b|\d{1,2}(?::|\.)\d{2}|\d{3,4}\b|\d{1,2}\s*[ap](?:\.?m\.?)?\b|(?:0?[1-9]|1[0-2])\b)`;
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
+  const rangeSeparator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const endpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)`;
+  const startEndpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?)`;
+  const endEndpoint = String.raw`(?:end(?:s|ing)?|finish(?:es|ing)?)`;
+  const endpointJoin = String.raw`(?:\s*,\s*(?:and(?:\s+then)?\s+)?|\s+and(?:\s+then)?\s+)`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:(?:(?:the|that|same)\s+)?(?:day|date)\s+)?at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`^\s*${reference}(?!\w)\s+${shift}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+${reference}\s+(?:to|at)\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+${reference}\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:set|change|move|make|use|keep)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s+(?:was|is)\s+at\s+${clock}\s*[,;:.!?-]\s*(?:(?:and\s+)?then\s+)?(?:set|change|move|make|use|keep)\s+it\s+(?:(?:to|at)\s+)?${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+${reference}\s+(?:for|on)\s+(?:the\s+)?same\s+(?:day|date)\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\bkeep\s+${reference}(?:['\u2019]s)?\s+(?:day|date)\s+and\s+use\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${clock}\s+(?:on|for|using)\s+(?:the\s+)?(?:same\s+)?(?:day|date)\s+(?:as|of)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\bat\s+${clock}[\s,;:\-]+(?:use|using)\s+(?:the\s+)?(?:same\s+(?:day|date)\s+(?:as|of)|(?:(?:following|next|previous|prior|preceding)\s+)?(?:day|date)(?:\s+(?:after|before|following|preceding))?)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${clock}[\s,;:\-]+on\s+(?:the\s+)?(?:day|date)\s+(?:after|before|following|preceding)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:from|to|through|thru|until|til|till|between|and)\s+${reference}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}\s+${endpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\bbetween\s+(?:${reference}\s+and\s+${clock}|${clock}\s+and\s+${reference})`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?${clock}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`${clock}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${startEndpoint}\s+at\s+${reference}${endpointJoin}${endEndpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${startEndpoint}\s+at\s+${clock}${endpointJoin}${endEndpoint}\s+at\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endEndpoint}\s+at\s+${reference}${endpointJoin}${startEndpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endEndpoint}\s+at\s+${clock}${endpointJoin}${startEndpoint}\s+at\s+${reference}`, 'iu').test(text);
+}
+
+function requestedDiscordRangeClockEndpoint(text: string): 'start' | 'end' | undefined {
+  const targets = new Set<'start' | 'end'>();
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*[ap](?:\.?m\.?)?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d|(?:0?[1-9]|1[0-2])\s+o['’]clock\b|midnight\b|noon\b)`;
+  const separator = String.raw`(?:[-–—]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const referenceCount = [...text.matchAll(new RegExp(reference, 'giu'))].length;
+  if (referenceCount === 1) {
+    if (new RegExp(String.raw`${reference}\s*${separator}\s*${clock}`, 'iu').test(text)) targets.add('end');
+    if (new RegExp(String.raw`${clock}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
+    if (new RegExp(String.raw`\bbetween\s+${reference}\s+and\s+${clock}`, 'iu').test(text)) targets.add('end');
+    if (new RegExp(String.raw`\bbetween\s+${clock}\s+and\s+${reference}`, 'iu').test(text)) targets.add('start');
+    if (new RegExp(String.raw`${reference}\s*${separator}\s*(?:0?[1-9]|1[0-2])[0-5]\d\b`, 'iu').test(text)) targets.add('end');
+    if (new RegExp(String.raw`\b(?:0?[1-9]|1[0-2])[0-5]\d\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
+  }
+  if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('start');
+  if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+${clock}`, 'iu').test(text)) targets.add('end');
+  for (const match of text.matchAll(new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'giu'))) {
+    targets.add(match[1]!.toLowerCase() as 'start' | 'end');
+  }
+  return targets.size === 1 ? [...targets][0] : undefined;
+}
+
+function discordReferenceClockMentionCount(text: string): number {
+  const clockText = maskRecognizedFixedOffsetText(text);
+  const ambiguousClockMentions = ambiguousBareClockMentions(clockText);
+  const embeddedBareHourMentionCount = [...clockText.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
+    .filter((match) => match.index !== undefined && !ambiguousClockMentions.some((mention) =>
+      rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length),
+    ))
+    .length;
+  return explicitAmPmClockMentions(clockText).length
+    + ambiguousClockMentions.length
+    + [...clockText.matchAll(/\b(?:noon|midnight)\b/giu)].length
+    + [...clockText.matchAll(/(?<![\d:.])(?:0?0|1[3-9]|2[0-3])[:.][0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
+    + embeddedBareHourMentionCount;
+}
+
+function requestedDiscordOwnedEndpointClocks(
+  text: string,
+): Map<'start' | 'end', Array<{ hour: number; minute: number }>> {
+  const owned = new Map<'start' | 'end', Array<{ hour: number; minute: number }>>();
+  const reference = /<t:\d+(?::[tTdDfFR])?>/iu;
+  for (const clause of discordReferenceEndpointClockClauses(text)) {
+    const target = requestedDiscordRangeClockEndpoint(clause);
+    if (target === undefined) continue;
+    const explicitEndpointSetter = /\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\b/iu.test(clause);
+    const referenceLinkedRange = reference.test(clause) && discordReferenceHasSupportedClockRelationship(clause);
+    if (!explicitEndpointSetter && !referenceLinkedRange) continue;
+    const clocks = requestedDiscordReferenceClocks(clause);
+    if (clocks.length === 0) continue;
+    owned.set(target, uniqueClocks([...(owned.get(target) ?? []), ...clocks]));
+  }
+  return owned;
+}
+
+function discordReferenceOwnedEndpointClockMentionCount(text: string): number {
+  const reference = /<t:\d+(?::[tTdDfFR])?>/iu;
+  return discordReferenceEndpointClockClauses(text).reduce((count, clause) => {
+    if (requestedDiscordRangeClockEndpoint(clause) === undefined) return count;
+    const explicitEndpointSetter = /\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\b/iu.test(clause);
+    const referenceLinkedRange = reference.test(clause) && discordReferenceHasSupportedClockRelationship(clause);
+    return explicitEndpointSetter || referenceLinkedRange
+      ? count + discordReferenceClockMentionCount(clause)
+      : count;
+  }, 0);
+}
+
+function discordReferenceEndpointClockClauses(text: string): string[] {
+  return text.split(/[;.!?]+|\band(?:\s+then)?\s+(?=(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)\b)/iu);
+}
+
+function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' | undefined {
+  const targets = new Set<'start' | 'end'>();
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const duration = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
+  const shift = String.raw`${duration}\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
+  if (new RegExp(String.raw`${reference}\s*${separator}\s*${shift}\s+${reference}`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`(?:^|\bfrom\s+)${reference}\s*${separator}\s*${shift}(?!\s+${reference})`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`${shift}\s+${reference}\s*${separator}\s*${reference}`, 'iu').test(text)) targets.add('start');
+  if (new RegExp(String.raw`\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+${shift}\b`, 'iu').test(text)) targets.add('end');
+  if (new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+${shift}\b`, 'iu').test(text)) targets.add('start');
+  const commandSegments = text.split(/[,;.!?]+|\band\s+(?=(?:move|shift|extend|shorten|pull|push|add)\b)/iu);
+  for (const segment of commandSegments) {
+    for (const match of segment.matchAll(new RegExp(String.raw`\b(?:move|shift|extend|shorten|pull|push)\s+(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
+      targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+    }
+  }
+  for (const match of text.matchAll(new RegExp(String.raw`\badd\s+${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)\b`, 'giu'))) {
+    targets.add(match[1]!.toLowerCase() as 'start' | 'end');
+  }
+  for (const segment of commandSegments) {
+    for (const match of segment.matchAll(new RegExp(String.raw`\b(?:the\s+)?(start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)(?:\s+point)?\s+(?:is\s+|was\s+|gets?\s+)?(?:moved|shifted|extended|shortened|pulled|pushed)\b[^,;.!?]*\b${duration}\b`, 'giu'))) {
+      targets.add(match[1]!.toLowerCase().startsWith('start') ? 'start' : 'end');
+    }
+  }
+  return targets.size === 1 ? [...targets][0] : undefined;
+}
+
+function discordReferenceHasMalformedClockSetter(text: string): boolean {
+  const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
+  if (/\b(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+\d{1,2}\s*(?:[ap](?:\.?m\.?)?)?\s*[:.,]\s*\d+/iu.test(normalized)) {
+    return true;
+  }
+  const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\breference\s+(?:to|through|thru|until|til|till)\s+|\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+|\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+|\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+)`;
+  const setterClock = new RegExp(
+    String.raw`${setter}(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
+    'giu',
+  );
+  for (const match of normalized.matchAll(setterClock)) {
+    const token = match[1]!.trim();
+    const trailingText = match.index === undefined ? '' : normalized.slice(match.index + match[0].length);
+    if (/^\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/iu.test(trailingText)) {
+      continue;
+    }
+    const dottedBareClock = /^(\d{1,2})\.(\d{2})$/u.exec(token);
+    const validDottedBareClock = dottedBareClock !== null
+      && parsePlanClockText(`${dottedBareClock[1]}:${dottedBareClock[2]}`).length > 0;
+    const validConventionalClock = /^(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3])[:.][0-5]\d)$/iu.test(token);
+    const validCompactClock = /^(?:0?[1-9]|1[0-2])[0-5]\d$/u.test(token);
+    if (
+      !validDottedBareClock
+      && !validConventionalClock
+      && !validCompactClock
+      && !/^(?:0?[1-9]|1[0-2])$/u.test(token)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {
+  const clockText = maskRecognizedFixedOffsetText(text);
+  const clocks: Array<{ hour: number; minute: number }> = explicitAmPmClockMentions(clockText).map(({ time }) => time);
+  for (const match of clockText.matchAll(/\b(?:either\s+)?(0?[1-9]|1[0-2])(?::([0-5]\d))?\s+(?:or|\/)\s+(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*([ap])(?:\.?m\.?)?(?![\w.])/giu)) {
+    let hour = Number(match[1]) % 12;
+    if (match[3]!.toLowerCase() === 'p') hour += 12;
+    clocks.push({ hour, minute: Number(match[2] ?? 0) });
+  }
+  for (const mention of ambiguousBareClockMentions(clockText)) {
+    clocks.push(
+      { hour: mention.hour % 12, minute: mention.minute },
+      { hour: mention.hour % 12 + 12, minute: mention.minute },
+    );
+  }
+  for (const match of clockText.matchAll(/\bat\s+(0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)) {
+    const hour = Number(match[1]) % 12;
+    clocks.push({ hour, minute: 0 }, { hour: hour + 12, minute: 0 });
+  }
+  if (/\bmidnight\b/iu.test(clockText)) clocks.push({ hour: 0, minute: 0 });
+  if (/\bnoon\b/iu.test(clockText)) clocks.push({ hour: 12, minute: 0 });
+  for (const match of clockText.matchAll(/(?<![\d:.])([01]?\d|2[0-3])([:.])([0-5]\d)(?!\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?)\b)/giu)) {
+    const hour = Number(match[1]);
+    if (match[2] === '.' || hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[3]) });
+  }
+  return clocks;
+}
+
+function maskRecognizedFixedOffsetText(text: string): string {
+  return text.replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
+}
+
+function requestedDiscordOwnedEndpointTimeZones(text: string, requestTimeZone: string): Map<'start' | 'end', string> {
+  const result = new Map<'start' | 'end', string>();
+  for (const clause of discordReferenceEndpointClockClauses(text)) {
+    const target = requestedDiscordRangeClockEndpoint(clause);
+    if (target === undefined) continue;
+    const resolution = resolveTimeZone({
+      text: clause,
+      calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
+    });
+    const timeZone = resolution.status === 'resolved' ? resolution.candidates[0]?.timeZone : undefined;
+    if (timeZone !== undefined) result.set(target, timeZone);
+  }
+  return result;
+}
+
+function requestedDiscordRangeEndpointShifts(text: string): Map<'start' | 'end', Record<DiscordShiftDeltaKey, number>> {
+  const result = new Map<'start' | 'end', Record<DiscordShiftDeltaKey, number>>();
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const pattern = new RegExp(
+    String.raw`\b(move|shift|push|pull|extend|shorten)\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s*(?:by\s+)?(${amount})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)(?:\s+(${DISCORD_SHIFT_DIRECTION_SOURCE}))?\b`,
+    'giu',
+  );
+  for (const match of text.matchAll(pattern)) {
+    const verb = match[1]!.toLowerCase();
+    const target = match[2]!.toLowerCase() as 'start' | 'end';
+    const explicitDirection = match[5];
+    let direction: number | undefined;
+    if (explicitDirection !== undefined) {
+      direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(explicitDirection) ? 1 : -1;
+    } else if (verb === 'push') {
+      direction = 1;
+    } else if (verb === 'pull') {
+      direction = -1;
+    } else if (verb === 'extend') {
+      direction = target === 'start' ? -1 : 1;
+    } else if (verb === 'shorten') {
+      direction = target === 'start' ? 1 : -1;
+    }
+    if (direction === undefined || result.has(target)) return new Map();
+    const delta = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+    delta[discordShiftDeltaKey(match[4]!)] = direction * discordShiftAmount(match[3]!);
+    result.set(target, delta);
+  }
+  const addPattern = new RegExp(
+    String.raw`\badd\s+(${amount})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(start|end)(?:ing\s+point)?\b`,
+    'giu',
+  );
+  for (const match of text.matchAll(addPattern)) {
+    const target = match[3]!.toLowerCase() as 'start' | 'end';
+    if (result.has(target)) return new Map();
+    const delta = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+    delta[discordShiftDeltaKey(match[2]!)] = discordShiftAmount(match[1]!);
+    result.set(target, delta);
+  }
+  return result;
+}
+
+function consumedPlanStepClocks(
+  plan: TemporalPlan,
+  step: TemporalPlanStep,
+): Array<{ hour: number; minute: number }> | undefined {
+  if (!['shift_datetime', 'set_clock_time', 'combine_date_time'].includes(step.operation)) {
+    return [];
+  }
+  if (step.time !== null) {
+    return [step.time];
+  }
+  if (step.timeStep === null) {
+    return [];
+  }
+  const timeStep = plan.steps[step.timeStep];
+  if (timeStep === undefined) {
+    return [];
+  }
+  if (timeStep.operation === 'interpret_clock_phrase' && timeStep.time !== null) {
+    return [timeStep.time];
+  }
+  if (timeStep.operation !== 'resolve_clock_time') {
+    return [];
+  }
+  const texts = timeStep.options?.map((option) => option.text)
+    ?? [timeStep.text ?? timeStep.query].filter((value): value is string => value !== null);
+  const parsed = texts.map(parsePlanClockText);
+  return parsed.some((clocks) => clocks.length === 0)
+    || timeStep.options === null && parsed.some((clocks) => clocks.length !== 1)
+    ? undefined
+    : uniqueClocks(parsed.flat());
+}
+
+function parsePlanClockText(text: string): Array<{ hour: number; minute: number }> {
+  const explicit = explicitAmPmClockMentions(text).map(({ time }) => time);
+  if (explicit.length > 0) return explicit;
+  if (/^\s*midnight\s*$/iu.test(text)) return [{ hour: 0, minute: 0 }];
+  if (/^\s*noon\s*$/iu.test(text)) return [{ hour: 12, minute: 0 }];
+  const twentyFourHour = /^\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*$/u.exec(text);
+  return twentyFourHour === null
+    ? []
+    : [{ hour: Number(twentyFourHour[1]), minute: Number(twentyFourHour[2]) }];
+}
+
+function uniqueClocks(clocks: Array<{ hour: number; minute: number }>): Array<{ hour: number; minute: number }> {
+  return [...new Map(clocks.map((clock) => [clockKey(clock), clock])).values()];
+}
+
+function clockKey(clock: { hour: number; minute: number }): string {
+  return `${clock.hour}:${clock.minute}`;
+}
+
+function expectedDiscordReferenceShift(
+  originalText: string,
+  references: string[],
+): Record<DiscordShiftDeltaKey, number> | undefined {
+  let residue = originalText.toLowerCase();
+  for (const reference of references) {
+    residue = residue.replace(reference.toLowerCase(), ' ');
+  }
+  if (
+    /\b(?:half|quarter)\s+(?:an?\s+)?(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/iu.test(residue)
+    || /\b\d+(?:\.\d+|\/\d+)\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b/iu.test(residue)
+  ) {
+    return undefined;
+  }
+  const result = Object.fromEntries(DISCORD_SHIFT_DELTA_KEYS.map((key) => [key, 0])) as Record<DiscordShiftDeltaKey, number>;
+  const shiftAmountSource = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const amountUnitMatches = [...residue.matchAll(new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))];
+  const amountUnitDirection = new RegExp(String.raw`\b(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+(${DISCORD_SHIFT_DIRECTION_SOURCE})\b`, 'giu');
+  let matchedShift = false;
+  let matchedAmountUnitCount = 0;
+  const matchedShiftKeys = new Set<DiscordShiftDeltaKey>();
+  const consumedRanges: Array<{ start: number; end: number }> = [];
+  const recordShift = (match: RegExpMatchArray, amountIndex: number, unitIndex: number, direction: number) => {
+    const range = match.index === undefined ? undefined : { start: match.index, end: match.index + match[0].length };
+    if (range !== undefined && consumedRanges.some((consumed) => rangesOverlap(consumed.start, consumed.end - consumed.start, range.start, range.end - range.start))) {
+      return;
+    }
+    const amount = discordShiftAmount(match[amountIndex]!);
+    const key = discordShiftDeltaKey(match[unitIndex]!);
+    result[key] += direction * amount;
+    matchedShift = true;
+    matchedAmountUnitCount += 1;
+    matchedShiftKeys.add(key);
+    if (range !== undefined) consumedRanges.push(range);
+  };
+  for (const match of residue.matchAll(amountUnitDirection)) {
+    const direction = /^(?:later|after|afetr|ltaer|latre|laetr|ater)$/iu.test(match[3]!) ? 1 : -1;
+    recordShift(match, 1, 2, direction);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bextend\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 2, 3, match[1]!.toLowerCase() === 'start' ? -1 : 1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bpush\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 1, 2, 1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bpull\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 1, 2, -1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bshorten\s+(?:the\s+)?(start|end)(?:ing\s+point)?\s+by\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 2, 3, match[1]!.toLowerCase() === 'start' ? 1 : -1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\badd\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+to\s+(?:the\s+)?(?:start|end)\b`, 'giu'))) {
+    recordShift(match, 1, 2, 1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\bshift\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(back|backward|forward|ahead)\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 2, 3, /^(?:forward|ahead)$/iu.test(match[1]!) ? 1 : -1);
+  }
+  for (const match of residue.matchAll(new RegExp(String.raw`\b(?:go|move|shift)\s+(forward|ahead|back|backward)\s+(${shiftAmountSource})\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`, 'giu'))) {
+    recordShift(match, 2, 3, /^(?:forward|ahead)$/iu.test(match[1]!) ? 1 : -1);
+  }
+  if (matchedShift && !discordReferenceHasSupportedDurationRelationship(originalText)) {
+    return undefined;
+  }
+
+  const yesterdayCount = [...residue.matchAll(/\byesterday\b/giu)].length;
+  const tomorrowCount = [...residue.matchAll(/\btomorrow\b/giu)].length;
+  if (yesterdayCount > 0 || tomorrowCount > 0) {
+    if (yesterdayCount + tomorrowCount > 1) {
+      return undefined;
+    }
+    if (!discordReferenceHasSupportedRelativeDayRelationship(originalText)) {
+      return undefined;
+    }
+    if ([...matchedShiftKeys].some((key) => !['days', 'hours', 'minutes'].includes(key))) {
+      return undefined;
+    }
+    result.days += tomorrowCount - yesterdayCount;
+    matchedShift = true;
+  }
+
+  if (amountUnitMatches.length !== matchedAmountUnitCount) {
+    return undefined;
+  }
+  if (matchedAmountUnitCount > 1 && matchedShiftKeys.size > 1) {
+    return undefined;
+  }
+  if (matchedAmountUnitCount > 1 && (matchedShiftKeys.has('months') || matchedShiftKeys.has('years'))) {
+    return undefined;
+  }
+  if (matchedAmountUnitCount > 1) {
+    const orderedRanges = [...consumedRanges].sort((left, right) => left.start - right.start);
+    const explicitlyAdditive = orderedRanges.slice(1).every((range, index) => {
+      const gap = residue.slice(orderedRanges[index]!.end, range.start);
+      return /^\s*(?:[,;:–—-]\s*)?(?:(?:and\s+)?then|plus|followed\s+by|after\s+that)\s*[,;:]?\s*$/iu.test(gap);
+    });
+    if (!explicitlyAdditive) {
+      return undefined;
+    }
+  }
+
+  if (!matchedShift) {
+    const previousCalendarDayPattern = /\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu;
+    const followingCalendarDayPattern = /\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/giu;
+    const previousCalendarDayCount = [...residue.matchAll(previousCalendarDayPattern)].length;
+    const followingCalendarDayCount = [...residue.matchAll(followingCalendarDayPattern)].length;
+    if (previousCalendarDayCount + followingCalendarDayCount > 1) {
+      return undefined;
+    }
+    if (previousCalendarDayCount === 1) {
+      if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
+      result.days = -1;
+      matchedShift = true;
+    } else if (followingCalendarDayCount === 1) {
+      if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
+      result.days = 1;
+      matchedShift = true;
+    }
+  }
+
+  let unconsumedResidue = residue;
+  for (const range of consumedRanges.sort((left, right) => right.start - left.start)) {
+    unconsumedResidue = `${unconsumedResidue.slice(0, range.start)} ${unconsumedResidue.slice(range.end)}`;
+  }
+  unconsumedResidue = unconsumedResidue.replace(/\b(?:yesterday|tomorrow)\b/giu, ' ');
+  if (matchedShift && consumedRanges.length === 0) {
+    unconsumedResidue = unconsumedResidue
+      .replace(/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/giu, ' ')
+      .replace(/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)(?:\s+(?:after|relative\s+to|from))?\b|\b(?:day|date)\s+(?:after|following|next)\b/giu, ' ');
+  }
+  const unconsumedShiftHint = /\b(?:later|after|afetr|ltaer|latre|laetr|ater|earlier|before|ebefore|befoer|eariler|befor|ealier|previous|prior|preceding|following|next|ago|round(?:ed|ing)?|nearest|floor(?:ed|ing)?|ceil(?:ed|ing)?|ceiling)\b|\blast\s+(?:calendar\s+)?(?:day|week|month|year)s?\b/iu.test(unconsumedResidue);
+  return unconsumedShiftHint ? undefined : result;
+}
+
+function discordReferenceHasSupportedRelativeDayRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const relativeDay = String.raw`(?:tomorrow|yesterday)`;
+  const command = String.raw`(?:set|change|move|shift|make|use)`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:on\s+)?${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b${relativeDay}\s+(?:from|after|before|relative\s+to)\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${command}\s+${reference}(?!\w)\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?${command}\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s+(?:to|for|by)\s+${relativeDay}\b`, 'iu').test(text);
+}
+
+function discordReferenceHasSupportedCalendarDayRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const relativeDay = String.raw`(?:(?:previous|prior|preceding|following|next)\s+(?:calendar\s+)?(?:day|date)|(?:day|date)\s+(?:before|previous|prior|preceding|after|following|next))`;
+  return new RegExp(String.raw`^\s*${reference}(?!\w)[^,;.!?]*\b${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b${relativeDay}(?:\s+(?:after|before|relative\s+to|from))?\s+${reference}(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:make|set|change|move|shift|use|keep)\s+${reference}(?!\w)[^,;.!?]*\b${relativeDay}\b`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:use|using|take)\s+(?:the\s+)?${relativeDay}(?:\s+(?:after|before|relative\s+to|from))?\s+${reference}(?!\w)`, 'iu').test(text);
+}
+
+function discordReferenceHasSupportedDurationRelationship(text: string): boolean {
+  const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
+  const amount = String.raw`(?:a|an|${DISCORD_TIMESTAMP_AMOUNT_SOURCE})`;
+  const duration = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
+  const direction = DISCORD_SHIFT_DIRECTION_SOURCE;
+  const endpoint = String.raw`(?:start(?:ing)?|end(?:ing)?|finish(?:es|ing)?)`;
+  const rangeSeparator = String.raw`(?:to|through|thru|until|til|till)`;
+  const endpointJoin = String.raw`(?:(?:[,;:.!?]|[-\u2013\u2014])\s*(?:(?:and\s+)?then\s+|and\s+)?|\band(?:\s+then)?\s+)`;
+  const hasReferenceRange = new RegExp(String.raw`${reference}\s*(?:[-\u2013\u2014]|${rangeSeparator})\s*${reference}`, 'iu').test(text)
+    || [...text.matchAll(new RegExp(reference, 'giu'))].some((match) => discordReferenceRequestsRange(text, match[0]));
+  return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:[-+]|,|;|and\s+then)?\s*(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
+    || new RegExp(String.raw`^\s*${reference}(?!\w)\s+(?:tomorrow|yesterday)\s*[,;]?\s*(?:(?:and\s+)?then|plus)\s+${duration}\s+${direction}\b`, 'iu').test(text)
+    || new RegExp(String.raw`^\s*${duration}\s+(?:${direction})(?:\s+than)?\s+${reference}(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`^\s*${duration}\s+(?:before|after)\s+${reference}(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:the\s+(?:time|date)\s+of\s+)?${reference}(?!\w)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*(?:[,;:.!?-]\s*)?(?:(?:and\s+)?then\s+)?(?:move|shift|change|set|push|pull|extend|shorten)\s+(?:it|this|that|the\s+(?:timestamp|reference|time|date))\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
+    || new RegExp(String.raw`^\s*${reference}(?!\w)\s*[,;:.!?-]?\s*(?:go|move|shift)\s+(?:forward|ahead|back|backward)\s+${duration}\b`, 'iu').test(text)
+    || new RegExp(String.raw`${reference}(?!\w)\s*${rangeSeparator}\s*${duration}\s+${direction}(?:\s+${reference}(?!\w))?`, 'iu').test(text)
+    || new RegExp(String.raw`${duration}\s+${direction}\s+${reference}(?!\w)\s*${rangeSeparator}\s*${reference}(?!\w)`, 'iu').test(text)
+    || new RegExp(String.raw`\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+${reference}(?!\w)\s*${endpointJoin}(?:it\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+(?:it\s+)?${duration}\s+${direction}\b`, 'iu').test(text)
+    || (hasReferenceRange && new RegExp(String.raw`\badd\s+${duration}\s+to\s+(?:the\s+)?${endpoint}(?:\s+point)?\b`, 'iu').test(text))
+    || (hasReferenceRange && new RegExp(String.raw`\b(?:move|shift|push|pull|extend|shorten|add)\s+(?:the\s+)?${endpoint}(?:\s+point)?\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}(?:\s+${direction})?\b`, 'iu').test(text))
+    || (hasReferenceRange && new RegExp(String.raw`\b(?:the\s+)?${endpoint}(?:\s+point)?\s+(?:(?:is|was|gets?)\s+)?(?:moved|shifted|pushed|pulled|extended|shortened)\s*(?:(?:by|to|for)\s+)?(?:(?:about|around|roughly|approximately)\s+)?${duration}(?:\s+${direction})?\b`, 'iu').test(text))
+    || (hasReferenceRange && requestedDiscordRangeArithmeticEndpoint(text) !== undefined);
+}
+
+function discordShiftAmount(value: string): number {
+  if (/^(?:a|an)$/iu.test(value)) return 1;
+  const amount = parseDiscordTimestampAmount(value);
+  if (amount === null) throw new Error(`Unsupported Discord shift amount ${value}.`);
+  return amount;
+}
+
+function discordShiftDeltaKey(value: string): DiscordShiftDeltaKey {
+  const normalized = value.toLowerCase();
+  if (normalized.startsWith('min')) return 'minutes';
+  if (normalized.startsWith('hr') || normalized.startsWith('hour')) return 'hours';
+  if (normalized.startsWith('day')) return 'days';
+  if (normalized.startsWith('week')) return 'weeks';
+  if (normalized.startsWith('month')) return 'months';
+  return 'years';
 }
 
 function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {
@@ -4421,6 +5784,10 @@ function planIrEnabled(features: TemporalFeatureFlags | undefined): boolean {
 
 function deterministicPreflightEnabled(features: TemporalFeatureFlags | undefined): boolean {
   return features?.deterministicPreflight !== false;
+}
+
+function isExplicitUnixEpochZero(text: string): boolean {
+  return /^\s*0+\s*$/.test(text);
 }
 
 function semanticConsistencyGateEnabled(features: TemporalFeatureFlags | undefined): boolean {

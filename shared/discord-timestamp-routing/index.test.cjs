@@ -3,10 +3,19 @@ const assert = require('node:assert/strict');
 const {
   DISCORD_TIMESTAMP_CLASSIFIER_VERSION,
   DISCORD_TIMESTAMP_MAX_INPUT_CHARS,
+  parseDiscordTimestampAmount,
   classifyDiscordTimestampInput,
 } = require('./index.js');
 
 const classify = (text) => classifyDiscordTimestampInput(text);
+
+test('shares the full routed duration amount vocabulary', () => {
+  assert.equal(parseDiscordTimestampAmount('four'), 4);
+  assert.equal(parseDiscordTimestampAmount('twenty-one'), 21);
+  assert.equal(parseDiscordTimestampAmount('ninety nine'), 99);
+  assert.equal(parseDiscordTimestampAmount('999'), 999);
+  assert.equal(parseDiscordTimestampAmount('thousand'), null);
+});
 
 test('classifies standalone and harmlessly wrapped timestamps', () => {
   const standalone = classify('<t:1785643200:t>');
@@ -47,6 +56,20 @@ test('routes temporal transformation language to model interpretation', () => {
     '2 days before <t:1785643200:D>',
     '<t:1785643200:D> 1 hour later',
     '<t:1785643200:R> 1 hour later',
+    'change the time of <t:1785643200:t> to 3 pm',
+    'change the time of <t:1785643200:t> to 3 pm please',
+    'change the time of <t:1785643200:t> to 3 pm, thanks!',
+    'change the time of <t:1785643200:t> to 5p',
+    'change the time of <t:1785643200:t> at 5 pm',
+    'change <t:1785643200:t> to 5 pm',
+    'set <t:1785643200:t> to 5 pm UTC',
+    'change <t:1785643200:t> to 5 pm UTC',
+    'starts at <t:1785643200:t> and ends at 5 pm UTC',
+    'set <t:1785643200:t> to 5 pm UTC+02:00',
+    'change the time of <t:1785643200:t> to 5.30p',
+    'change the time of <t:1785643200:t> to 15.00',
+    'change time of <t:1785643200:t> to 15:00',
+    'move <t:1785643200:t> to 6:30pm without changing the day',
   ]) {
     const result = classify(input);
     assert.equal(result.route, 'model');
@@ -55,6 +78,18 @@ test('routes temporal transformation language to model interpretation', () => {
   const fuzzyShift = classify('<t:1785643200:D> about one hour later');
   assert.equal(fuzzyShift.route, 'model');
   assert.equal(fuzzyShift.signals.includes('subday_duration'), true);
+  const invalidClockChange = classify('change the time of <t:1785643200:t> to 99 pm');
+  assert.equal(invalidClockChange.route, 'clarify');
+  assert.equal(invalidClockChange.reason, 'negated_or_corrected_reference');
+  const invalidMinuteChange = classify('change the time of <t:1785643200:t> to 12:99');
+  assert.equal(invalidMinuteChange.route, 'clarify');
+  assert.equal(invalidMinuteChange.reason, 'negated_or_corrected_reference');
+  const alternativeClockChange = classify('change the time of <t:1785643200:t> to 3 or 4 pm');
+  assert.equal(alternativeClockChange.route, 'clarify');
+  assert.equal(alternativeClockChange.reason, 'negated_or_corrected_reference');
+  const punctuatedAlternativeClockChange = classify('change the time of <t:1785643200:t> to 3, or 4 pm');
+  assert.equal(punctuatedAlternativeClockChange.route, 'clarify');
+  assert.equal(punctuatedAlternativeClockChange.reason, 'negated_or_corrected_reference');
 });
 
 test('preserves a narrow affirmative copied-prose route and rejects semantic hazards', () => {
@@ -86,6 +121,21 @@ test('fails closed for unsupported relationships and ambiguous contexts', () => 
     'multiple_timestamps_without_relationship',
   );
   assert.equal(classify('Show <t:1785643200:t> in Pacific time').reason, 'unsupported_timezone_presentation');
+  assert.equal(classify('starts at <t:1785643200:t> and ends at 25:00').route, 'model');
+  assert.equal(classify('between <t:1785643200:t> and 5 pm').route, 'model');
+  assert.equal(classify('between 5 pm and <t:1785643200:t>').route, 'model');
+  assert.equal(classify('compare between <t:1785643200:t> and 5 pm').reason, 'unsupported_comparison');
+  assert.equal(classify('between <t:1785643200:t> and 5 pm versus tomorrow').reason, 'unsupported_comparison');
+  assert.equal(classify('set <t:1785643200:t> to 5 pm UTC+02:99').reason, 'unsupported_timezone_presentation');
+  assert.equal(classify('set <t:1785643200:t> to 5 pm UTC+99:99').reason, 'unsupported_timezone_presentation');
+  assert.equal(classify('<t:1785643200:t> to <t:1785654000:t>; set the start to 5 pm UTC').route, 'model');
+  for (const separator of ['through', 'thru', 'until', 'til', 'till']) {
+    assert.equal(classify(`<t:1785643200:t> ${separator} <t:1785654000:t>; set the start to 5 pm UTC`).route, 'model');
+  }
+  assert.equal(
+    classify('starts at <t:1785643200:t> and ends at 5 pm; add the literal label UTC').reason,
+    'unsupported_timezone_presentation',
+  );
   assert.equal(classify('Schedule <t:1785643200:t> on my calendar').reason, 'unsupported_scheduling');
   assert.equal(classify('`note <t:1785643200:t>`').reason, 'ambiguous_code_or_url_context');
   assert.equal(classify('```\nnote <t:1785643200:t>\n```').reason, 'ambiguous_code_or_url_context');

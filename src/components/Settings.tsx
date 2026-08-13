@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 interface AppSettings {
+  settings_schema_version: number;
   auto_start: boolean;
   global_hotkey: string;
   auto_close_on_focus_loss: boolean;
@@ -44,6 +45,7 @@ interface LocalSlmStatus {
 }
 
 const defaultSettings: AppSettings = {
+  settings_schema_version: 1,
   auto_start: false,
   global_hotkey: "ctrl+shift+h",
   auto_close_on_focus_loss: false,
@@ -57,9 +59,9 @@ const defaultSettings: AppSettings = {
   local_slm_auto_start: false,
   local_slm_prewarm: true,
   local_slm_endpoint_base_url: "http://127.0.0.1:8770/v1",
-  local_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11",
+  local_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
   local_slm_launcher_path: "",
-  local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora",
+  local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora",
   local_slm_docker_image: "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8",
   local_slm_startup_timeout_seconds: 360,
 };

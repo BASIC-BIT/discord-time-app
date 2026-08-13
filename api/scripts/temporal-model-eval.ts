@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Temporal } from '@js-temporal/polyfill';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
@@ -13,6 +13,7 @@ import {
 } from '@hammer-overlay/discord-timestamp-routing';
 import { parseTemporalExpression } from '../src/temporal';
 import { parseCalendarContext } from '../src/temporal/deterministic';
+import { unsafeTemporalDiagnosticMismatch } from '../src/temporal/eval-safety';
 import { executeTemporalPlanPlannerOutput, formatEndpointInputJson } from '../src/temporal/graph';
 import { parseTemporalPlanPlannerOutput, PLAN_WEEKDAYS, TEMPORAL_PLAN_MAX_PLANS, TEMPORAL_PLAN_MAX_STEPS } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
@@ -150,6 +151,8 @@ type EvalResult = {
   instructionPreset?: string;
   error?: string;
   mismatch?: string;
+  clarificationAlternativeCount?: number;
+  unsafeDiagnosticMismatch?: boolean;
   metrics?: {
     agentAttempts?: number;
     toolPasses?: number;
@@ -188,26 +191,28 @@ type TrainedPlanPrediction = {
   error?: string;
 };
 
-const referenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? '2026-05-24T12:00:00Z';
-const timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? 'America/New_York';
-const openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
-const requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
-const modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
-const trainedPlanPredictionsPath = process.env['TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS'];
-const trainedPlanModelName = process.env['TEMPORAL_EVAL_TRAINED_PLAN_MODEL'] ?? 'trained-plan-ir';
-const baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
-const experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
-const outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
-const evalInputOutputPath = process.env['TEMPORAL_EVAL_EXPORT_INPUT'];
-const selectedCaseIds = new Set(splitList(process.env['TEMPORAL_EVAL_CASE_IDS'] ?? ''));
-const limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
-const offset = parseNonNegativeInt(process.env['TEMPORAL_EVAL_OFFSET']) ?? 0;
-const repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
-const progressEvery = parsePositiveInt(process.env['TEMPORAL_EVAL_PROGRESS_EVERY']);
-const blockingRunners = splitList(process.env['TEMPORAL_EVAL_BLOCKING_RUNNERS'] ?? 'agent');
-const includeExhaustiveRelativeOffsetEvals = isTruthy(process.env['TEMPORAL_EVAL_EXHAUSTIVE_RELATIVE_OFFSETS']);
-const boundaryEnabled = isTruthy(process.env['TEMPORAL_EVAL_BOUNDARY']);
-const boundaryBaselineReportPath = nonBlank(process.env['TEMPORAL_EVAL_BASELINE_REPORT']);
+const defaultReferenceInstant = '2026-05-24T12:00:00Z';
+const defaultTimeZone = 'America/New_York';
+let referenceInstant = defaultReferenceInstant;
+let timeZone = defaultTimeZone;
+let openaiApiKey: string | undefined;
+let requireEval = false;
+let modelSpecs: ModelSpec[] = [];
+let trainedPlanPredictionsPath: string | undefined;
+let trainedPlanModelName = 'trained-plan-ir';
+let baselineSpecs: EvalRunnerSpec[] = [];
+let experimentSpecs: EvalExperimentSpec[] = [];
+let outputPath: string | undefined;
+let evalInputOutputPath: string | undefined;
+let selectedCaseIds = new Set<string>();
+let limit: number | undefined;
+let offset = 0;
+let repeats = 1;
+let progressEvery: number | undefined;
+let blockingRunners = ['agent'];
+let includeExhaustiveRelativeOffsetEvals = false;
+let boundaryEnabled = false;
+let boundaryBaselineReportPath: string | undefined;
 let trainedPlanPredictionCache: Promise<Map<string, TrainedPlanPrediction>> | undefined;
 
 const ENDPOINT_PLAN_INSTRUCTION_PRESETS = {
@@ -278,6 +283,20 @@ const CompactTemporalPlanPlannerJsonSchema = {
                 },
                 query: { type: 'string' },
                 text: { type: 'string' },
+                options: {
+                  type: 'array',
+                  minItems: 2,
+                  maxItems: 6,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['label', 'text'],
+                    properties: {
+                      label: { type: 'string', minLength: 1, maxLength: 48 },
+                      text: { type: 'string', minLength: 1, maxLength: 48 },
+                    },
+                  },
+                },
                 holidayName: { type: 'string' },
                 weekday: { type: 'string', enum: PLAN_WEEKDAYS },
                 weekdayAnchor: { type: 'string', enum: ['upcoming', 'this', 'next', 'last', 'next_ambiguous', 'after_next_ambiguous'] },
@@ -809,7 +828,8 @@ function rangeExpected(
   };
 }
 
-export const temporalEvalCases: TemporalEvalCase[] = [
+function buildTemporalEvalCases(): TemporalEvalCase[] {
+  return [
   {
     id: 'relative-date-default-noon',
     text: 'tomorrow',
@@ -900,6 +920,14 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     text: '<t:1785643200:t> 1 hour later',
     category: 'discord-reference-routing',
     expected: { status: 'resolved', epoch: 1785646800, suggestedFormatIndex: 2 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-suffix-word-number-four',
+    text: '<t:1785643200:t> four hours later',
+    category: 'discord-reference-routing',
+    expected: { status: 'resolved', epoch: 1785657600, suggestedFormatIndex: 2 },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1003,7 +1031,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-clock-composition-ambiguous-bare-hour',
     text: '<t:1785643200:t> day at 12',
     category: 'discord-reference-clock-composition',
-    expected: { status: 'needs_clarification' },
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785643200, 1785686400] },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1027,8 +1055,63 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-shift-clock-ambiguity-clean',
     text: '<t:1785643200:t> 1 day earlier at 2',
     category: 'discord-reference-shift-clock-composition',
-    routeOwnership: 'classifier',
-    expected: { status: 'needs_clarification' },
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785564000, 1785607200] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-typo-ebefore-three',
+    text: '<t:1785643200:t> a day ebefore at 3',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785567600, 1785610800] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-typo-later-three',
+    text: '<t:1785643200:t> 1 day ltaer at 3',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785740400, 1785783600] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clock-prefix-before',
+    text: 'at 2, use the day before <t:1785643200:t>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785564000, 1785607200] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clock-infix-before',
+    text: 'make <t:1785643200:t> 3 o’clock on the previous day',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785567600, 1785610800] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-clock-prefix-after',
+    text: 'at 4:30 use the day after <t:1785733200:F>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785832200, 1785875400] },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-explicit-clock-prefix-before',
+    text: 'at 2 pm, use the day before <t:1785643200:t>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'resolved', epoch: 1785607200, suggestedFormatIndex: 4 },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-shift-clock-ambiguity-spring-before',
+    text: '2 o’clock, on the day preceding <t:1772951400:D>',
+    category: 'discord-reference-shift-clock-composition',
+    expected: { status: 'needs_clarification', alternativeEpochs: [1772866800, 1772910000] },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1036,7 +1119,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'discord-reference-shift-clock-ambiguity-typo-ebefore',
     text: '<t:1785643200:t> 1 day ebefore at 2',
     category: 'discord-reference-shift-clock-composition',
-    expected: { status: 'needs_clarification' },
+    expected: { status: 'needs_clarification', alternativeEpochs: [1785564000, 1785607200] },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
   },
@@ -1120,6 +1203,53 @@ export const temporalEvalCases: TemporalEvalCase[] = [
       status: 'resolved',
       kind: 'time_range',
       range: { startEpoch: 1785643200, endEpoch: 1785650400 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-range-pull-end',
+    text: '<t:1785646800:t> to <t:1785650400:t>, but pull the end 45 minutes earlier',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785646800, endEpoch: 1785647700 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-range-push-start',
+    text: '<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785646800, endEpoch: 1785650400 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-range-ending-point-moved',
+    text: '<t:1785646800:t> through <t:1785650400:t>, with the ending point moved 30 minutes later',
+    category: 'discord-reference-routing',
+    expected: {
+      status: 'resolved',
+      kind: 'time_range',
+      range: { startEpoch: 1785646800, endEpoch: 1785652200 },
+    },
+    expectedRoute: 'model',
+    expectedRouteReason: 'semantic_residue_requires_model',
+  },
+  {
+    id: 'discord-reference-following-day-after-clock',
+    text: 'at 5 use the following day after <t:1785643200:t>',
+    category: 'discord-reference-model-routing',
+    expected: {
+      status: 'needs_clarification',
+      alternativeEpochs: [1785747600, 1785790800],
     },
     expectedRoute: 'model',
     expectedRouteReason: 'semantic_residue_requires_model',
@@ -1242,6 +1372,7 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     id: 'direct-epoch-zero',
     text: '0',
     category: 'explicit-epoch',
+    routeOwnership: 'classifier',
     expected: { status: 'resolved', epoch: 0, suggestedFormatIndex: 4 },
   },
   {
@@ -1582,7 +1713,10 @@ export const temporalEvalCases: TemporalEvalCase[] = [
     timeZone: 'America/New_York',
     expected: { status: 'needs_clarification', alternativeEpochs: [1809507600, 1809550800] },
   },
-];
+  ];
+}
+
+export let temporalEvalCases: TemporalEvalCase[] = buildTemporalEvalCases();
 
 export function temporalEvalRouteOwnership(evalCase: TemporalEvalCase): 'classifier' | 'model' {
   if (evalCase.routeOwnership !== undefined) {
@@ -1594,6 +1728,27 @@ export function temporalEvalRouteOwnership(evalCase: TemporalEvalCase): 'classif
 }
 
 async function main() {
+  referenceInstant = process.env['TEMPORAL_EVAL_NOW'] ?? defaultReferenceInstant;
+  timeZone = process.env['TEMPORAL_EVAL_TZ'] ?? defaultTimeZone;
+  openaiApiKey = nonBlank(process.env['OPENAI_API_KEY']);
+  requireEval = isTruthy(process.env['TEMPORAL_EVAL_REQUIRE_OPENAI']);
+  modelSpecs = parseModelSpecs(process.env['TEMPORAL_EVAL_MODELS']);
+  trainedPlanPredictionsPath = process.env['TEMPORAL_EVAL_TRAINED_PLAN_PREDICTIONS'];
+  trainedPlanModelName = process.env['TEMPORAL_EVAL_TRAINED_PLAN_MODEL'] ?? 'trained-plan-ir';
+  baselineSpecs = parseBaselineSpecs(process.env['TEMPORAL_EVAL_BASELINES']);
+  experimentSpecs = parseExperimentSpecs(process.env['TEMPORAL_EVAL_EXPERIMENTS']);
+  outputPath = process.env['TEMPORAL_EVAL_OUTPUT'];
+  evalInputOutputPath = process.env['TEMPORAL_EVAL_EXPORT_INPUT'];
+  selectedCaseIds = new Set(splitList(process.env['TEMPORAL_EVAL_CASE_IDS'] ?? ''));
+  limit = parsePositiveInt(process.env['TEMPORAL_EVAL_LIMIT']);
+  offset = parseNonNegativeInt(process.env['TEMPORAL_EVAL_OFFSET']) ?? 0;
+  repeats = parsePositiveInt(process.env['TEMPORAL_EVAL_REPEATS']) ?? 1;
+  progressEvery = parsePositiveInt(process.env['TEMPORAL_EVAL_PROGRESS_EVERY']);
+  blockingRunners = splitList(process.env['TEMPORAL_EVAL_BLOCKING_RUNNERS'] ?? 'agent');
+  includeExhaustiveRelativeOffsetEvals = isTruthy(process.env['TEMPORAL_EVAL_EXHAUSTIVE_RELATIVE_OFFSETS']);
+  boundaryEnabled = isTruthy(process.env['TEMPORAL_EVAL_BOUNDARY']);
+  boundaryBaselineReportPath = nonBlank(process.env['TEMPORAL_EVAL_BASELINE_REPORT']);
+  temporalEvalCases = buildTemporalEvalCases();
   const runnerSpecs: EvalRunnerSpec[] = [...modelSpecs, ...baselineSpecs];
   const excludedCategories = new Set(
     (process.env['TEMPORAL_EVAL_EXCLUDE_CATEGORIES'] ?? '')
@@ -1738,6 +1893,8 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       clientReferenceRouteReason: routeCheck?.clientReason,
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
+      clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
+      unsafeDiagnosticMismatch: unsafeTemporalDiagnosticMismatch(evalCase.expected, parsed),
       metrics: metricsFromResponse(parsed, evalCase, durationMs),
     };
   } catch (error) {
@@ -2286,11 +2443,17 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
 
   if (evalCase.expected.status === 'resolved') {
     if (evalCase.expected.range !== undefined) {
+      if (parsed.kind !== 'time_range') {
+        return `expected time range kind, got ${parsed.kind ?? 'none'}`;
+      }
       const mismatch = rangeMismatch(evalCase.expected.range, parsed.range);
       if (mismatch !== undefined) {
         return mismatch;
       }
       return undefined;
+    }
+    if (parsed.kind === 'time_range' || parsed.range !== undefined) {
+      return 'expected singular instant, got time range';
     }
     if (parsed.epoch !== evalCase.expected.epoch) {
       return `expected epoch ${evalCase.expected.epoch ?? 'none'}, got ${parsed.epoch ?? 'none'}`;
@@ -2306,6 +2469,9 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
   }
 
   if (evalCase.expected.alternativeRanges !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range === undefined)) {
+      return 'expected range alternatives, got one or more singular alternatives';
+    }
     const actualRanges = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.range)
       .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
@@ -2316,6 +2482,9 @@ function evaluateParsed(evalCase: TemporalEvalCase, parsed: EvalParsed): string 
       return `expected range alternatives ${expectedRanges.join(',')}, got ${actualRanges.join(',') || 'none'}`;
     }
   } else if (evalCase.expected.alternativeEpochs !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range !== undefined)) {
+      return 'expected singular alternatives, got one or more ranges';
+    }
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)
       .sort((a, b) => a - b);
@@ -2403,11 +2572,13 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
       return undefined;
     }
     if (evalCase.expected.range !== undefined) {
-      if (rangeMismatch(evalCase.expected.range, parsed.range) !== undefined) {
+      if (parsed.kind !== 'time_range' || rangeMismatch(evalCase.expected.range, parsed.range) !== undefined) {
         return undefined;
       }
-    } else if (parsed.epoch !== evalCase.expected.epoch) {
-      return undefined;
+    } else {
+      if (parsed.kind === 'time_range' || parsed.range !== undefined || parsed.epoch !== evalCase.expected.epoch) {
+        return undefined;
+      }
     }
     if (parsed.method === 'deterministic') {
       return parsed.debug?.deterministicDurationMs ?? durationMs;
@@ -2423,6 +2594,9 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
     return undefined;
   }
   if (evalCase.expected.alternativeRanges !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range === undefined)) {
+      return undefined;
+    }
     const actualRanges = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.range)
       .filter((range): range is NonNullable<TemporalParseResponse['range']> => range !== undefined)
@@ -2433,6 +2607,9 @@ function firstCorrectDisplayMs(evalCase: TemporalEvalCase, parsed: EvalParsed, d
       return undefined;
     }
   } else if (evalCase.expected.alternativeEpochs !== undefined) {
+    if ((parsed.clarificationAlternatives ?? []).some((alternative) => alternative.range !== undefined)) {
+      return undefined;
+    }
     const actual = [...(parsed.clarificationAlternatives ?? [])]
       .map((alternative) => alternative.epoch)
       .sort((a, b) => a - b);
@@ -2528,6 +2705,12 @@ async function buildEvaluationBoundary(
     result.runner === 'endpoint_plan'
     && (result.routeOwnership === 'classifier' || !result.required),
   );
+  const unsafeRoutedDiagnostics = results.filter((result) =>
+    result.runner === 'routed_endpoint'
+    && !result.required
+    && !result.passed
+    && unsafeTimestampDiagnosticMismatch(result),
+  );
   const gateA = boundaryGate(
     'A',
     true,
@@ -2580,6 +2763,11 @@ async function buildEvaluationBoundary(
       `Gate A client/server classifier agreement is ${classifierAgreementCount}/${classifierExpected.length}.`,
     );
   }
+  if (unsafeRoutedDiagnostics.length > 0) {
+    blockers.push(
+      `Diagnostic safety gate found ${unsafeRoutedDiagnostics.length} optional case(s) exposing incorrect selectable timestamp(s): ${unsafeRoutedDiagnostics.map((result) => result.caseId).join(', ')}.`,
+    );
+  }
 
   const routedModelCalls = routed.reduce((total, result) => total + (result.metrics?.modelCalls ?? 0), 0);
   const routedEstimatedCost = routed.reduce((total, result) => total + (result.metrics?.estimatedCostUsd ?? 0), 0);
@@ -2616,7 +2804,7 @@ async function buildEvaluationBoundary(
   if (baseline.compatible && baseline.regressions.length > 0) {
     blockers.push(`Baseline comparison found ${baseline.regressions.length} pass-to-fail regression(s).`);
   }
-  if (baseline.compatible && baseline.missingCandidateCases.length > 0) {
+  if (baseline.missingCandidateCases.length > 0) {
     blockers.push(`Baseline comparison found ${baseline.missingCandidateCases.length} missing candidate case(s).`);
   }
 
@@ -2652,6 +2840,10 @@ async function buildEvaluationBoundary(
   };
 }
 
+function unsafeTimestampDiagnosticMismatch(result: EvalResult): boolean {
+  return result.unsafeDiagnosticMismatch === true;
+}
+
 function boundaryGate(
   name: BoundaryGateSummary['name'],
   blocking: boolean,
@@ -2661,7 +2853,8 @@ function boundaryGate(
 ): BoundaryGateSummary {
   const cases = results.map(boundaryCaseResult);
   const durations = results
-    .map((result) => result.metrics?.firstCorrectDisplayMs ?? result.durationMs)
+    .map((result) => result.metrics?.firstCorrectDisplayMs)
+    .filter((duration): duration is number => duration !== undefined)
     .sort((left, right) => left - right);
   const medianDurationMs = durations.length === 0 ? undefined : percentile(durations, 0.5);
   const p95DurationMs = durations.length === 0 ? undefined : percentile(durations, 0.95);
@@ -2722,8 +2915,17 @@ async function compareEvaluationBoundaryBaseline(
     };
   }
   const parsed = JSON.parse(await readFile(path, 'utf8')) as { results?: EvalResult[] };
-  const baselineResults = (parsed.results ?? []).filter((result) =>
+  const allBaselineResults = (parsed.results ?? []).filter((result) =>
     result.runner === 'routed_endpoint' && result.required,
+  );
+  const currentCaseById = new Map(temporalEvalCases.map((evalCase) => [evalCase.id, evalCase]));
+  const removedRequiredCases = allBaselineResults.filter((result) => {
+    const currentCase = currentCaseById.get(result.caseId);
+    return currentCase === undefined || currentCase.required === false;
+  });
+  const baselineResults = allBaselineResults.filter((result) =>
+    currentCaseById.has(result.caseId)
+    && (currentCaseById.get(result.caseId)?.required ?? true),
   );
   if (baselineResults.length === 0) {
     return {
@@ -2732,7 +2934,7 @@ async function compareEvaluationBoundaryBaseline(
       comparedCases: 0,
       regressions: [],
       improvements: [],
-      missingCandidateCases: [],
+      missingCandidateCases: removedRequiredCases.map((result) => result.caseId).sort(),
       addedCandidateCases: [],
     };
   }
@@ -2740,7 +2942,7 @@ async function compareEvaluationBoundaryBaseline(
   const baselineById = new Map(baselineResults.map((result) => [result.caseId, result]));
   const regressions: string[] = [];
   const improvements: string[] = [];
-  const missingCandidateCases: string[] = [];
+  const missingCandidateCases: string[] = removedRequiredCases.map((result) => result.caseId);
   for (const [caseId, baseline] of baselineById) {
     const candidate = candidateById.get(caseId);
     if (candidate === undefined) {
@@ -3220,8 +3422,12 @@ function nonBlank(value: string | undefined): string | undefined {
   return value;
 }
 
-const invokedAsMain = process.argv[1] !== undefined
-  && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invokedModulePath = process.argv[1] === undefined ? undefined : resolve(process.argv[1]);
+const currentModulePath = fileURLToPath(import.meta.url);
+const invokedAsMain = invokedModulePath !== undefined
+  && (process.platform === 'win32'
+    ? invokedModulePath.toLocaleLowerCase('en-US') === currentModulePath.toLocaleLowerCase('en-US')
+    : invokedModulePath === currentModulePath);
 
 if (invokedAsMain) {
   main().catch((error: unknown) => {

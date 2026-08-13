@@ -20,6 +20,8 @@ const OFFSET_ZONE_PATTERN = /\b(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?([0-5]\d))?\
 const STANDALONE_OFFSET_PATTERN = /(?:^|[\s(])([+-])(\d{2})(?::?([0-5]\d))(?=$|[\s),.;])/g;
 const IANA_TIME_ZONE_PATTERN = /\b[A-Za-z]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)*\b/g;
 const UTC_ZONE_PATTERN = /\b(?:UTC|GMT|Zulu)\b/gi;
+const EXPLICIT_OFFSET_LIKE_PATTERN = /\b(?:UTC|GMT)\s*[+-]\s*\d+(?::?\d+)?\b/gi;
+const VALID_EXPLICIT_OFFSET_PATTERN = /^(?:UTC|GMT)\s*[+-]\s*(?:0?\d|1\d|2[0-3])(?::?[0-5]\d)?$/i;
 
 const NAMED_ZONE_RULES: NamedZoneRule[] = [
   {
@@ -168,6 +170,9 @@ const SEASONAL_ABBREVIATIONS = new Set(['EST', 'EDT', 'PST', 'PDT', 'MST', 'MDT'
 const VALIDATION_INSTANT = Temporal.Instant.from('2026-01-01T00:00:00Z');
 
 export function resolveTimeZone(input: { text: string; calendarContext: CalendarContext }): TimeZoneResolutionOutput {
+  if ([...input.text.matchAll(EXPLICIT_OFFSET_LIKE_PATTERN)].some((match) => !VALID_EXPLICIT_OFFSET_PATTERN.test(match[0]))) {
+    return { status: 'invalid', candidates: [], notes: ['Input contains a malformed UTC/GMT offset.'] };
+  }
   const references = extractTimeZoneReferences(input.text);
   if (references.length === 0) {
     return { status: 'not_found', candidates: [], notes: ['No explicit timezone reference found.'] };

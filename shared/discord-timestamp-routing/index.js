@@ -13,21 +13,43 @@ const EXACT_RANGE = new RegExp(
   "i",
 );
 const HARMLESS_WRAPPER = /^[\s`'"“”‘’()[\]{}*_~>|.\\-]*$/u;
-const AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
+const DISCORD_TIMESTAMP_AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const UNIT_SOURCE = String.raw`(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
+const CLOCK_SOURCE = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?))?|(?:[01]?\d|2[0-3])[:.][0-5]\d|midnight|noon)`;
+const AFFIRMATIVE_TIMEZONE_SOURCE = String.raw`(?:(?:utc|gmt)(?:\s*[+-]\s*(?:0?\d|1\d|2[0-3])(?::?[0-5]\d)?)?|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+|[+-](?:0\d|1\d|2[0-3]):[0-5]\d)(?![+\-:/\d])`;
+const AFFIRMATIVE_CLOCK_CHANGE = new RegExp(
+  String.raw`\bchange\s+(?:(?:the\s+)?time\s+of\s+)?${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}(?=[\s,.!?;]*(?:(?:please|thanks?|now)\b[\s,.!?;]*)*$)`,
+  "gi",
+);
+const AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE = new RegExp(
+  String.raw`\b(?:set|change|move|make|use|keep)\s+(?:(?:the\s+)?time\s+of\s+)?${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
+  "i",
+);
+const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
+  String.raw`(?:\b(?:starts?|begins?)\s+at\s+${TIMESTAMP_SOURCE}\s+and(?:\s+then)?\s+(?:ends?|finishes?)\s+at\s+${CLOCK_SOURCE}|${TIMESTAMP_SOURCE}\s*(?:to|through|until)\s*${CLOCK_SOURCE})\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
+  "i",
+);
+const AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE = new RegExp(
+  String.raw`^(?=[\s\S]*${TIMESTAMP_SOURCE}\s*(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*${TIMESTAMP_SOURCE})[\s\S]*\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${CLOCK_SOURCE}\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
+  "i",
+);
+const AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK = new RegExp(
+  String.raw`^\s*between\s+(?:${TIMESTAMP_SOURCE}\s+and\s+${CLOCK_SOURCE}|${CLOCK_SOURCE}\s+and\s+${TIMESTAMP_SOURCE})(?![\w:])\s*[.!]?\s*$`,
+  "i",
+);
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;
 const CONDITIONAL_OR_UNCERTAIN = /\b(?:if|unless|maybe|perhaps|possibly|probably|tentative|tbd|unknown|unsure|might|could|would)\b|\?/i;
 const COMPARISON = /\b(?:compare|versus|vs\.?|difference|between|earlier\s+of|later\s+of|which\s+(?:is\s+)?(?:first|earlier|later))\b/i;
 const SCHEDULING = /\b(?:schedule|reschedule|calendar|create\s+an?\s+event|book|remind\s+me|set\s+an?\s+alarm)\b/i;
 const TIMEZONE = /\b(?:utc|gmt|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+)\b|[+-]\d{2}:\d{2}\b/i;
-const DURATION = new RegExp(String.raw`\b${AMOUNT_SOURCE}\s+${UNIT_SOURCE}\b`, "i");
-const SUBDAY_DURATION = new RegExp(String.raw`\b${AMOUNT_SOURCE}\s+(?:minutes?|mins?|hours?|hrs?)\b`, "i");
+const DURATION = new RegExp(String.raw`\b${DISCORD_TIMESTAMP_AMOUNT_SOURCE}\s+${UNIT_SOURCE}\b`, "i");
+const SUBDAY_DURATION = new RegExp(String.raw`\b${DISCORD_TIMESTAMP_AMOUNT_SOURCE}\s+(?:minutes?|mins?|hours?|hrs?)\b`, "i");
 const OTHER_TEMPORAL_ENTITY = new RegExp(
   String.raw`\b(?:today|tomorrow|yesterday|tonight|noon|midnight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next|last|later|earlier|before|after|from\s+now|ago|${UNIT_SOURCE}|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{4}-\d{2}-\d{2}\b`,
   "i",
 );
 const PRESENTATION_ANCHOR = /\b(?:(?:the\s+)?(?:event|meeting|party|show|stream|class|session|launch|deadline|doors?)\s+(?:starts?|begins?|happens|is|will\s+be|opens?)|starts?|begins?|happens|scheduled)\s+(?:at|on|for)?\s*$/i;
-const REFERENCE_RELATIONSHIP = /\b(?:to|through|until|from|after|before|later|earlier|start|end|move|shift|extend|shorten)\b|(?:^|\s)[-–—](?:\s|$)/i;
+const REFERENCE_RELATIONSHIP = /\b(?:to|through|until|from|after|before|later|earlier|starts?|ends?|move|shift|extend|shorten)\b|(?:^|\s)[-–—](?:\s|$)/i;
 
 function discordTimestampFormatIndex(formatCode) {
   const normalized = formatCode === undefined || formatCode === "" ? ":f" : formatCode.startsWith(":") ? formatCode : `:${formatCode}`;
@@ -88,7 +110,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
     if (signals.includes("scheduling")) {
       return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
     }
-    if (signals.includes("timezone")) {
+    if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text) && !AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE.test(text)) {
       return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
     }
     if (signals.includes("negation_or_correction")) {
@@ -120,13 +142,13 @@ function classifyDiscordTimestampInput(text, options = {}) {
     };
   }
 
-  if (signals.includes("comparison")) {
+  if (signals.includes("comparison") && !AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK.test(text)) {
     return { ...withSignals, route: "clarify", reason: "unsupported_comparison", meaningfulResidue: true };
   }
   if (signals.includes("scheduling")) {
     return { ...withSignals, route: "clarify", reason: "unsupported_scheduling", meaningfulResidue: true };
   }
-  if (signals.includes("timezone")) {
+  if (signals.includes("timezone") && !AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE.test(text) && !AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP.test(text) && !AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE.test(text)) {
     return { ...withSignals, route: "clarify", reason: "unsupported_timezone_presentation", meaningfulResidue: true };
   }
   if (signals.includes("negation_or_correction")) {
@@ -235,7 +257,10 @@ function aggregateContext(references) {
 
 function semanticSignals(text) {
   const signals = [];
-  if (NEGATION_OR_CORRECTION.test(text)) signals.push("negation_or_correction");
+  const correctionText = text
+    .replace(AFFIRMATIVE_CLOCK_CHANGE, " ")
+    .replace(AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE, " ");
+  if (NEGATION_OR_CORRECTION.test(correctionText)) signals.push("negation_or_correction");
   if (CONDITIONAL_OR_UNCERTAIN.test(text)) signals.push("conditional_or_uncertain");
   if (COMPARISON.test(text)) signals.push("comparison");
   if (SCHEDULING.test(text)) signals.push("scheduling");
@@ -248,11 +273,20 @@ function semanticSignals(text) {
 function isAffirmativePresentationProse(text, reference, residue) {
   const prefix = text.slice(0, reference.start);
   if (!PRESENTATION_ANCHOR.test(prefix)) return false;
+  if (hasMalformedRelationalClock(text.slice(reference.end))) return false;
   if (NEGATION_OR_CORRECTION.test(text) || CONDITIONAL_OR_UNCERTAIN.test(text) || COMPARISON.test(text) || SCHEDULING.test(text) || TIMEZONE.test(text)) {
     return false;
   }
   if (OTHER_TEMPORAL_ENTITY.test(residue)) return false;
   return !/[<>]/.test(residue);
+}
+
+function hasMalformedRelationalClock(text) {
+  for (const match of text.matchAll(/\b(?:ends?|finishes?)\s+at\s+(\d+(?:[:.]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)/giu)) {
+    const token = match[1];
+    if (!new RegExp(String.raw`^${CLOCK_SOURCE}$`, 'iu').test(token)) return true;
+  }
+  return false;
 }
 
 function inputLengthBucket(length) {
@@ -264,12 +298,30 @@ function inputLengthBucket(length) {
   return "over-16384";
 }
 
+function parseDiscordTimestampAmount(value) {
+  const normalized = value.toLowerCase().trim().replace(/-/g, " ").replace(/\s+/g, " ");
+  if (/^\d{1,3}$/.test(normalized)) return Number(normalized);
+  const values = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+    sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  };
+  if (values[normalized] !== undefined) return values[normalized];
+  const [tensWord, onesWord] = normalized.split(" ");
+  const tens = values[tensWord];
+  const ones = values[onesWord];
+  return tens >= 20 && tens % 10 === 0 && ones > 0 && ones < 10 ? tens + ones : null;
+}
+
 module.exports = {
   DISCORD_TIMESTAMP_CLASSIFIER_VERSION,
   DISCORD_TIMESTAMP_MAX_EPOCH_SECONDS,
   DISCORD_TIMESTAMP_MAX_INPUT_CHARS,
   DISCORD_TIMESTAMP_MAX_MODEL_CHARS,
+  DISCORD_TIMESTAMP_AMOUNT_SOURCE,
   classifyDiscordTimestampInput,
   discordTimestampFormatIndex,
   discordTimestampFormatCode,
+  parseDiscordTimestampAmount,
 };

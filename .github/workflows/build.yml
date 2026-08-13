@@ -83,6 +83,9 @@ jobs:
       - name: Check frontend build
         run: npm run build
 
+      - name: Prepare API sidecar resources
+        run: npm run prepare:api-sidecar
+
       - name: Check Rust formatting
         working-directory: src-tauri
         run: cargo fmt --all -- --check

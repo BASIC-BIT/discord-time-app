@@ -4,6 +4,8 @@ Goal: fine-tune a small model that maps user temporal text to HammerOverlay Temp
 
 Instant plans may include the compact optional `format` operand with one Discord presentation code: `d`, `D`, `t`, `T`, `f`, `F`, or `R`. This is semantic model output, not arithmetic: the executor validates the code and renders the already-validated instant accordingly. Standalone timestamp fast paths preserve their exact source style deterministically; model-owned surrounding language may select a different presentation when the transformation makes date, time, or relative context more useful.
 
+For a clarification whose interpretations share one program and differ only by a clock, one `resolve_clock_time` step may contain two to six bounded `options` instead of `text`. The executor resolves every explicit option and fans the shared downstream algebra into selectable alternatives. Training targets keep dependency-first canonical step order; vary input wording rather than emitting equivalent step permutations.
+
 ## Hardware
 
 Local preflight has confirmed:
@@ -64,6 +66,20 @@ python ml/temporal-ir/train_unsloth.py \
   --output ml/temporal-ir/outputs/qwen-temporal-ir-lora \
   --epochs 3
 ```
+
+Continue an existing adapter conservatively without stacking a second LoRA:
+
+```bash
+python ml/temporal-ir/train_unsloth.py \
+  --continue-adapter ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora \
+  --model Qwen/Qwen3.5-0.8B \
+  --dataset api/reports/temporal-ml/temporal-ir-seeds.jsonl \
+  --output ml/temporal-ir/outputs/qwen-temporal-ir-v13-continuation-lora \
+  --epochs 1 \
+  --learning-rate 2e-5
+```
+
+Continuation validates the adapter's recorded base model, loads its existing weights as trainable, asserts that trainable parameters remain, and records the source-adapter hash in the run summary.
 
 Training validates the tagged train-split mix before importing the GPU stack. The default target is documented in `docs/temporal-permutation-data-strategy.md`: enough standard rows to keep the model grounded, plus bounded messy, ambiguity, and hard-boundary buckets. Run only the guard with `--check-mix-only`. For tiny debugging subsets only, bypass it with `--skip-mix-check` or `TEMPORAL_IR_SKIP_MIX_CHECK=1`.
 
@@ -220,7 +236,7 @@ For production-shaped local serving tests, run a vLLM/SGLang/hosted OpenAI-compa
 ```bash
 TEMPORAL_EVAL_BASELINES=endpoint-plan \
 TEMPORAL_EVAL_ENDPOINT_BASE_URL=http://127.0.0.1:8770/v1 \
-TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11 \
+TEMPORAL_EVAL_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22 \
 TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET=minimal \
 TEMPORAL_EVAL_ENDPOINT_API=chat \
 TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT=chat \
@@ -249,8 +265,8 @@ The productized desktop flow is Settings -> Local SLM Runtime. The runtime is di
 Default desktop runtime values:
 
 - Endpoint: `http://127.0.0.1:8770/v1`
-- Model: `qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11`
-- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11-lora`
+- Model: `qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22`
+- Adapter: `ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora`
 - Launcher: `scripts/start-temporal-peft-server.ps1` when auto-detected from a source checkout or copied into the installed app-data runtime.
 
 Installed MSI builds bundle lightweight runtime files, then Settings installs those files into app data, downloads the adapter package, and pulls the Docker serving image. Installed-app smoke tests should verify that full flow before any Local SLM runtime PR or release.
@@ -266,7 +282,7 @@ For source-checkout development, the API sidecar can still be enabled with ignor
 ```text
 TEMPORAL_FEATURE_PLAN_IR=true
 TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL=http://127.0.0.1:8770/v1
-TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11
+TEMPORAL_PLAN_IR_ENDPOINT_MODEL=qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22
 TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET=minimal
 TEMPORAL_PLAN_IR_ENDPOINT_API=chat
 TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT=chat
@@ -302,7 +318,7 @@ Then evaluate it as an OpenAI-compatible chat endpoint:
 ```powershell
 $env:TEMPORAL_EVAL_BASELINES = "endpoint-plan"
 $env:TEMPORAL_EVAL_ENDPOINT_BASE_URL = "http://127.0.0.1:8770/v1"
-$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-presentation-v11"
+$env:TEMPORAL_EVAL_ENDPOINT_MODEL = "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = "minimal"
 $env:TEMPORAL_EVAL_ENDPOINT_API = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"

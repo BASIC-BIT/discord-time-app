@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { Temporal } from '@js-temporal/polyfill';
 import { parseTemporalExpression } from '../src/temporal';
 import { collectTemporalAgentContext, parseCalendarContext } from '../src/temporal/deterministic';
+import { unsafeTemporalDiagnosticMismatch } from '../src/temporal/eval-safety';
 import { executeTemporalPlanPlannerOutput, formatEndpointInputJson } from '../src/temporal/graph';
 import { parseTemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
 import { createDeterministicTemporalToolImplementations } from '../src/temporal/tools';
@@ -80,9 +81,113 @@ async function executeModelReferenceClockComposition(
   );
 }
 
+async function executeModelReferenceRangeShift(
+  text: string,
+  startReference: string,
+  endReference: string,
+  target: 'start' | 'end',
+  delta: Record<string, number>,
+) {
+  const sharedReference = startReference === endReference;
+  const baseStep = sharedReference ? 0 : (target === 'start' ? 0 : 1);
+  const shiftedStep = sharedReference ? 1 : 2;
+  const steps = sharedReference
+    ? [
+      { op: 'resolve_calendar_query' as const, query: startReference, precision: 'datetime' as const },
+      { op: 'shift_datetime' as const, baseStep, delta, precision: 'datetime' as const },
+    ]
+    : [
+      { op: 'resolve_calendar_query' as const, query: startReference, precision: 'datetime' as const },
+      { op: 'resolve_calendar_query' as const, query: endReference, precision: 'datetime' as const },
+      { op: 'shift_datetime' as const, baseStep, delta, precision: 'datetime' as const },
+    ];
+  const plan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Test fixture representing a model-interpreted Discord reference range transformation.',
+    clarificationQuestion: null,
+    plans: [{
+      kind: 'time_range',
+      label: 'Model-interpreted Discord reference range shift',
+      rationale: 'Resolve both exact endpoints and shift only the requested endpoint.',
+      assumptions: [],
+      confidence: 1,
+      startStep: target === 'start' ? shiftedStep : 0,
+      endStep: target === 'end' ? shiftedStep : (sharedReference ? 0 : 1),
+      steps,
+    }],
+  });
+  return executeTemporalPlanPlannerOutput(
+    plan,
+    { text, calendarContext },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'model-range-plan-fixture',
+    },
+  );
+}
+
+async function executeModelReferenceShiftClockClarification(
+  text: string,
+  reference: string,
+) {
+  const clarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    reason: 'Test fixture representing selectable AM/PM alternatives after a Discord-reference shift.',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      format: 'f',
+      label: 'Shifted date at 2',
+      rationale: 'Resolve the reference date, set an explicit meridiem, and apply the requested day shift.',
+      assumptions: [],
+      confidence: 0.85,
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: reference, precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  return executeTemporalPlanPlannerOutput(
+    clarification,
+    { text, calendarContext },
+    {
+      implementations: createDeterministicTemporalToolImplementations(),
+      method: 'agent+plan',
+      modelName: 'model-plan-clarification-fixture',
+    },
+  );
+}
+
 async function main() {
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
+  const epochZeroWithPreflightDisabled = await parseTemporalExpression({
+    text: '0',
+    timeZone,
+    referenceInstant,
+    features: { deterministicPreflight: false, planIr: true },
+    planIrEndpoint: {
+      baseUrl: 'http://127.0.0.1:1/v1',
+      model: 'must-not-be-called-for-explicit-epoch-zero',
+      instructionPreset: 'minimal',
+      api: 'chat',
+      promptFormat: 'chat',
+      maxTokens: 64,
+      timeoutMs: 1,
+    },
+  });
+  assert.equal(epochZeroWithPreflightDisabled.status, 'resolved');
+  assert.equal(epochZeroWithPreflightDisabled.epoch, 0);
+  assert.equal(epochZeroWithPreflightDisabled.method, 'deterministic');
+  assert.equal(epochZeroWithPreflightDisabled.debug?.shortCircuitReason, 'deterministic_resolved_validation_passed');
+  const ambiguousDottedRange = await parse('tomorrow 3.30-4.30');
+  assert.equal(ambiguousDottedRange.status, 'needs_clarification');
+  assert.match(ambiguousDottedRange.clarificationQuestion ?? '', /AM or PM/i);
   const referencePromptInput = JSON.parse(formatEndpointInputJson({
     text: '<t:1785643200:t> 1 hour later',
     referenceInstant,
@@ -99,6 +204,17 @@ async function main() {
   assert.equal(composedReferenceClock.epoch, 1785686400);
   assert.equal(composedReferenceClock.method, 'agent+plan');
   assert.equal(composedReferenceClock.suggestedFormatIndex, 4);
+  const ambiguousComposedReferenceClock = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> day at 12',
+    '<t:1785643200:t>',
+    '12 pm',
+  );
+  assert.equal(ambiguousComposedReferenceClock.status, 'needs_clarification');
+  assert.deepEqual(
+    ambiguousComposedReferenceClock.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['12 AM', '12 PM'],
+  );
+  assert.equal(ambiguousComposedReferenceClock.validation.checks.includes('plan_ir_clarification'), true);
   const noOpMidnightClockComposition = await executeModelReferenceClockComposition(
     '<t:1785643200:t> that day at midnight',
     '<t:1785643200:t>',
@@ -107,6 +223,1018 @@ async function main() {
   assert.equal(noOpMidnightClockComposition.status, 'resolved');
   assert.equal(noOpMidnightClockComposition.epoch, 1785643200);
   assert.equal(noOpMidnightClockComposition.suggestedFormatIndex, 4);
+  const rejectedCopiedProseClock = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was copied at 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedCopiedProseClock.status, 'failed');
+  assert.equal(rejectedCopiedProseClock.epoch, undefined);
+  assert.match(rejectedCopiedProseClock.validation.warnings.join(' '), /clock relationship could not be validated safely/);
+  const rejectedInterveningPronounClock = await executeModelReferenceClockComposition(
+    'I copied <t:1785643200:t> into a reminder, then set it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedInterveningPronounClock.status, 'failed');
+  assert.equal(rejectedInterveningPronounClock.epoch, undefined);
+  const compactMeridiemClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5p',
+    '<t:1785643200:t>',
+    '5p',
+  );
+  assert.equal(compactMeridiemClock.status, 'resolved', compactMeridiemClock.validation.warnings.join(' | '));
+  assert.equal(compactMeridiemClock.epoch, 1785704400);
+  const makeClockSetter = await executeModelReferenceClockComposition(
+    'make <t:1785643200:t> to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(makeClockSetter.status, 'resolved', makeClockSetter.validation.warnings.join(' | '));
+  assert.equal(makeClockSetter.epoch, 1785697200);
+  const dottedTwentyFourHourClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 15.00',
+    '<t:1785643200:t>',
+    '15:00',
+  );
+  assert.equal(dottedTwentyFourHourClock.status, 'resolved', dottedTwentyFourHourClock.validation.warnings.join(' | '));
+  assert.equal(dottedTwentyFourHourClock.epoch, 1785697200);
+  const omittedExplicitUtcClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5 pm UTC',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(omittedExplicitUtcClock.status, 'failed');
+  const unresolvedPacificClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5 pm Pacific',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(unresolvedPacificClock.status, 'failed');
+  assert.match(unresolvedPacificClock.validation.warnings.join(' '), /timezone suffix could not be resolved safely/);
+  const explicitUtcClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at an explicit UTC clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedExplicitUtcClock = await executeTemporalPlanPlannerOutput(
+    explicitUtcClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedExplicitUtcClock.status, 'resolved', acceptedExplicitUtcClock.validation.warnings.join(' | '));
+  const explicitOffsetClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at an explicit fixed-offset clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC+02:00' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedExplicitOffsetClock = await executeTemporalPlanPlannerOutput(
+    explicitOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC+02:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedExplicitOffsetClock.status, 'resolved', acceptedExplicitOffsetClock.validation.warnings.join(' | '));
+  const explicitNegativeOffsetClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at an explicit negative fixed-offset clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: '-04:00' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedExplicitNegativeOffsetClock = await executeTemporalPlanPlannerOutput(
+    explicitNegativeOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm -04:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedExplicitNegativeOffsetClock.status, 'resolved', acceptedExplicitNegativeOffsetClock.validation.warnings.join(' | '));
+  const rejectedMalformedOffsetClock = await executeTemporalPlanPlannerOutput(
+    explicitOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC+02:99', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedOffsetClock.status, 'failed');
+  assert.equal(rejectedMalformedOffsetClock.epoch, undefined);
+  const misplacedRangeTimeZonePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Timezone attached only to the unchanged range start',
+      startStep: 1,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMisplacedRangeTimeZone = await executeTemporalPlanPlannerOutput(
+    misplacedRangeTimeZonePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm UTC', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMisplacedRangeTimeZone.status, 'failed');
+  assert.match(rejectedMisplacedRangeTimeZone.validation.warnings.join(' '), /timezone from the end clock endpoint/);
+  const highNegativeOffsetClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at a high negative fixed-offset clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC-14:00' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedHighNegativeOffsetClock = await executeTemporalPlanPlannerOutput(
+    highNegativeOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC-14:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedHighNegativeOffsetClock.status, 'resolved', acceptedHighNegativeOffsetClock.validation.warnings.join(' | '));
+  const rejectedMixedMeridiemAlternative = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 3 or 4 pm',
+    '<t:1785643200:t>',
+    '4 pm',
+  );
+  assert.equal(rejectedMixedMeridiemAlternative.status, 'failed');
+  assert.equal(rejectedMixedMeridiemAlternative.epoch, undefined);
+  const rejectedCopiedProseRelativeDay = await executeModelReferenceShift(
+    'I will copy <t:1785643200:t> tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedCopiedProseRelativeDay.status, 'failed');
+  assert.equal(rejectedCopiedProseRelativeDay.epoch, undefined);
+  const rejectedCopiedProseDuration = await executeModelReferenceShift(
+    'I copied <t:1785643200:t> one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedCopiedProseDuration.status, 'failed');
+  assert.equal(rejectedCopiedProseDuration.epoch, undefined);
+  const rejectedCopiedProseCalendarDay = await executeModelReferenceShift(
+    'I copied <t:1785643200:t> on the following day',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedCopiedProseCalendarDay.status, 'failed');
+  assert.equal(rejectedCopiedProseCalendarDay.epoch, undefined);
+  const rejectedConflictingCalendarDays = await executeModelReferenceShift(
+    '<t:1785643200:t> on the following day or the previous day',
+    '<t:1785643200:t>',
+    { days: -1 },
+  );
+  assert.equal(rejectedConflictingCalendarDays.status, 'failed');
+  assert.equal(rejectedConflictingCalendarDays.epoch, undefined);
+  const rejectedDottedClockAlternatives = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 15.00 or 16.00',
+    '<t:1785643200:t>',
+    '16:00',
+  );
+  assert.equal(rejectedDottedClockAlternatives.status, 'failed');
+  assert.equal(rejectedDottedClockAlternatives.epoch, undefined);
+  const compactMinuteMeridiemClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5:30p',
+    '<t:1785643200:t>',
+    '5:30p',
+  );
+  assert.equal(compactMinuteMeridiemClock.status, 'resolved', compactMinuteMeridiemClock.validation.warnings.join(' | '));
+  assert.equal(compactMinuteMeridiemClock.epoch, 1785706200);
+  const dottedCompactMinuteMeridiemClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5.30p',
+    '<t:1785643200:t>',
+    '5.30p',
+  );
+  assert.equal(
+    dottedCompactMinuteMeridiemClock.status,
+    'resolved',
+    dottedCompactMinuteMeridiemClock.validation.warnings.join(' | '),
+  );
+  assert.equal(dottedCompactMinuteMeridiemClock.epoch, 1785706200);
+  const rejectedUnrelatedDurationCommand = await executeModelReferenceShift(
+    'I copied <t:1785643200:t>, then set the table one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedUnrelatedDurationCommand.status, 'failed');
+  assert.equal(rejectedUnrelatedDurationCommand.epoch, undefined);
+  const acceptedDirectDurationCommand = await executeModelReferenceShift(
+    'move <t:1785643200:t> one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(acceptedDirectDurationCommand.status, 'resolved');
+  assert.equal(acceptedDirectDurationCommand.epoch, 1785646800);
+  const acceptedPronounDurationCommand = await executeModelReferenceShift(
+    '<t:1785643200:t>, then move it one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(acceptedPronounDurationCommand.status, 'resolved');
+  assert.equal(acceptedPronounDurationCommand.epoch, 1785646800);
+  const rejectedCrossClauseDurationCommand = await executeModelReferenceShift(
+    'move <t:1785643200:t> into the announcement; publish it one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedCrossClauseDurationCommand.status, 'failed');
+  assert.equal(rejectedCrossClauseDurationCommand.epoch, undefined);
+  const rejectedInterveningPronounRelativeDay = await executeModelReferenceShift(
+    'I copied <t:1785643200:t> into a reminder, then set it to tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedInterveningPronounRelativeDay.status, 'failed');
+  assert.equal(rejectedInterveningPronounRelativeDay.epoch, undefined);
+  const rejectedAlternativeRelativeDays = await executeModelReferenceShift(
+    'move <t:1785643200:t> to tomorrow or yesterday',
+    '<t:1785643200:t>',
+    {},
+  );
+  assert.equal(rejectedAlternativeRelativeDays.status, 'failed');
+  assert.equal(rejectedAlternativeRelativeDays.epoch, undefined);
+  const rejectedCrossClauseEndpointDuration = await executeModelReferenceShift(
+    'move the start marker beside <t:1785643200:t>; publish the marker one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedCrossClauseEndpointDuration.status, 'failed');
+  assert.equal(rejectedCrossClauseEndpointDuration.epoch, undefined);
+  const acceptedDirectRelativeDayCommand = await executeModelReferenceShift(
+    'move <t:1785643200:t> to tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(
+    acceptedDirectRelativeDayCommand.status,
+    'resolved',
+    acceptedDirectRelativeDayCommand.validation.warnings.join(' | '),
+  );
+  const acceptedPronounRelativeDayCommand = await executeModelReferenceShift(
+    '<t:1785643200:t>, then move it to tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(
+    acceptedPronounRelativeDayCommand.status,
+    'resolved',
+    acceptedPronounRelativeDayCommand.validation.warnings.join(' | '),
+  );
+  const rejectedPronounLinkedSingularRange = await executeModelReferenceShift(
+    'starts at <t:1785643200:t>, and it ends four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedPronounLinkedSingularRange.status, 'failed');
+  assert.equal(rejectedPronounLinkedSingularRange.epoch, undefined);
+  const rejectedDuplicateRelativeDay = await executeModelReferenceShift(
+    'move <t:1785643200:t> to tomorrow; publish the announcement tomorrow',
+    '<t:1785643200:t>',
+    { days: 2 },
+  );
+  assert.equal(rejectedDuplicateRelativeDay.status, 'failed');
+  assert.equal(rejectedDuplicateRelativeDay.epoch, undefined);
+  const rejectedDuplicateCalendarDay = await executeModelReferenceShift(
+    '<t:1785643200:t> on the following day, then the next day',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(rejectedDuplicateCalendarDay.status, 'failed');
+  assert.equal(rejectedDuplicateCalendarDay.epoch, undefined);
+  const rejectedUnboundEndpointDuration = await executeModelReferenceShift(
+    'The transcript contains <t:1785643200:t>; the ending point was moved one hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedUnboundEndpointDuration.status, 'failed');
+  assert.equal(rejectedUnboundEndpointDuration.epoch, undefined);
+  const rejectedUnboundAddEndpointDuration = await executeModelReferenceShift(
+    'The transcript contains <t:1785643200:t>; add one hour to the end',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedUnboundAddEndpointDuration.status, 'failed');
+  assert.equal(rejectedUnboundAddEndpointDuration.epoch, undefined);
+  const rejectedThirdPersonClockSingularRange = await executeModelReferenceClockComposition(
+    'starts at <t:1785643200:t>, ends at 5 pm',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(rejectedThirdPersonClockSingularRange.status, 'failed');
+  assert.equal(rejectedThirdPersonClockSingularRange.epoch, undefined);
+  const rejectedFinishSingularRange = await executeModelReferenceShift(
+    'starts at <t:1785643200:t>, finishes four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedFinishSingularRange.status, 'failed');
+  assert.equal(rejectedFinishSingularRange.epoch, undefined);
+  const acceptedFinishShiftRange = await executeModelReferenceRangeShift(
+    'starts at <t:1785643200:t>, finishes four hours later',
+    '<t:1785643200:t>',
+    '<t:1785643200:t>',
+    'end',
+    { hours: 4 },
+  );
+  assert.equal(acceptedFinishShiftRange.status, 'resolved');
+  assert.equal(acceptedFinishShiftRange.range?.start.epoch, 1785643200);
+  assert.equal(acceptedFinishShiftRange.range?.end.epoch, 1785657600);
+  const malformedAtSetterPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Ignored malformed at-based setter',
+      finalStep: 0,
+      steps: [{ op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' }],
+    }],
+  });
+  const rejectedMalformedAtSetter = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: 'set <t:1785643200:t> at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedAtSetter.status, 'failed');
+  assert.equal(rejectedMalformedAtSetter.epoch, undefined);
+  assert.match(rejectedMalformedAtSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedChangeSetter = await executeTemporalPlanPlannerOutput(
+    parseTemporalPlanPlannerOutput({
+      outcome: 'plans',
+      plans: [{
+        label: 'Ignored malformed change setter',
+        finalStep: 0,
+        steps: [{ op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' }],
+      }],
+    }),
+    { text: 'change <t:1785643200:t> to 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedChangeSetter.status, 'failed');
+  assert.equal(rejectedMalformedChangeSetter.epoch, undefined);
+  const rejectedMalformedPrepositionlessSetter = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: 'make <t:1785643200:t> 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedPrepositionlessSetter.status, 'failed');
+  assert.equal(rejectedMalformedPrepositionlessSetter.epoch, undefined);
+  assert.match(rejectedMalformedPrepositionlessSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedReferenceLeadingSetter = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: '<t:1785643200:t> at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedReferenceLeadingSetter.status, 'failed');
+  assert.equal(rejectedMalformedReferenceLeadingSetter.epoch, undefined);
+  assert.match(rejectedMalformedReferenceLeadingSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedReferenceRangeOperand = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: '<t:1785643200:t> to 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedReferenceRangeOperand.status, 'failed');
+  assert.equal(rejectedMalformedReferenceRangeOperand.epoch, undefined);
+  assert.match(rejectedMalformedReferenceRangeOperand.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedEndpointClock = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: '<t:1785643200:t> finishes at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedEndpointClock.status, 'failed');
+  assert.equal(rejectedMalformedEndpointClock.epoch, undefined);
+  assert.match(rejectedMalformedEndpointClock.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedFinishClockSingularRange = await executeModelReferenceClockComposition(
+    'starts at <t:1785643200:t>, finishes at 5 pm',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(rejectedFinishClockSingularRange.status, 'failed');
+  assert.equal(rejectedFinishClockSingularRange.epoch, undefined);
+  const finishClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Finish-clock range',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t>, finishes at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedFinishClockRange.status, 'resolved');
+  assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
+  assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
+  const rejectedMalformedConjoinedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedConjoinedFinishClockRange.status, 'failed');
+  assert.match(rejectedMalformedConjoinedFinishClockRange.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedTrailingMalformedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm:99', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedTrailingMalformedFinishClockRange.status, 'failed');
+  assert.match(rejectedTrailingMalformedFinishClockRange.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedReversedTrailingMalformedClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at 5 pm:99 and ends at <t:1785643200:t>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedReversedTrailingMalformedClockRange.status, 'failed');
+  assert.match(rejectedReversedTrailingMalformedClockRange.validation.warnings.join(' '), /malformed clock value/);
+  const misplacedDualClockTimeZonePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Timezone attached only to the wrong changed endpoint',
+      startStep: 3,
+      endStep: 6,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785654000:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '6 pm' },
+        { op: 'combine_date_time', baseStep: 4, timeStep: 5, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMisplacedDualClockTimeZone = await executeTemporalPlanPlannerOutput(
+    misplacedDualClockTimeZonePlan,
+    { text: '<t:1785643200:t> to <t:1785654000:t>; set the start to 5 pm UTC; set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMisplacedDualClockTimeZone.status, 'failed');
+  assert.equal(rejectedMisplacedDualClockTimeZone.range, undefined);
+  const acceptedConjoinedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedConjoinedFinishClockRange.status,
+    'resolved',
+    acceptedConjoinedFinishClockRange.validation.warnings.join(' | '),
+  );
+  const acceptedAndThenFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and then ends at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAndThenFinishClockRange.status,
+    'resolved',
+    acceptedAndThenFinishClockRange.validation.warnings.join(' | '),
+  );
+  const rejectedDuplicateEndClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'ends at <t:1785643200:t> and ends at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedDuplicateEndClockRange.status, 'failed');
+  assert.equal(rejectedDuplicateEndClockRange.range, undefined);
+  const clockAndStartArithmeticRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'End clock with independent start arithmetic',
+      startStep: 3,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedClockAndStartArithmeticRange = await executeTemporalPlanPlannerOutput(
+    clockAndStartArithmeticRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm; move the start one hour earlier', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedClockAndStartArithmeticRange.status,
+    'resolved',
+    acceptedClockAndStartArithmeticRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedClockAndStartArithmeticRange.range?.start.epoch, 1785639600);
+  assert.equal(acceptedClockAndStartArithmeticRange.range?.end.epoch, 1785704400);
+  const unrelatedClockChainRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Incorrectly chained unrelated publishing clock',
+      startStep: 0,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '6 pm' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnrelatedClockChainRange = await executeTemporalPlanPlannerOutput(
+    unrelatedClockChainRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm; publish at 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnrelatedClockChainRange.status, 'failed');
+  assert.equal(rejectedUnrelatedClockChainRange.range, undefined);
+  const rejectedSameEndpointUnrelatedClockRange = await executeTemporalPlanPlannerOutput(
+    unrelatedClockChainRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm; the broadcast ends at 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSameEndpointUnrelatedClockRange.status, 'failed');
+  assert.equal(rejectedSameEndpointUnrelatedClockRange.range, undefined);
+  const endpointClockAlternativesPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Should the range end at 5 PM or 6 PM?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Explicit end-clock alternatives',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '5 PM', text: '5 pm' },
+          { label: '6 PM', text: '6 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedEndpointClockAlternatives = await executeTemporalPlanPlannerOutput(
+    endpointClockAlternativesPlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm or 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedEndpointClockAlternatives.status,
+    'needs_clarification',
+    acceptedEndpointClockAlternatives.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedEndpointClockAlternatives.clarificationAlternatives?.length, 2);
+  const compactEndpointClockAlternativesPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 12:30 AM or 12:30 PM?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Compact end-clock alternatives',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '12:30 AM', text: '12:30 am' },
+          { label: '12:30 PM', text: '12:30 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedCompactEndpointClockAlternatives = await executeTemporalPlanPlannerOutput(
+    compactEndpointClockAlternativesPlan,
+    { text: '<t:1785643200:t> to 1230', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedCompactEndpointClockAlternatives.status,
+    'needs_clarification',
+    acceptedCompactEndpointClockAlternatives.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedCompactEndpointClockAlternatives.clarificationAlternatives?.length, 2);
+  const multiClockTextRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Invalid singular multi-clock text operand',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm or 6 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMultiClockTextRange = await executeTemporalPlanPlannerOutput(
+    multiClockTextRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm or 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMultiClockTextRange.status, 'failed');
+  assert.equal(rejectedMultiClockTextRange.range, undefined);
+  const independentClockSetterAndArithmeticPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independent start clock and end arithmetic',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 1, delta: { hours: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedIndependentClockSetterAndArithmetic = await executeTemporalPlanPlannerOutput(
+    independentClockSetterAndArithmeticPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm; move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedIndependentClockSetterAndArithmetic.status,
+    'resolved',
+    acceptedIndependentClockSetterAndArithmetic.validation.warnings.join(' | '),
+  );
+  const acceptedMoveClockSetterAndArithmetic = await executeTemporalPlanPlannerOutput(
+    independentClockSetterAndArithmeticPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; move the start to 5 pm and move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedMoveClockSetterAndArithmetic.status,
+    'resolved',
+    acceptedMoveClockSetterAndArithmetic.validation.warnings.join(' | '),
+  );
+  const twoEndpointClockSettersPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independent clocks for both endpoints',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 1, time: { hour: 18, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedTwoEndpointClockSetters = await executeTemporalPlanPlannerOutput(
+    twoEndpointClockSettersPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm; set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedTwoEndpointClockSetters.status,
+    'resolved',
+    acceptedTwoEndpointClockSetters.validation.warnings.join(' | '),
+  );
+  const acceptedConjoinedEndpointClockSetters = await executeTemporalPlanPlannerOutput(
+    twoEndpointClockSettersPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm and set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedConjoinedEndpointClockSetters.status,
+    'resolved',
+    acceptedConjoinedEndpointClockSetters.validation.warnings.join(' | '),
+  );
+  const acceptedAndThenEndpointClockSetters = await executeTemporalPlanPlannerOutput(
+    twoEndpointClockSettersPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm and then set the end to 6 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAndThenEndpointClockSetters.status,
+    'resolved',
+    acceptedAndThenEndpointClockSetters.validation.warnings.join(' | '),
+  );
+  const copiedClockToUnownedEndPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Incorrectly copied start clock onto end',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 1, time: { hour: 17, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedCopiedClockToUnownedEnd = await executeTemporalPlanPlannerOutput(
+    copiedClockToUnownedEndPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedCopiedClockToUnownedEnd.status, 'failed');
+  assert.equal(rejectedCopiedClockToUnownedEnd.range, undefined);
+  const malformedEndpointSetterRange = await executeTemporalPlanPlannerOutput(
+    independentClockSetterAndArithmeticPlan,
+    { text: '<t:1785643200:t> to <t:1785726000:t>; set the start to 25:00; move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(malformedEndpointSetterRange.status, 'failed');
+  assert.equal(malformedEndpointSetterRange.range, undefined);
+  assert.match(malformedEndpointSetterRange.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnrelatedEndpointClockRange.status, 'failed');
+  assert.equal(rejectedUnrelatedEndpointClockRange.range, undefined);
+  const rejectedRangeWithUnrelatedDuration = await executeModelReferenceRangeShift(
+    'starts at <t:1785643200:t>, finishes at 5 pm; publish one hour later',
+    '<t:1785643200:t>',
+    '<t:1785643200:t>',
+    'end',
+    { hours: 1 },
+  );
+  assert.equal(rejectedRangeWithUnrelatedDuration.status, 'failed');
+  assert.equal(rejectedRangeWithUnrelatedDuration.range, undefined);
+  const acceptedReferenceLeadingFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: '<t:1785643200:t> finishes at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedReferenceLeadingFinishClockRange.status,
+    'resolved',
+    acceptedReferenceLeadingFinishClockRange.validation.warnings.join(' | '),
+  );
+  const beginClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Begin-clock range',
+      startStep: 2,
+      endStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785726000:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedBeginClockRange = await executeTemporalPlanPlannerOutput(
+    beginClockRangePlan,
+    { text: 'begins at 5 pm, finishes at <t:1785726000:t>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedBeginClockRange.status, 'resolved', acceptedBeginClockRange.validation.warnings.join(' | '));
+  assert.equal(acceptedBeginClockRange.range?.start.epoch, 1785704400);
+  assert.equal(acceptedBeginClockRange.range?.end.epoch, 1785726000);
+  const anchoredTwoClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored two-clock range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredTwoClockRange = await executeTemporalPlanPlannerOutput(
+    anchoredTwoClockRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 3 pm to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredTwoClockRange.status,
+    'resolved',
+    acceptedAnchoredTwoClockRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredTwoClockRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredTwoClockRange.range?.end.epoch, 1785704400);
+  const anchoredShiftClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored two-clock range using clock-only shifts',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 0 }, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 3, delta: { days: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredShiftClockRange = await executeTemporalPlanPlannerOutput(
+    anchoredShiftClockRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 3 pm to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredShiftClockRange.status,
+    'resolved',
+    acceptedAnchoredShiftClockRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredShiftClockRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredShiftClockRange.range?.end.epoch, 1785704400);
+  const clockThenArithmeticRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Clock-composed range with an arithmetic end shift',
+      startStep: 0,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 0 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 2, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedClockThenArithmeticRange = await executeTemporalPlanPlannerOutput(
+    clockThenArithmeticRangePlan,
+    { text: '<t:1785643200:t> to 5 pm; move the end one day later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedClockThenArithmeticRange.status,
+    'resolved',
+    acceptedClockThenArithmeticRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedClockThenArithmeticRange.range?.start.epoch, 1785643200);
+  assert.equal(acceptedClockThenArithmeticRange.range?.end.epoch, 1785790800);
+  const dualEndpointShiftPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independently shifted reference endpoints',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785654000:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: -1 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 1, delta: { hours: 2 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedDualEndpointShift = await executeTemporalPlanPlannerOutput(
+    dualEndpointShiftPlan,
+    { text: '<t:1785643200:t> to <t:1785654000:t>; move the start one hour earlier; move the end two hours later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedDualEndpointShift.status, 'resolved', acceptedDualEndpointShift.validation.warnings.join(' | '));
+  assert.equal(acceptedDualEndpointShift.range?.start.epoch, 1785639600);
+  assert.equal(acceptedDualEndpointShift.range?.end.epoch, 1785661200);
+  const dualEndpointAddPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Independently added reference endpoint shifts',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785654000:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: 1 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 1, delta: { hours: 2 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedDualEndpointAdd = await executeTemporalPlanPlannerOutput(
+    dualEndpointAddPlan,
+    { text: '<t:1785643200:t> to <t:1785654000:t>; add one hour to the start; add two hours to the end', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedDualEndpointAdd.status, 'resolved', acceptedDualEndpointAdd.validation.warnings.join(' | '));
+  assert.equal(acceptedDualEndpointAdd.range?.start.epoch, 1785646800);
+  assert.equal(acceptedDualEndpointAdd.range?.end.epoch, 1785661200);
+  for (const text of [
+    '<t:1785643200:t> to <t:1785654000:t>; pull the end by one hour',
+    '<t:1785643200:t> to <t:1785654000:t>; shorten the end by one hour',
+  ]) {
+    const acceptedImpliedEndShift = await executeModelReferenceRangeShift(
+      text,
+      '<t:1785643200:t>',
+      '<t:1785654000:t>',
+      'end',
+      { hours: -1 },
+    );
+    assert.equal(acceptedImpliedEndShift.status, 'resolved', `${text}: ${acceptedImpliedEndShift.validation.warnings.join(' | ')}`);
+    assert.equal(acceptedImpliedEndShift.range?.end.epoch, 1785650400);
+  }
+  const anchoredTwentyFourHourRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored 24-hour range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '15:00' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '17:00' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredTwentyFourHourRange = await executeTemporalPlanPlannerOutput(
+    anchoredTwentyFourHourRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 15:00 to 17:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredTwentyFourHourRange.status,
+    'resolved',
+    acceptedAnchoredTwentyFourHourRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredTwentyFourHourRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredTwentyFourHourRange.range?.end.epoch, 1785704400);
+  const acceptedAnchoredDottedRange = await executeTemporalPlanPlannerOutput(
+    anchoredTwentyFourHourRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 15.00 to 17.00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredDottedRange.status,
+    'resolved',
+    acceptedAnchoredDottedRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredDottedRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredDottedRange.range?.end.epoch, 1785704400);
+  const anchoredNamedClockRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored named-clock range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: 'noon' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredNamedClockRange = await executeTemporalPlanPlannerOutput(
+    anchoredNamedClockRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from noon to 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredNamedClockRange.status,
+    'resolved',
+    acceptedAnchoredNamedClockRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredNamedClockRange.range?.start.epoch, 1785686400);
+  assert.equal(acceptedAnchoredNamedClockRange.range?.end.epoch, 1785704400);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',
@@ -210,6 +1338,10 @@ async function main() {
   assert.equal(shiftedDiscordInfix.status, 'failed');
   assert.equal(shiftedDiscordInfix.debug?.referenceRouting?.route, 'model');
 
+  const paddedBareClockRange = await parse('tomorrow 03:30-04:30');
+  assert.equal(paddedBareClockRange.status, 'needs_clarification');
+  assert.equal(paddedBareClockRange.clarificationQuestion, 'Please specify AM or PM for each range endpoint.');
+
   const promotedDateOnlyStyle = await parse('<t:1785643200:D> 1 hour later');
   assert.equal(promotedDateOnlyStyle.status, 'failed');
   assert.equal(promotedDateOnlyStyle.debug?.referenceRouting?.route, 'model');
@@ -222,6 +1354,1419 @@ async function main() {
   assert.equal(modelInterpretedShift.status, 'resolved');
   assert.equal(modelInterpretedShift.epoch, 1785646800);
   assert.equal(modelInterpretedShift.method, 'agent+plan');
+
+  const selectableShiftClockClarification = await executeModelReferenceShiftClockClarification(
+    '<t:1785643200:t> 1 day ebefore at 2',
+    '<t:1785643200:t>',
+  );
+  assert.equal(selectableShiftClockClarification.status, 'needs_clarification');
+  assert.equal(selectableShiftClockClarification.clarificationQuestion, 'Did you mean 2 AM or 2 PM?');
+  assert.deepEqual(
+    selectableShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785564000, 1785607200],
+  );
+  assert.deepEqual(
+    selectableShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['2 AM', '2 PM'],
+  );
+
+  const selectableCleanShiftClockClarification = await executeModelReferenceShiftClockClarification(
+    '<t:1785643200:t> 1 day earlier at 2',
+    '<t:1785643200:t>',
+  );
+  assert.deepEqual(
+    selectableCleanShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785564000, 1785607200],
+  );
+
+  const oclockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    reason: 'Fixture matching a model plan that preserves conventional o-clock wording.',
+    plans: [{
+      label: 'Shifted date at 3 o-clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: "3 o'clock" },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const oclockClarification = await executeTemporalPlanPlannerOutput(
+    oclockPlan,
+    { text: 'make <t:1785643200:t> 3 o\u2019clock on the previous day', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(oclockClarification.status, 'needs_clarification');
+  assert.equal(oclockClarification.clarificationQuestion, 'Did you mean 3 AM or 3 PM?');
+  assert.deepEqual(
+    oclockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785567600, 1785610800],
+  );
+  const rejectedInstantForOclockRange = await executeModelReferenceClockComposition(
+    "<t:1785643200:t> to 3 o'clock",
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedInstantForOclockRange.status, 'failed');
+  assert.match(rejectedInstantForOclockRange.validation.warnings.join(' '), /instant.*range request/);
+  const selectableOclockRange = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Timestamp through 3 oclock',
+      startStep: 0,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3 PM', text: '3 am' },
+          { label: '3 AM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const oclockRangeClarification = await executeTemporalPlanPlannerOutput(
+    selectableOclockRange,
+    { text: "<t:1785643200:t> to 3 o'clock", calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(oclockRangeClarification.status, 'needs_clarification', JSON.stringify(oclockRangeClarification, null, 2));
+  assert.equal(oclockRangeClarification.clarificationAlternatives?.length, 2);
+  assert.deepEqual(
+    oclockRangeClarification.clarificationAlternatives?.map((alternative) => alternative.range?.end.epoch),
+    [1785654000, 1785697200],
+  );
+
+  const independentRangeChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which Saturday and which 3 oclock?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Ambiguous Saturday range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_weekday_anchor', weekday: 'saturday', weekdayAnchor: 'next_ambiguous', precision: 'date' },
+        { op: 'resolve_clock_time', text: 'midnight' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3 AM', text: '3 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const independentRangeClarification = await executeTemporalPlanPlannerOutput(
+    independentRangeChoices,
+    { text: "next Saturday from midnight to 3 o'clock", calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(independentRangeClarification.status, 'needs_clarification', JSON.stringify(independentRangeClarification, null, 2));
+  assert.equal(independentRangeClarification.clarificationAlternatives?.length, 4);
+
+  const overnightRangeChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which Saturday and which 1 oclock?',
+    plans: [{
+      kind: 'time_range',
+      label: 'Ambiguous overnight Saturday range',
+      startStep: 2,
+      endStep: 5,
+      steps: [
+        { op: 'resolve_weekday_anchor', weekday: 'saturday', weekdayAnchor: 'next_ambiguous', precision: 'date' },
+        { op: 'resolve_clock_time', text: '11 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', options: [
+          { label: '1 AM', text: '1 am' },
+          { label: '1 PM', text: '1 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 4, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const overnightRangeClarification = await executeTemporalPlanPlannerOutput(
+    overnightRangeChoices,
+    { text: "next Saturday from 11 pm to 1 o'clock", calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(overnightRangeClarification.status, 'needs_clarification', JSON.stringify(overnightRangeClarification, null, 2));
+  assert.equal(overnightRangeClarification.clarificationAlternatives?.length, 4);
+
+  const selectableMinuteClockClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 4:30 AM or 4:30 PM?',
+    plans: [{
+      label: 'Shifted date at 4:30',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785733200:F>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '4:30 AM', text: '4:30 am' },
+          { label: '4:30 PM', text: '4:30 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const selectableMinuteClockResult = await executeTemporalPlanPlannerOutput(
+    selectableMinuteClockClarification,
+    { text: 'at 4:30 use the day after <t:1785733200:F>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(selectableMinuteClockResult.status, 'needs_clarification');
+  assert.deepEqual(
+    selectableMinuteClockResult.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['4:30 AM', '4:30 PM'],
+  );
+
+  const misleadingClockChoiceLabels = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Model labels disagree with their clock text',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 pm' },
+          { label: '2 PM', text: '2 am' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const groundedClockChoiceLabels = await executeTemporalPlanPlannerOutput(
+    misleadingClockChoiceLabels,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.deepEqual(
+    groundedClockChoiceLabels.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['2 AM', '2 PM'],
+  );
+
+  const hallucinatedClockChoiceTexts = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      label: 'Model option texts disagree with the requested clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3 AM', text: '3 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const groundedClockChoiceTexts = await executeTemporalPlanPlannerOutput(
+    hallucinatedClockChoiceTexts,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.deepEqual(
+    groundedClockChoiceTexts.clarificationAlternatives?.map((alternative) => alternative.label),
+    ['2 AM', '2 PM'],
+  );
+  assert.deepEqual(
+    groundedClockChoiceTexts.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    [1785650400, 1785693600],
+  );
+
+  const ungroundedExplicitClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which time did you mean?',
+    plans: [{
+      label: 'Hallucinated explicit clock choices',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '8 AM', text: '8 am' },
+          { label: '4 PM', text: '4 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUngroundedExplicitClockChoices = await executeTemporalPlanPlannerOutput(
+    ungroundedExplicitClockChoices,
+    { text: 'tomorrow at either 9 am or 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUngroundedExplicitClockChoices.status, 'failed');
+  assert.equal(rejectedUngroundedExplicitClockChoices.clarificationAlternatives, undefined);
+  assert.match(rejectedUngroundedExplicitClockChoices.validation.warnings.join(' '), /must match the clocks requested/);
+  const incompleteExplicitClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which time did you mean?',
+    plans: [{
+      label: 'Incomplete explicit clock choices',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '9 AM', text: '9 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedIncompleteExplicitClockChoices = await executeTemporalPlanPlannerOutput(
+    incompleteExplicitClockChoices,
+    { text: 'tomorrow at 9 am, 1 pm, or 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedIncompleteExplicitClockChoices.status, 'failed');
+  assert.equal(rejectedIncompleteExplicitClockChoices.clarificationAlternatives, undefined);
+  assert.equal(
+    unsafeTemporalDiagnosticMismatch(
+      { status: 'needs_clarification', alternativeEpochs: [1780174800, 1780779600] },
+      {
+        status: 'needs_clarification',
+        clarificationAlternatives: [{ epoch: 1780131600 }, { epoch: 1780736400 }],
+      },
+    ),
+    true,
+  );
+
+  const hallucinatedTwoPlanClockChoice = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: (['3 am', '3 pm'] as const).map((clockText) => ({
+      label: `Model plan for ${clockText}`,
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: clockText },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    })),
+  });
+  const groundedTwoPlanClockChoice = await executeTemporalPlanPlannerOutput(
+    hallucinatedTwoPlanClockChoice,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(groundedTwoPlanClockChoice.status, 'failed');
+  assert.equal(groundedTwoPlanClockChoice.clarificationAlternatives, undefined);
+  assert.match(groundedTwoPlanClockChoice.validation.warnings.join(' '), /clock did not match/);
+
+  const unusedDiscordReferenceBranch = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      label: 'Unrelated final date with an unused Discord-reference branch',
+      finalStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 1 }, precision: 'date' },
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 am' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnusedDiscordReferenceBranch = await executeTemporalPlanPlannerOutput(
+    unusedDiscordReferenceBranch,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnusedDiscordReferenceBranch.status, 'failed');
+  assert.equal(rejectedUnusedDiscordReferenceBranch.clarificationAlternatives, undefined);
+  assert.match(
+    rejectedUnusedDiscordReferenceBranch.validation.warnings.join(' '),
+    /final output did not derive from an explicit Discord timestamp reference operand/,
+  );
+
+  const unusedReferenceOnIgnoredOperand = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3 AM or 3 PM?',
+    plans: [{
+      label: 'Unrelated final date with reference attached to an ignored timezone operand',
+      finalStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_timezone', text: 'UTC', baseStep: 0 },
+        { op: 'resolve_calendar_query', query: 'tomorrow', timeZoneStep: 1, precision: 'date' },
+        { op: 'resolve_clock_time', text: '3 am' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, timeZoneStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedIgnoredOperandReference = await executeTemporalPlanPlannerOutput(
+    unusedReferenceOnIgnoredOperand,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedIgnoredOperandReference.status, 'failed');
+  assert.equal(rejectedIgnoredOperandReference.clarificationAlternatives, undefined);
+  assert.match(
+    rejectedIgnoredOperandReference.validation.warnings.join(' '),
+    /final output did not derive from an explicit Discord timestamp reference operand/,
+  );
+
+  const wrongDiscordReferenceShift = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Wrong three-day shift for a one-day request',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongDiscordReferenceShift = await executeTemporalPlanPlannerOutput(
+    wrongDiscordReferenceShift,
+    { text: '<t:1785643200:t> 1 day earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongDiscordReferenceShift.status, 'failed');
+  assert.equal(rejectedWrongDiscordReferenceShift.clarificationAlternatives, undefined);
+  assert.match(
+    rejectedWrongDiscordReferenceShift.validation.warnings.join(' '),
+    /shift did not match the requested Discord-reference transformation/,
+  );
+
+  const wrongExplicitDiscordReferenceShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Wrong explicit-clock shift',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '2 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongExplicitShift = await executeTemporalPlanPlannerOutput(
+    wrongExplicitDiscordReferenceShift,
+    { text: '<t:1785643200:t> 1 day earlier at 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongExplicitShift.status, 'failed');
+  assert.equal(rejectedWrongExplicitShift.epoch, undefined);
+
+  const partiallyParsedCompoundShift = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Only the final component of a compound shift',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedPartialCompoundShift = await executeTemporalPlanPlannerOutput(
+    partiallyParsedCompoundShift,
+    { text: '<t:1785643200:t> two weeks and three days earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedPartialCompoundShift.status, 'failed');
+  assert.equal(rejectedPartialCompoundShift.clarificationAlternatives, undefined);
+
+  const ungroundedConsumedTimeZone = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Correct shift in an unrequested timezone',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'America/Los_Angeles' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 1, timeStep: 2, timeZoneStep: 0, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUngroundedTimeZone = await executeTemporalPlanPlannerOutput(
+    ungroundedConsumedTimeZone,
+    { text: '<t:1785643200:t> 1 day earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUngroundedTimeZone.status, 'failed');
+  assert.equal(rejectedUngroundedTimeZone.clarificationAlternatives, undefined);
+  assert.match(rejectedUngroundedTimeZone.validation.warnings.join(' '), /timezone step.*not grounded/);
+
+  const cancellingDiscordReferenceShifts = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Offsetting shift chain with different calendar semantics',
+      finalStep: 5,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1706504400:t>', precision: 'date' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 1 }, precision: 'date' },
+        { op: 'shift_datetime', baseStep: 1, delta: { months: 1 }, precision: 'date' },
+        { op: 'shift_datetime', baseStep: 2, delta: { days: -1 }, precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 3, timeStep: 4, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedCancellingShifts = await executeTemporalPlanPlannerOutput(
+    cancellingDiscordReferenceShifts,
+    { text: '<t:1706504400:t> one month later at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedCancellingShifts.status, 'failed');
+  assert.equal(rejectedCancellingShifts.clarificationAlternatives, undefined);
+  assert.match(rejectedCancellingShifts.validation.warnings.join(' '), /shift structure did not match/);
+
+  const unmatchedFollowingMonthShift = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Only the first of two shift clauses',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnmatchedFollowingMonth = await executeTemporalPlanPlannerOutput(
+    unmatchedFollowingMonthShift,
+    { text: '<t:1785643200:t> one day earlier, then the following month at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnmatchedFollowingMonth.status, 'failed');
+  assert.equal(rejectedUnmatchedFollowingMonth.clarificationAlternatives, undefined);
+
+  const wrongRangeShiftEndpoint = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Shifted the start instead of the requested end',
+      startStep: 1,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: 1 }, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785650400:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongRangeEndpoint = await executeTemporalPlanPlannerOutput(
+    wrongRangeShiftEndpoint,
+    { text: '<t:1785643200:t> to <t:1785650400:t>, but move the end one hour later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongRangeEndpoint.status, 'failed');
+  assert.equal(rejectedWrongRangeEndpoint.range, undefined);
+  assert.match(rejectedWrongRangeEndpoint.validation.warnings.join(' '), /end endpoint only/);
+  for (const rangeCase of [
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, extend the end by two hours',
+      target: 'end' as const,
+      delta: { hours: 2 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, add three hours to the end',
+      target: 'end' as const,
+      delta: { hours: 3 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785654000:t>; push the end by one hour later',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, shift the start back two hours',
+      target: 'start' as const,
+      delta: { hours: -2 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, extend the start by two hours',
+      target: 'start' as const,
+      delta: { hours: -2 },
+    },
+    {
+      text: '<t:1785643200:t> to <t:1785650400:t>, extend the starting point by two hours',
+      target: 'start' as const,
+      delta: { hours: -2 },
+    },
+    {
+      text: 'from <t:1785643200:t> until one hour after <t:1785643200:t>',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
+      text: 'from <t:1785643200:t> until four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: '<t:1785643200:t> to four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: '<t:1785643200:t> to one hour after <t:1785643200:t>',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
+      text: '<t:1785643200:t> to one hour afetr <t:1785643200:t>',
+      target: 'end' as const,
+      delta: { hours: 1 },
+    },
+    {
+      text: 'starting at <t:1785643200:t> and ending two hours later',
+      target: 'end' as const,
+      delta: { hours: 2 },
+    },
+    {
+      text: 'starting at <t:1785643200:t> and ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starting at <t:1785643200:t>, ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'start at <t:1785643200:t>; end four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starting at <t:1785643200:t>: ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starting at <t:1785643200:t> \u2014 ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starting at <t:1785643200:t>, then ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starting at <t:1785643200:t> and then ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'beginning at <t:1785643200:t>, ending four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'begin at <t:1785643200:t> and then end four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'starts at <t:1785643200:t>, ends four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: 'begins at <t:1785643200:t> and ends four hours later',
+      target: 'end' as const,
+      delta: { hours: 4 },
+    },
+    {
+      text: '<t:1785643200:t> through 30 minutes before <t:1785650400:t>',
+      target: 'end' as const,
+      delta: { minutes: -30 },
+    },
+    {
+      text: '15 minutes before <t:1785643200:t> until <t:1785650400:t>',
+      target: 'start' as const,
+      delta: { minutes: -15 },
+    },
+  ]) {
+    const rangeReferences = [...rangeCase.text.matchAll(/<t:\d+(?::[tTdDfFR])?>/giu)].map((match) => match[0]);
+    const supportedRangeShift = await executeModelReferenceRangeShift(
+      rangeCase.text,
+      '<t:1785643200:t>',
+      rangeReferences[1] ?? '<t:1785643200:t>',
+      rangeCase.target,
+      rangeCase.delta,
+    );
+    assert.equal(
+      supportedRangeShift.status,
+      'resolved',
+      `${rangeCase.text}: ${supportedRangeShift.validation.warnings.join(' ')}`,
+    );
+    assert.notEqual(supportedRangeShift.range, undefined);
+  }
+  const rejectedShrinkingStartExtension = await executeModelReferenceRangeShift(
+    '<t:1785643200:t> to <t:1785650400:t>, extend the start by two hours',
+    '<t:1785643200:t>',
+    '<t:1785650400:t>',
+    'start',
+    { hours: 2 },
+  );
+  assert.equal(rejectedShrinkingStartExtension.status, 'failed');
+  const rejectedSingularRelationalRange = await executeModelReferenceShift(
+    'starting at <t:1785643200:t> and ending two hours later',
+    '<t:1785643200:t>',
+    { hours: 2 },
+  );
+  assert.equal(rejectedSingularRelationalRange.status, 'failed');
+  const rejectedSingularWordNumberRelationalRange = await executeModelReferenceShift(
+    'starting at <t:1785643200:t> and ending four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedSingularWordNumberRelationalRange.status, 'failed');
+  for (const text of [
+    'starting at <t:1785643200:t>, ending four hours later',
+    'start at <t:1785643200:t>; end four hours later',
+    'starting at <t:1785643200:t>: ending four hours later',
+    'starting at <t:1785643200:t> \u2014 ending four hours later',
+    'starting at <t:1785643200:t>, then ending four hours later',
+    'starting at <t:1785643200:t> and then ending four hours later',
+    'beginning at <t:1785643200:t>, ending four hours later',
+    'begin at <t:1785643200:t> and then end four hours later',
+    'starts at <t:1785643200:t>, ends four hours later',
+    'begins at <t:1785643200:t> and ends four hours later',
+  ]) {
+    const rejectedSingularPunctuatedRelationalRange = await executeModelReferenceShift(
+      text,
+      '<t:1785643200:t>',
+      { hours: 4 },
+    );
+    assert.equal(rejectedSingularPunctuatedRelationalRange.status, 'failed');
+  }
+  const rejectedSingularDuplicatedReferenceRange = await executeModelReferenceShift(
+    'from <t:1785643200:t> until one hour after <t:1785643200:t>',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(rejectedSingularDuplicatedReferenceRange.status, 'failed');
+  const rejectedSingularImplicitReferenceRange = await executeModelReferenceShift(
+    'from <t:1785643200:t> until four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedSingularImplicitReferenceRange.status, 'failed');
+  const rejectedSingularBareImplicitReferenceRange = await executeModelReferenceShift(
+    '<t:1785643200:t> to four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(rejectedSingularBareImplicitReferenceRange.status, 'failed');
+
+  const swappedRangeReferences = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Swapped source references while shifting the end',
+      startStep: 1,
+      endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785646800:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { hours: 3 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedSwappedRangeReferences = await executeTemporalPlanPlannerOutput(
+    swappedRangeReferences,
+    { text: '<t:1785643200:t> to <t:1785646800:t>, move the end three hours later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSwappedRangeReferences.status, 'failed');
+  assert.equal(rejectedSwappedRangeReferences.range, undefined);
+  assert.match(rejectedSwappedRangeReferences.validation.warnings.join(' '), /endpoint order/);
+
+  const unrequestedClockOnShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Correct day shift with an unrequested clock',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'shift_datetime', baseStep: 0, time: { hour: 5, minute: 0 }, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedUnrequestedClock = await executeTemporalPlanPlannerOutput(
+    unrequestedClockOnShift,
+    { text: '<t:1785643200:t> 1 day earlier', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnrequestedClock.status, 'failed');
+  assert.equal(rejectedUnrequestedClock.epoch, undefined);
+  assert.match(rejectedUnrequestedClock.validation.warnings.join(' '), /clock change.*not requested/);
+
+  const yesterdayReferenceShift = await executeModelReferenceShift(
+    '<t:1785643200:t> yesterday',
+    '<t:1785643200:t>',
+    { days: -1 },
+  );
+  assert.equal(yesterdayReferenceShift.status, 'resolved');
+  const tomorrowReferenceShift = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(tomorrowReferenceShift.status, 'resolved');
+  const wordNumberReferenceShift = await executeModelReferenceShift(
+    '<t:1785643200:t> four hours later',
+    '<t:1785643200:t>',
+    { hours: 4 },
+  );
+  assert.equal(wordNumberReferenceShift.status, 'resolved');
+  const underShiftedCompoundRelativeDay = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one day later',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(underShiftedCompoundRelativeDay.status, 'failed');
+  const compoundRelativeDay = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one day later',
+    '<t:1785643200:t>',
+    { days: 2 },
+  );
+  assert.equal(compoundRelativeDay.status, 'resolved');
+  const compoundRelativeDayAndHour = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one hour later',
+    '<t:1785643200:t>',
+    { days: 1, hours: 1 },
+  );
+  assert.equal(compoundRelativeDayAndHour.status, 'resolved');
+  const mixedUnitRelativeDay = await executeModelReferenceShift(
+    '<t:1785643200:t> tomorrow, then one month later',
+    '<t:1785643200:t>',
+    { days: 1, months: 1 },
+  );
+  assert.equal(mixedUnitRelativeDay.status, 'failed');
+  const collapsedRepeatedMonthShift = await executeModelReferenceShift(
+    '<t:1706688000:t> one month later, then one month later',
+    '<t:1706688000:t>',
+    { months: 2 },
+  );
+  assert.equal(collapsedRepeatedMonthShift.status, 'failed');
+  const unsupportedLastMonthShift = await executeModelReferenceShift(
+    '<t:1706688000:t> last month',
+    '<t:1706688000:t>',
+    { months: -1 },
+  );
+  assert.equal(unsupportedLastMonthShift.status, 'failed');
+  const unsupportedLastCalendarMonthShift = await executeModelReferenceShift(
+    '<t:1706688000:t> last calendar month',
+    '<t:1706688000:t>',
+    { months: -1 },
+  );
+  assert.equal(unsupportedLastCalendarMonthShift.status, 'failed');
+  const unsupportedWordAmountAgoShift = await executeModelReferenceShift(
+    '<t:1785643200:t> four days ago at 2 pm',
+    '<t:1785643200:t>',
+    {},
+  );
+  assert.equal(unsupportedWordAmountAgoShift.status, 'failed');
+  const unsupportedFractionalShift = await executeModelReferenceShift(
+    '<t:1785643200:t> half an hour later',
+    '<t:1785643200:t>',
+    { hours: 1 },
+  );
+  assert.equal(unsupportedFractionalShift.status, 'failed');
+  const unsupportedSupersededShift = await executeModelReferenceShift(
+    '<t:1785643200:t> was one day later; actually make it two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedSupersededShift.status, 'failed');
+  const unsupportedMakeThatShift = await executeModelReferenceShift(
+    '<t:1785643200:t> was one day later; make that two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedMakeThatShift.status, 'failed');
+  const unsupportedNoCorrectionShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later—no, two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedNoCorrectionShift.status, 'failed');
+  const unsupportedSorryCorrectionShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later—sorry, two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedSorryCorrectionShift.status, 'failed');
+  const supportedExplicitAdditiveShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later, then two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(supportedExplicitAdditiveShift.status, 'resolved');
+  const supportedForwardBeforeAmountShift = await executeModelReferenceShift(
+    '<t:1785643200:t>, go forward one day',
+    '<t:1785643200:t>',
+    { days: 1 },
+  );
+  assert.equal(supportedForwardBeforeAmountShift.status, 'resolved');
+  const unsupportedCorrectionAfterAdditiveShift = await executeModelReferenceShift(
+    '<t:1785643200:t> one day later, then no, two days later',
+    '<t:1785643200:t>',
+    { days: 3 },
+  );
+  assert.equal(unsupportedCorrectionAfterAdditiveShift.status, 'failed');
+  const unsupportedRoundingTransform = await executeModelReferenceShift(
+    '<t:1785644100:t> rounded to the nearest hour',
+    '<t:1785644100:t>',
+    {},
+  );
+  assert.equal(unsupportedRoundingTransform.status, 'failed');
+  const unsupportedMultiClockCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at 2 pm; change it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(unsupportedMultiClockCorrection.status, 'failed');
+  const unsupportedNamedClockCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at noon; change it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(unsupportedNamedClockCorrection.status, 'failed');
+  const unsupportedTwentyFourHourCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at 14:00; use 15:00',
+    '<t:1785643200:t>',
+    '15:00',
+  );
+  assert.equal(unsupportedTwentyFourHourCorrection.status, 'failed');
+  const unsupportedBareHourCorrection = await executeModelReferenceClockComposition(
+    '<t:1785643200:t> was at 7; change it to 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(unsupportedBareHourCorrection.status, 'failed');
+  for (const text of [
+    'use <t:1785643200:t> for the same day at 3 pm',
+    'set <t:1785643200:t> to 3 pm',
+    'set the time of <t:1785643200:t> to 3 pm',
+    'change the time of <t:1785643200:t> to 3 pm',
+    'change the time of <t:1785643200:t> to 3 p.m.',
+    'move <t:1785643200:t> to 3 pm without changing the day',
+    '<t:1785643200:t> move it to 3 pm without changing the day',
+  ]) {
+    const supportedSameDayComposition = await executeModelReferenceClockComposition(
+      text,
+      '<t:1785643200:t>',
+      '3 pm',
+    );
+    assert.equal(supportedSameDayComposition.status, 'resolved', `${text}: ${supportedSameDayComposition.validation.warnings.join(' | ')}`);
+  }
+  const rejectedUnscopedCopiedProseClock = await executeModelReferenceClockComposition(
+    'I copied <t:1785643200:t> at 3 pm',
+    '<t:1785643200:t>',
+    '3 pm',
+  );
+  assert.equal(rejectedUnscopedCopiedProseClock.status, 'failed');
+  assert.match(
+    rejectedUnscopedCopiedProseClock.validation.warnings.join(' '),
+    /clock relationship could not be validated safely/,
+  );
+  const unchangedMalformedClockSetter = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Ignored malformed clock setter', finalStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  for (const text of [
+    'set <t:1785643200:t> to 25:00',
+    'set the time of <t:1785643200:t> to 25:00',
+    '<t:1785643200:t> set it to 2:75',
+    'set <t:1785643200:t> to 2500',
+  ]) {
+    const rejectedMalformedClockSetter = await executeTemporalPlanPlannerOutput(
+      unchangedMalformedClockSetter,
+      { text, calendarContext },
+      { implementations: createDeterministicTemporalToolImplementations() },
+    );
+    assert.equal(rejectedMalformedClockSetter.status, 'failed');
+    assert.match(
+      rejectedMalformedClockSetter.validation.warnings.join(' '),
+      /malformed clock value/,
+      `${text}: ${rejectedMalformedClockSetter.validation.warnings.join(' | ')}`,
+    );
+  }
+  const rejectedPunctuatedClockSetter = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 3.5 pm',
+    '<t:1785643200:t>',
+    '5 pm',
+  );
+  assert.equal(rejectedPunctuatedClockSetter.status, 'failed');
+  assert.match(rejectedPunctuatedClockSetter.validation.warnings.join(' '), /malformed clock value/);
+  const unchangedExtraSegmentClockSetter = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Ignored extra clock segment', finalStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedExtraSegmentClockSetter = await executeTemporalPlanPlannerOutput(
+    unchangedExtraSegmentClockSetter,
+    { text: 'set <t:1785643200:t> to 3:30:45 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedExtraSegmentClockSetter.status, 'failed');
+  assert.match(rejectedExtraSegmentClockSetter.validation.warnings.join(' '), /malformed clock value/);
+  const supportedDottedBareClockSetter = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 3.05',
+    '<t:1785643200:t>',
+    '3:05 pm',
+  );
+  assert.equal(supportedDottedBareClockSetter.status, 'needs_clarification');
+  const compactClockSetterClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 3:30 AM or 3:30 PM?',
+    plans: [{
+      label: 'Compact setter clock', finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '3:30 AM', text: '3:30 am' },
+          { label: '3:30 PM', text: '3:30 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const supportedCompactClockSetter = await executeTemporalPlanPlannerOutput(
+    compactClockSetterClarification,
+    { text: 'set <t:1785643200:t> to 330', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(supportedCompactClockSetter.status, 'needs_clarification');
+  const singularSetterAsRange = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Incorrect setter range', startStep: 0, endStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '3 pm' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedSingularSetterRange = await executeTemporalPlanPlannerOutput(
+    singularSetterAsRange,
+    { text: 'set <t:1785643200:t> to 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSingularSetterRange.status, 'failed');
+  assert.match(rejectedSingularSetterRange.validation.warnings.join(' '), /range for a singular/);
+
+  const discardedDateMutation = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discarded the requested day-of-month mutation',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  for (const text of [
+    '<t:1785643200:t> set the day to 15 at 2 pm',
+    '<t:1785643200:t> set the month to 5 at 2 pm',
+    '<t:1785643200:t> set the year to 2027 at 2 pm',
+    '<t:1785643200:t> on 2027-05-01 at 2 pm',
+    '<t:1785643200:t> on 5/1 at 2 pm',
+    '<t:1785643200:t> on Christmas at 2 pm',
+    '<t:1785643200:t> on Juneteenth at 2 pm',
+    "<t:1785643200:t> on St. Patrick's Day at 2 pm",
+    '<t:1785643200:t> on Martin Luther King, Jr. Day at 2 pm',
+    '<t:1785643200:t> move it to Juneteenth at 2 pm',
+    '<t:1785643200:t> move it to Juneteenth',
+    '<t:1785643200:t> at the end of the quarter',
+  ]) {
+    const rejectedDiscardedDateMutation = await executeTemporalPlanPlannerOutput(
+      discardedDateMutation,
+      { text, calendarContext },
+      { implementations: createDeterministicTemporalToolImplementations() },
+    );
+    assert.equal(rejectedDiscardedDateMutation.status, 'failed');
+    assert.match(rejectedDiscardedDateMutation.validation.warnings.join(' '), /calendar transformation.*validated safely/);
+  }
+  const rejectedInstantForRange = await executeTemporalPlanPlannerOutput(
+    discardedDateMutation,
+    { text: '<t:1785643200:t> to 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedInstantForRange.status, 'failed');
+  assert.match(rejectedInstantForRange.validation.warnings.join(' '), /instant.*range request/);
+  const singularQuantifiedShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Move two days later',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: 2 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedSingularQuantifiedShift = await executeTemporalPlanPlannerOutput(
+    singularQuantifiedShift,
+    { text: '<t:1785643200:t> move it to 2 days later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedSingularQuantifiedShift.status, 'resolved');
+  assert.equal(acceptedSingularQuantifiedShift.range, undefined);
+  const rejectedSetterRange = await executeTemporalPlanPlannerOutput(
+    discardedDateMutation,
+    { text: 'change <t:1785643200:t> to 3 pm through 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSetterRange.status, 'failed');
+  assert.equal(rejectedSetterRange.range, undefined);
+  const rejectedBetweenRange = await executeTemporalPlanPlannerOutput(
+    discardedDateMutation,
+    { text: 'between <t:1785643200:t> and 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedBetweenRange.status, 'failed');
+  assert.equal(rejectedBetweenRange.range, undefined);
+
+  const compactUnrequestedClock = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Correct day shift with compact unrequested clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '1p' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: -1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedCompactUnrequestedClock = await executeTemporalPlanPlannerOutput(
+    compactUnrequestedClock,
+    { text: '<t:1785643200:t> 1 day earlier', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedCompactUnrequestedClock.status, 'failed');
+  assert.equal(rejectedCompactUnrequestedClock.epoch, undefined);
+  assert.match(rejectedCompactUnrequestedClock.validation.warnings.join(' '), /clock change.*not requested/);
+
+  const wrongRangeClockEndpoint = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Moved the start clock instead of the requested end',
+      startStep: 2,
+      endStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785650400:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedWrongRangeClockEndpoint = await executeTemporalPlanPlannerOutput(
+    wrongRangeClockEndpoint,
+    { text: '<t:1785643200:t> to <t:1785650400:t>, move the end to 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedWrongRangeClockEndpoint.status, 'failed');
+  assert.equal(rejectedWrongRangeClockEndpoint.range, undefined);
+  assert.match(rejectedWrongRangeClockEndpoint.validation.warnings.join(' '), /clock.*end endpoint only/);
+
+  const reversedOneReferenceRangeClock = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Applied the trailing range clock to the start',
+      startStep: 1,
+      endStep: 0,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 15, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  for (const text of ['<t:1785643200:t> to 3 pm', '<t:1785643200:t> ending at 3 pm']) {
+    const rejectedReversedOneReferenceRangeClock = await executeTemporalPlanPlannerOutput(
+      reversedOneReferenceRangeClock,
+      { text, calendarContext },
+      { implementations: createDeterministicTemporalToolImplementations() },
+    );
+    assert.equal(rejectedReversedOneReferenceRangeClock.status, 'failed');
+    assert.equal(rejectedReversedOneReferenceRangeClock.range, undefined);
+    assert.match(rejectedReversedOneReferenceRangeClock.validation.warnings.join(' '), /end endpoint only/);
+  }
+  const rejectedReversedBetweenRangeClock = await executeTemporalPlanPlannerOutput(
+    reversedOneReferenceRangeClock,
+    { text: 'between <t:1785643200:t> and 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedReversedBetweenRangeClock.status, 'failed');
+  assert.equal(rejectedReversedBetweenRangeClock.range, undefined);
+
+  const swappedAdjacentRangeClocks = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Swapped clocks adjacent to each range reference',
+      startStep: 2,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_calendar_query', query: '<t:1785650400:t>', precision: 'date' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 15, minute: 0 }, precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 1, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedSwappedAdjacentRangeClocks = await executeTemporalPlanPlannerOutput(
+    swappedAdjacentRangeClocks,
+    { text: 'from <t:1785643200:t> at 2 pm to <t:1785650400:t> at 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedSwappedAdjacentRangeClocks.status, 'failed');
+  assert.equal(rejectedSwappedAdjacentRangeClocks.range, undefined);
+  assert.match(rejectedSwappedAdjacentRangeClocks.validation.warnings.join(' '), /clock ownership.*each endpoint/);
+
+  const missingDuplicateRangeClock = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Applied duplicate requested clock to only one endpoint',
+      startStep: 2,
+      endStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_calendar_query', query: '<t:1785729600:t>', precision: 'datetime' },
+        { op: 'set_clock_time', baseStep: 0, time: { hour: 14, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMissingDuplicateRangeClock = await executeTemporalPlanPlannerOutput(
+    missingDuplicateRangeClock,
+    { text: 'from <t:1785643200:t> at 2 pm to <t:1785729600:t> at 2 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMissingDuplicateRangeClock.status, 'failed');
+  assert.equal(rejectedMissingDuplicateRangeClock.range, undefined);
+  assert.match(rejectedMissingDuplicateRangeClock.validation.warnings.join(' '), /clock ownership.*each endpoint/);
+
+  const followingDayAfterClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 5 AM or 5 PM?',
+    plans: [{
+      label: 'Following day with a bare clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '5 AM', text: '5 am' },
+          { label: '5 PM', text: '5 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedFollowingDayAfter = await executeTemporalPlanPlannerOutput(
+    followingDayAfterClarification,
+    { text: 'at 5 use the following day after <t:1785643200:t>', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedFollowingDayAfter.status, 'needs_clarification');
+  assert.equal(acceptedFollowingDayAfter.clarificationAlternatives?.length, 2);
+
+  const dstGapClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Spring-forward day at a bare clock',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1772866800:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const normalizingImplementations = createDeterministicTemporalToolImplementations();
+  const shiftDateTimeWithoutNormalizationGuard = normalizingImplementations.shiftDateTime;
+  normalizingImplementations.shiftDateTime = async (input) => input.time?.hour === 2
+    ? {
+      id: 'normalized-dst-gap',
+      isoInstant: '2026-03-08T07:00:00Z',
+      zonedDateTime: '2026-03-08T03:00:00-04:00[America/New_York]',
+      timeZone: 'America/New_York',
+      precision: 'datetime',
+      assumptions: [],
+      provenance: 'shift_math',
+    }
+    : shiftDateTimeWithoutNormalizationGuard(input);
+  const rejectedDstGapClarification = await executeTemporalPlanPlannerOutput(
+    dstGapClarification,
+    { text: '<t:1772866800:t> one day later at 2', calendarContext },
+    { implementations: normalizingImplementations },
+  );
+  assert.equal(rejectedDstGapClarification.status, 'failed');
+  assert.equal(rejectedDstGapClarification.clarificationAlternatives, undefined);
+  assert.match(rejectedDstGapClarification.validation.warnings.join(' '), /normalized the requested clock/i);
+
+  const orderedCompoundShift = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Collapsed an ordered compound calendar shift',
+      finalStep: 1,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1706688000:t>', precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 0, delta: { days: -1, months: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedOrderedCompoundShift = await executeTemporalPlanPlannerOutput(
+    orderedCompoundShift,
+    { text: '<t:1706688000:t> one day earlier, then one month later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedOrderedCompoundShift.status, 'failed');
+  assert.equal(rejectedOrderedCompoundShift.epoch, undefined);
+  assert.match(rejectedOrderedCompoundShift.validation.warnings.join(' '), /could not be validated safely/);
+
+  const forwardReferencedClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 2 AM or 2 PM?',
+    plans: [{
+      label: 'Forward-referenced equivalent plan',
+      finalStep: 0,
+      steps: [
+        { op: 'shift_datetime', baseStep: 1, timeStep: 2, delta: { days: -1 }, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+      ],
+    }],
+  });
+  const forwardReferencedResult = await executeTemporalPlanPlannerOutput(
+    forwardReferencedClarification,
+    { text: '<t:1785643200:t> 1 day earlier at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.deepEqual(
+    forwardReferencedResult.clarificationAlternatives?.map((alternative) => alternative.epoch),
+    selectableCleanShiftClockClarification.clarificationAlternatives?.map((alternative) => alternative.epoch),
+  );
+
+  const invalidNonClarificationChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Invalid choice usage',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 AM', text: '2 am' },
+          { label: '2 PM', text: '2 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const invalidNonClarificationResult = await executeTemporalPlanPlannerOutput(
+    invalidNonClarificationChoices,
+    { text: '<t:1785643200:t> at 2', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(invalidNonClarificationResult.status, 'failed');
+  assert.match(invalidNonClarificationResult.ambiguity.join(' '), /require a clarification outcome/i);
+
+  const duplicateClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Which clock?',
+    plans: [{
+      label: 'Duplicate resolved clocks',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '2 PM', text: '2 pm' },
+          { label: 'Fourteen hundred', text: '14:00' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+      ],
+    }],
+  });
+  const duplicateClockChoiceResult = await executeTemporalPlanPlannerOutput(
+    duplicateClockChoices,
+    { text: '<t:1785643200:t> at either 2 pm or 14:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(duplicateClockChoiceResult.status, 'failed');
+  assert.match(duplicateClockChoiceResult.ambiguity.join(' '), /distinct clocks|clock ownership/i);
+
+  const disconnectedClockChoices = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification',
+    clarificationQuestion: 'Did you mean 9 AM or 3 PM?',
+    plans: [{
+      label: 'Disconnected clock choices',
+      finalStep: 2,
+      steps: [
+        { op: 'resolve_calendar_query', query: 'tomorrow', precision: 'date' },
+        { op: 'resolve_clock_time', options: [
+          { label: '9 AM', text: '9 am' },
+          { label: '3 PM', text: '3 pm' },
+        ] },
+        { op: 'combine_date_time', baseStep: 0, time: { hour: 9, minute: 0 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const disconnectedClockChoiceResult = await executeTemporalPlanPlannerOutput(
+    disconnectedClockChoices,
+    { text: 'tomorrow at either 9 am or 3 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(disconnectedClockChoiceResult.status, 'failed');
+  assert.match(disconnectedClockChoiceResult.ambiguity.join(' '), /option step must feed a final result/i);
 
   const unanchoredModelShiftPlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
@@ -576,6 +3121,12 @@ async function main() {
   const clock = await tools.resolveClockTime({ text: '13:37', calendarContext });
   assert.equal(clock.candidates[0]?.hour, 13);
   assert.equal(clock.candidates[0]?.minute, 37);
+
+  const meridiemClock = await tools.resolveClockTime({ text: '4:30 pm', calendarContext });
+  assert.deepEqual(
+    meridiemClock.candidates.map(({ hour, minute }) => ({ hour, minute })),
+    [{ hour: 16, minute: 30 }],
+  );
 
   const compactClock = await tools.resolveClockTime({ text: '5p', calendarContext });
   assert.equal(compactClock.candidates[0]?.hour, 17);
