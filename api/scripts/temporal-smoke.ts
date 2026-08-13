@@ -490,6 +490,34 @@ async function main() {
   );
   assert.equal(acceptedAnchoredTwoClockRange.range?.start.epoch, 1785697200);
   assert.equal(acceptedAnchoredTwoClockRange.range?.end.epoch, 1785704400);
+  const anchoredTwentyFourHourRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Reference-anchored 24-hour range',
+      startStep: 2,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '15:00' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 1, precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '17:00' },
+        { op: 'combine_date_time', baseStep: 0, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedAnchoredTwentyFourHourRange = await executeTemporalPlanPlannerOutput(
+    anchoredTwentyFourHourRangePlan,
+    { text: 'on the same date as <t:1785643200:t>, from 15:00 to 17:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAnchoredTwentyFourHourRange.status,
+    'resolved',
+    acceptedAnchoredTwentyFourHourRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedAnchoredTwentyFourHourRange.range?.start.epoch, 1785697200);
+  assert.equal(acceptedAnchoredTwentyFourHourRange.range?.end.epoch, 1785704400);
   assert.throws(
     () => parseTemporalPlanPlannerOutput({
       outcome: 'plans',

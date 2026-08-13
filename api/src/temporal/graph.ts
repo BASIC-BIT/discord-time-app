@@ -5127,7 +5127,7 @@ function requestedDiscordReferenceOrderedRangeClocks(
   text: string,
 ): [{ hour: number; minute: number }, { hour: number; minute: number }] | undefined {
   const reference = String.raw`<t:\d+(?::[tTdDfFR])?>`;
-  const clock = String.raw`(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?`;
+  const clock = String.raw`(?:(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|(?:[01]?\d|2[0-3]):[0-5]\d)`;
   const separator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const anchoredRange = new RegExp(
     String.raw`\b(?:on|using)\s+(?:the\s+)?same\s+(?:day|date)\s+(?:as|of)\s+${reference}(?!\w)\s*[,;:]?\s*(?:from\s+)?(${clock})\s*${separator}\s*(${clock})`,
