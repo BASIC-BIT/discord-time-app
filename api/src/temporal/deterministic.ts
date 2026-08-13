@@ -1367,7 +1367,11 @@ function resolveClockTimeCandidates(text: string): ResolveClockTimeOutput['candi
     && twelveHour !== null
     && twentyFourHour.index < twelveHour.index + twelveHour[0].length
     && twelveHour.index < twentyFourHour.index + twentyFourHour[0].length;
-  if (twentyFourHour?.[1] && twentyFourHour[2] && !overlapsTwelveHour) {
+  const overlapsCompactMeridiem = twentyFourHour !== null
+    && compactMeridiem !== null
+    && twentyFourHour.index < compactMeridiem.index + compactMeridiem[0].length
+    && compactMeridiem.index < twentyFourHour.index + twentyFourHour[0].length;
+  if (twentyFourHour?.[1] && twentyFourHour[2] && !overlapsTwelveHour && !overlapsCompactMeridiem) {
     const hour = Number(twentyFourHour[1]);
     const minute = Number(twentyFourHour[2]);
     addCandidate({ hour, minute, normalized: formatRequestedTime({ hour, minute }), assumptions: [`Interpreted ${twentyFourHour[0]} as a 24-hour clock time.`], confidence: 0.95 });

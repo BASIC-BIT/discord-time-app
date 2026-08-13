@@ -5060,7 +5060,7 @@ function discordReferenceClockSemanticsError(
   const singularClockMentionCount = explicitAmPmClockMentions(originalText).length
     + ambiguousClockMentions.length
     + [...originalText.matchAll(/\b(?:noon|midnight)\b/giu)].length
-    + [...originalText.matchAll(/(?<![\d:])(?:0?0|1[3-9]|2[0-3]):[0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
+    + [...originalText.matchAll(/(?<![\d:.])(?:0?0|1[3-9]|2[0-3])[:.][0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
     + embeddedBareHourMentionCount;
   if (!isTimeRangePlan(plan) && singularClockMentionCount > 1) {
     return 'Model plan clock ownership could not be validated safely for a singular multi-clock correction.';
@@ -5394,11 +5394,16 @@ function expectedDiscordReferenceShift(
   }
 
   if (!matchedShift) {
-    if (/\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue)) {
+    const hasPreviousCalendarDay = /\b(?:previous|prior|preceding)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:before|previous|prior|preceding)\b/iu.test(residue);
+    const hasFollowingCalendarDay = /\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue);
+    if (hasPreviousCalendarDay && hasFollowingCalendarDay) {
+      return undefined;
+    }
+    if (hasPreviousCalendarDay) {
       if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
       result.days = -1;
       matchedShift = true;
-    } else if (/\b(?:following|next)\s+(?:calendar\s+)?(?:day|date)\b|\b(?:day|date)\s+(?:after|following|next)\b/iu.test(residue)) {
+    } else if (hasFollowingCalendarDay) {
       if (!discordReferenceHasSupportedCalendarDayRelationship(originalText)) return undefined;
       result.days = 1;
       matchedShift = true;

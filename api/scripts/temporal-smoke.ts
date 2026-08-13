@@ -277,6 +277,27 @@ async function main() {
   );
   assert.equal(rejectedCopiedProseCalendarDay.status, 'failed');
   assert.equal(rejectedCopiedProseCalendarDay.epoch, undefined);
+  const rejectedConflictingCalendarDays = await executeModelReferenceShift(
+    '<t:1785643200:t> on the following day or the previous day',
+    '<t:1785643200:t>',
+    { days: -1 },
+  );
+  assert.equal(rejectedConflictingCalendarDays.status, 'failed');
+  assert.equal(rejectedConflictingCalendarDays.epoch, undefined);
+  const rejectedDottedClockAlternatives = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 15.00 or 16.00',
+    '<t:1785643200:t>',
+    '16:00',
+  );
+  assert.equal(rejectedDottedClockAlternatives.status, 'failed');
+  assert.equal(rejectedDottedClockAlternatives.epoch, undefined);
+  const compactMinuteMeridiemClock = await executeModelReferenceClockComposition(
+    'set <t:1785643200:t> to 5:30p',
+    '<t:1785643200:t>',
+    '5:30p',
+  );
+  assert.equal(compactMinuteMeridiemClock.status, 'resolved', compactMinuteMeridiemClock.validation.warnings.join(' | '));
+  assert.equal(compactMinuteMeridiemClock.epoch, 1785706200);
   const rejectedUnrelatedDurationCommand = await executeModelReferenceShift(
     'I copied <t:1785643200:t>, then set the table one hour later',
     '<t:1785643200:t>',
