@@ -121,6 +121,9 @@ test('fails closed for unsupported relationships and ambiguous contexts', () => 
     'multiple_timestamps_without_relationship',
   );
   assert.equal(classify('Show <t:1785643200:t> in Pacific time').reason, 'unsupported_timezone_presentation');
+  assert.equal(classify('starts at <t:1785643200:t> and ends at 25:00').route, 'model');
+  assert.equal(classify('between <t:1785643200:t> and 5 pm').route, 'model');
+  assert.equal(classify('between 5 pm and <t:1785643200:t>').route, 'model');
   assert.equal(classify('set <t:1785643200:t> to 5 pm UTC+02:99').reason, 'unsupported_timezone_presentation');
   assert.equal(classify('set <t:1785643200:t> to 5 pm UTC+99:99').reason, 'unsupported_timezone_presentation');
   assert.equal(

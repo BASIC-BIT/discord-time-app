@@ -29,6 +29,10 @@ const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
   String.raw`(?:\b(?:starts?|begins?)\s+at\s+${TIMESTAMP_SOURCE}\s+and(?:\s+then)?\s+(?:ends?|finishes?)\s+at\s+${CLOCK_SOURCE}|${TIMESTAMP_SOURCE}\s*(?:to|through|until)\s*${CLOCK_SOURCE})\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
   "i",
 );
+const AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK = new RegExp(
+  String.raw`\bbetween\s+(?:${TIMESTAMP_SOURCE}\s+and\s+${CLOCK_SOURCE}|${CLOCK_SOURCE}\s+and\s+${TIMESTAMP_SOURCE})(?![\w:])`,
+  "i",
+);
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;
 const CONDITIONAL_OR_UNCERTAIN = /\b(?:if|unless|maybe|perhaps|possibly|probably|tentative|tbd|unknown|unsure|might|could|would)\b|\?/i;
 const COMPARISON = /\b(?:compare|versus|vs\.?|difference|between|earlier\s+of|later\s+of|which\s+(?:is\s+)?(?:first|earlier|later))\b/i;
@@ -134,7 +138,7 @@ function classifyDiscordTimestampInput(text, options = {}) {
     };
   }
 
-  if (signals.includes("comparison")) {
+  if (signals.includes("comparison") && !AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK.test(text)) {
     return { ...withSignals, route: "clarify", reason: "unsupported_comparison", meaningfulResidue: true };
   }
   if (signals.includes("scheduling")) {
@@ -265,11 +269,20 @@ function semanticSignals(text) {
 function isAffirmativePresentationProse(text, reference, residue) {
   const prefix = text.slice(0, reference.start);
   if (!PRESENTATION_ANCHOR.test(prefix)) return false;
+  if (hasMalformedRelationalClock(text.slice(reference.end))) return false;
   if (NEGATION_OR_CORRECTION.test(text) || CONDITIONAL_OR_UNCERTAIN.test(text) || COMPARISON.test(text) || SCHEDULING.test(text) || TIMEZONE.test(text)) {
     return false;
   }
   if (OTHER_TEMPORAL_ENTITY.test(residue)) return false;
   return !/[<>]/.test(residue);
+}
+
+function hasMalformedRelationalClock(text) {
+  for (const match of text.matchAll(/\b(?:ends?|finishes?)\s+at\s+(\d+(?:[:.]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)/giu)) {
+    const token = match[1];
+    if (!new RegExp(String.raw`^${CLOCK_SOURCE}$`, 'iu').test(token)) return true;
+  }
+  return false;
 }
 
 function inputLengthBucket(length) {

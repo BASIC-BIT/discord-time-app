@@ -3533,7 +3533,7 @@ async function bareMeridiemClockAmbiguityPolicy(
 
 function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
   const mentions: AmbiguousBareClockMention[] = [];
-  const clockText = text.replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
+  const clockText = maskRecognizedFixedOffsetText(text);
   for (const match of clockText.matchAll(AMBIGUOUS_BARE_COLON_CLOCK_PATTERN)) {
     const hour = Number(match[1]);
     const minute = Number(match[2]);
@@ -4976,6 +4976,9 @@ function discordReferencePlanSemanticsError(
   references: string[],
   requestTimeZone: string,
 ): string | undefined {
+  if (discordReferenceHasMalformedClockSetter(originalText)) {
+    return 'Discord-reference clock setter contained a malformed clock value.';
+  }
   if (references.some((reference) => discordReferenceHasUnsupportedCalendarTransform(originalText, reference))) {
     return 'Model plan used a Discord-reference calendar transformation that could not be validated safely.';
   }
@@ -5015,7 +5018,8 @@ function discordReferencePlanSemanticsError(
   if (requestedTimeZoneResolution.status === 'ambiguous') {
     return 'Discord-reference timezone intent could not be validated safely.';
   }
-  const terminalTimeZones = terminalSteps.flatMap(({ step }) => {
+  const timeZonesForDependencies = (dependencies: Set<number>): string[] => [...dependencies].flatMap((index) => {
+    const step = plan.steps[index]!;
     if (step.operation === 'resolve_timezone') {
       const resolvedText = step.text ?? step.query ?? step.timeZone;
       if (resolvedText === null) return [];
@@ -5027,8 +5031,18 @@ function discordReferencePlanSemanticsError(
     }
     return step.timeZone === null ? [] : [step.timeZone];
   });
+  const terminalTimeZonesByTerminal = terminalDependencies.map(timeZonesForDependencies);
+  const terminalTimeZones = terminalTimeZonesByTerminal.flat();
   if (requestedTimeZone !== undefined && !terminalTimeZones.some((timeZone) => timeZone.toLowerCase() === requestedTimeZone.toLowerCase())) {
     return 'Model plan omitted the explicit timezone requested for the Discord-reference clock.';
+  }
+  const ownedClockEndpoint = isTimeRangePlan(plan) ? requestedDiscordRangeClockEndpoint(originalText) : undefined;
+  if (
+    requestedTimeZone !== undefined
+    && ownedClockEndpoint !== undefined
+    && !terminalTimeZonesByTerminal[ownedClockEndpoint === 'start' ? 0 : 1]!.some((timeZone) => timeZone.toLowerCase() === requestedTimeZone.toLowerCase())
+  ) {
+    return `Model range plan omitted the explicit timezone from the ${ownedClockEndpoint} clock endpoint.`;
   }
   for (const { step } of terminalSteps) {
     const allowedTimeZone = requestedTimeZone ?? requestTimeZone;
@@ -5273,16 +5287,17 @@ function requestedDiscordRangeClockEndpoint(text: string): 'start' | 'end' | und
 }
 
 function discordReferenceClockMentionCount(text: string): number {
-  const ambiguousClockMentions = ambiguousBareClockMentions(text);
-  const embeddedBareHourMentionCount = [...text.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
+  const clockText = maskRecognizedFixedOffsetText(text);
+  const ambiguousClockMentions = ambiguousBareClockMentions(clockText);
+  const embeddedBareHourMentionCount = [...clockText.matchAll(/\bat\s+(?:0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)]
     .filter((match) => match.index !== undefined && !ambiguousClockMentions.some((mention) =>
       rangesOverlap(mention.index, mention.text.length, match.index!, match[0].length),
     ))
     .length;
-  return explicitAmPmClockMentions(text).length
+  return explicitAmPmClockMentions(clockText).length
     + ambiguousClockMentions.length
-    + [...text.matchAll(/\b(?:noon|midnight)\b/giu)].length
-    + [...text.matchAll(/(?<![\d:.])(?:0?0|1[3-9]|2[0-3])[:.][0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
+    + [...clockText.matchAll(/\b(?:noon|midnight)\b/giu)].length
+    + [...clockText.matchAll(/(?<![\d:.])(?:0?0|1[3-9]|2[0-3])[:.][0-5]\d(?!\s*(?:a\.?m\.?|p\.?m\.?|am|pm)\b)/giu)].length
     + embeddedBareHourMentionCount;
 }
 
@@ -5351,7 +5366,7 @@ function requestedDiscordRangeArithmeticEndpoint(text: string): 'start' | 'end' 
 
 function discordReferenceHasMalformedClockSetter(text: string): boolean {
   const normalized = text.replace(/<t:\d+(?::[tTdDfFR])?>/giu, ' reference ');
-  const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\breference\s+(?:to|through|thru|until|til|till)\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+|\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+)`;
+  const setter = String.raw`(?:\breference\s+(?:(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)\s+)?at\s+|\breference\s+(?:to|through|thru|until|til|till)\s+|\b(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+|\b(?:end(?:s|ing)?|finish(?:es|ing)?)\s+at\s+reference\s+(?:,?\s*and(?:\s+then)?\s+)?(?:start(?:s|ing)?|begin(?:s|ning)?)\s+at\s+|\b(?:set|change|move|make|use|keep)\s+(?:reference|it)\s+(?:(?:to|at)\s+)?|\b(?:set|change)\s+(?:the\s+)?time\s+of\s+reference\s+(?:to|at)\s+|\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+)`;
   const setterClock = new RegExp(
     String.raw`${setter}(\d+(?:[:.,]\d+)*(?:\s*[ap](?:\.?m\.?)?)?)(?![\w:]|[.,]\d)`,
     'giu',
@@ -5380,29 +5395,34 @@ function discordReferenceHasMalformedClockSetter(text: string): boolean {
 }
 
 function requestedDiscordReferenceClocks(text: string): Array<{ hour: number; minute: number }> {
-  const clocks: Array<{ hour: number; minute: number }> = explicitAmPmClockMentions(text).map(({ time }) => time);
-  for (const match of text.matchAll(/\b(?:either\s+)?(0?[1-9]|1[0-2])(?::([0-5]\d))?\s+(?:or|\/)\s+(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*([ap])(?:\.?m\.?)?(?![\w.])/giu)) {
+  const clockText = maskRecognizedFixedOffsetText(text);
+  const clocks: Array<{ hour: number; minute: number }> = explicitAmPmClockMentions(clockText).map(({ time }) => time);
+  for (const match of clockText.matchAll(/\b(?:either\s+)?(0?[1-9]|1[0-2])(?::([0-5]\d))?\s+(?:or|\/)\s+(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*([ap])(?:\.?m\.?)?(?![\w.])/giu)) {
     let hour = Number(match[1]) % 12;
     if (match[3]!.toLowerCase() === 'p') hour += 12;
     clocks.push({ hour, minute: Number(match[2] ?? 0) });
   }
-  for (const mention of ambiguousBareClockMentions(text)) {
+  for (const mention of ambiguousBareClockMentions(clockText)) {
     clocks.push(
       { hour: mention.hour % 12, minute: mention.minute },
       { hour: mention.hour % 12 + 12, minute: mention.minute },
     );
   }
-  for (const match of text.matchAll(/\bat\s+(0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)) {
+  for (const match of clockText.matchAll(/\bat\s+(0?[1-9]|1[0-2])(?![:.]\d)\b(?!\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|a\.?m\.?|p\.?m\.?|am|pm))/giu)) {
     const hour = Number(match[1]) % 12;
     clocks.push({ hour, minute: 0 }, { hour: hour + 12, minute: 0 });
   }
-  if (/\bmidnight\b/iu.test(text)) clocks.push({ hour: 0, minute: 0 });
-  if (/\bnoon\b/iu.test(text)) clocks.push({ hour: 12, minute: 0 });
-  for (const match of text.matchAll(/(?<![\d:.])([01]?\d|2[0-3])([:.])([0-5]\d)(?!\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?)\b)/giu)) {
+  if (/\bmidnight\b/iu.test(clockText)) clocks.push({ hour: 0, minute: 0 });
+  if (/\bnoon\b/iu.test(clockText)) clocks.push({ hour: 12, minute: 0 });
+  for (const match of clockText.matchAll(/(?<![\d:.])([01]?\d|2[0-3])([:.])([0-5]\d)(?!\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?)\b)/giu)) {
     const hour = Number(match[1]);
     if (match[2] === '.' || hour === 0 || hour > 12) clocks.push({ hour, minute: Number(match[3]) });
   }
   return clocks;
+}
+
+function maskRecognizedFixedOffsetText(text: string): string {
+  return text.replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
 }
 
 function consumedPlanStepClocks(

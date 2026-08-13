@@ -336,6 +336,48 @@ async function main() {
   );
   assert.equal(rejectedMalformedOffsetClock.status, 'failed');
   assert.equal(rejectedMalformedOffsetClock.epoch, undefined);
+  const misplacedRangeTimeZonePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Timezone attached only to the unchanged range start',
+      startStep: 1,
+      endStep: 4,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'datetime' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 2, timeStep: 3, precision: 'datetime' },
+      ],
+    }],
+  });
+  const rejectedMisplacedRangeTimeZone = await executeTemporalPlanPlannerOutput(
+    misplacedRangeTimeZonePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 5 pm UTC', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMisplacedRangeTimeZone.status, 'failed');
+  assert.match(rejectedMisplacedRangeTimeZone.validation.warnings.join(' '), /timezone from the end clock endpoint/);
+  const highNegativeOffsetClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at a high negative fixed-offset clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: 'UTC-14:00' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedHighNegativeOffsetClock = await executeTemporalPlanPlannerOutput(
+    highNegativeOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC-14:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedHighNegativeOffsetClock.status, 'resolved', acceptedHighNegativeOffsetClock.validation.warnings.join(' | '));
   const rejectedMixedMeridiemAlternative = await executeModelReferenceClockComposition(
     'set <t:1785643200:t> to 3 or 4 pm',
     '<t:1785643200:t>',
@@ -615,6 +657,13 @@ async function main() {
   assert.equal(acceptedFinishClockRange.status, 'resolved');
   assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
   assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
+  const rejectedMalformedConjoinedFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and ends at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedConjoinedFinishClockRange.status, 'failed');
+  assert.match(rejectedMalformedConjoinedFinishClockRange.validation.warnings.join(' '), /malformed clock value/);
   const acceptedConjoinedFinishClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'starts at <t:1785643200:t> and ends at 5 pm', calendarContext },
