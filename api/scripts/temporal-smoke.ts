@@ -523,6 +523,23 @@ async function main() {
     'resolved',
     acceptedConjoinedFinishClockRange.validation.warnings.join(' | '),
   );
+  const acceptedAndThenFinishClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'starts at <t:1785643200:t> and then ends at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedAndThenFinishClockRange.status,
+    'resolved',
+    acceptedAndThenFinishClockRange.validation.warnings.join(' | '),
+  );
+  const rejectedDuplicateEndClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'ends at <t:1785643200:t> and ends at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedDuplicateEndClockRange.status, 'failed');
+  assert.equal(rejectedDuplicateEndClockRange.range, undefined);
   const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },
@@ -627,6 +644,33 @@ async function main() {
   );
   assert.equal(acceptedAnchoredShiftClockRange.range?.start.epoch, 1785697200);
   assert.equal(acceptedAnchoredShiftClockRange.range?.end.epoch, 1785704400);
+  const clockThenArithmeticRangePlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      kind: 'time_range',
+      label: 'Clock-composed range with an arithmetic end shift',
+      startStep: 0,
+      endStep: 3,
+      steps: [
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', precision: 'datetime' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'shift_datetime', baseStep: 0, timeStep: 1, delta: { days: 0 }, precision: 'datetime' },
+        { op: 'shift_datetime', baseStep: 2, delta: { days: 1 }, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedClockThenArithmeticRange = await executeTemporalPlanPlannerOutput(
+    clockThenArithmeticRangePlan,
+    { text: '<t:1785643200:t> to 5 pm; move the end one day later', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(
+    acceptedClockThenArithmeticRange.status,
+    'resolved',
+    acceptedClockThenArithmeticRange.validation.warnings.join(' | '),
+  );
+  assert.equal(acceptedClockThenArithmeticRange.range?.start.epoch, 1785643200);
+  assert.equal(acceptedClockThenArithmeticRange.range?.end.epoch, 1785790800);
   const anchoredTwentyFourHourRangePlan = parseTemporalPlanPlannerOutput({
     outcome: 'plans',
     plans: [{

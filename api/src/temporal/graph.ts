@@ -5003,7 +5003,7 @@ function discordReferencePlanSemanticsError(
     return clockSemanticsError;
   }
   const expectedIsZero = DISCORD_SHIFT_DELTA_KEYS.every((key) => expectedDelta[key] === 0);
-  if (!expectedIsZero && shiftSteps.length !== 1) {
+  if (!expectedIsZero && arithmeticShiftSteps.length !== 1) {
     return 'Model plan shift structure did not match the requested Discord-reference transformation.';
   }
   if (expectedIsZero) {
@@ -5015,7 +5015,7 @@ function discordReferencePlanSemanticsError(
       : undefined;
   }
 
-  const actualDelta = shiftSteps[0]!.step.delta;
+  const actualDelta = arithmeticShiftSteps[0]!.step.delta;
   const mismatch = DISCORD_SHIFT_DELTA_KEYS.some((key) => (actualDelta[key] ?? 0) !== expectedDelta[key]);
   return mismatch
     ? 'Model plan shift did not match the requested Discord-reference transformation.'
@@ -5149,6 +5149,9 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
   const shift = String.raw`${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}`;
   const rangeSeparator = String.raw`(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)`;
   const endpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?|end(?:s|ing)?|finish(?:es|ing)?)`;
+  const startEndpoint = String.raw`(?:start(?:s|ing)?|begin(?:s|ning)?)`;
+  const endEndpoint = String.raw`(?:end(?:s|ing)?|finish(?:es|ing)?)`;
+  const endpointJoin = String.raw`(?:\s*,\s*(?:and(?:\s+then)?\s+)?|\s+and(?:\s+then)?\s+)`;
   return new RegExp(String.raw`^\s*${reference}(?!\w)\s*(?:(?:(?:the|that|same)\s+)?(?:day|date)\s+)?at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`^\s*${reference}(?!\w)\s+${shift}\s+at\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+${reference}\s+(?:to|at)\s+${clock}`, 'iu').test(text)
@@ -5167,8 +5170,10 @@ function discordReferenceHasSupportedClockRelationship(text: string): boolean {
     || new RegExp(String.raw`\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${reference}\s*${rangeSeparator}\s*${clock}`, 'iu').test(text)
     || new RegExp(String.raw`${clock}\s*${rangeSeparator}\s*${reference}`, 'iu').test(text)
-    || new RegExp(String.raw`\b${endpoint}\s+at\s+${reference}(?:\s*,\s*(?:and\s+)?|\s+and\s+)${endpoint}\s+at\s+${clock}`, 'iu').test(text)
-    || new RegExp(String.raw`\b${endpoint}\s+at\s+${clock}(?:\s*,\s*(?:and\s+)?|\s+and\s+)${endpoint}\s+at\s+${reference}`, 'iu').test(text);
+    || new RegExp(String.raw`\b${startEndpoint}\s+at\s+${reference}${endpointJoin}${endEndpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${startEndpoint}\s+at\s+${clock}${endpointJoin}${endEndpoint}\s+at\s+${reference}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endEndpoint}\s+at\s+${reference}${endpointJoin}${startEndpoint}\s+at\s+${clock}`, 'iu').test(text)
+    || new RegExp(String.raw`\b${endEndpoint}\s+at\s+${clock}${endpointJoin}${startEndpoint}\s+at\s+${reference}`, 'iu').test(text);
 }
 
 function requestedDiscordRangeEndpoint(text: string): 'start' | 'end' | undefined {
