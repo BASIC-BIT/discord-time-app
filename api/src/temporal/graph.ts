@@ -3533,7 +3533,7 @@ async function bareMeridiemClockAmbiguityPolicy(
 
 function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
   const mentions: AmbiguousBareClockMention[] = [];
-  const clockText = text.replace(/(?:\b(?:utc|gmt)\s*)?[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
+  const clockText = text.replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, (offset) => ' '.repeat(offset.length));
   for (const match of clockText.matchAll(AMBIGUOUS_BARE_COLON_CLOCK_PATTERN)) {
     const hour = Number(match[1]);
     const minute = Number(match[2]);
@@ -3881,7 +3881,8 @@ function discordReferenceRequestsRange(text: string, reference: string): boolean
   residue = residue
     .replace(new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+(?:it\s+)?to\s+${clock}`, 'giu'), ' ')
     .replace(new RegExp(String.raw`\b(?:set|change|move|make|use|keep)\s+<t:\d+(?::[tTdDfFR])?>\s+to\s+${clock}`, 'giu'), ' ')
-    .replace(new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ');
+    .replace(new RegExp(String.raw`\b(?:set|change)\s+(?:the\s+)?time\s+of\s+to\s+${clock}`, 'giu'), ' ')
+    .replace(/(?:\b(?:utc|gmt)\s*|(?:^|[\s(]))[+-]\d{2}:\d{2}\b/giu, ' ');
   return new RegExp(String.raw`<t:\d+(?::[tTdDfFR])?>\s*${separator}\s*${amount}\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+${DISCORD_SHIFT_DIRECTION_SOURCE}\s+<t:\d+(?::[tTdDfFR])?>(?!\w)`, 'iu').test(text)
     || new RegExp(String.raw`(?:^|\s)${separator}\s*${rangeClock}`, 'iu').test(residue)
     || new RegExp(String.raw`(?:^|\s)${rangeClock}\s*${separator}(?:\s|$)`, 'iu').test(residue)
@@ -5002,6 +5003,9 @@ function discordReferencePlanSemanticsError(
     calendarContext: { referenceInstant: '2026-01-01T00:00:00Z', timeZone: requestTimeZone },
   });
   const hasExplicitTimeZoneSignal = classifyDiscordTimestampInput(originalText).signals.includes('timezone');
+  if (requestedTimeZoneResolution.status === 'invalid') {
+    return 'Discord-reference timezone suffix is malformed.';
+  }
   if (hasExplicitTimeZoneSignal && requestedTimeZoneResolution.status === 'not_found') {
     return 'Discord-reference timezone suffix could not be resolved safely.';
   }

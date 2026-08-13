@@ -310,6 +310,32 @@ async function main() {
     { implementations: createDeterministicTemporalToolImplementations() },
   );
   assert.equal(acceptedExplicitOffsetClock.status, 'resolved', acceptedExplicitOffsetClock.validation.warnings.join(' | '));
+  const explicitNegativeOffsetClockPlan = parseTemporalPlanPlannerOutput({
+    outcome: 'plans',
+    plans: [{
+      label: 'Discord timestamp date at an explicit negative fixed-offset clock',
+      finalStep: 3,
+      steps: [
+        { op: 'resolve_timezone', text: '-04:00' },
+        { op: 'resolve_calendar_query', query: '<t:1785643200:t>', timeZoneStep: 0, precision: 'date' },
+        { op: 'resolve_clock_time', text: '5 pm' },
+        { op: 'combine_date_time', baseStep: 1, timeStep: 2, timeZoneStep: 0, precision: 'datetime' },
+      ],
+    }],
+  });
+  const acceptedExplicitNegativeOffsetClock = await executeTemporalPlanPlannerOutput(
+    explicitNegativeOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm -04:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(acceptedExplicitNegativeOffsetClock.status, 'resolved', acceptedExplicitNegativeOffsetClock.validation.warnings.join(' | '));
+  const rejectedMalformedOffsetClock = await executeTemporalPlanPlannerOutput(
+    explicitOffsetClockPlan,
+    { text: 'set <t:1785643200:t> to 5 pm UTC+02:99', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedOffsetClock.status, 'failed');
+  assert.equal(rejectedMalformedOffsetClock.epoch, undefined);
   const rejectedMixedMeridiemAlternative = await executeModelReferenceClockComposition(
     'set <t:1785643200:t> to 3 or 4 pm',
     '<t:1785643200:t>',
@@ -1163,6 +1189,10 @@ async function main() {
   const shiftedDiscordInfix = await parse('one hour earlier than <t:1785643200:t>');
   assert.equal(shiftedDiscordInfix.status, 'failed');
   assert.equal(shiftedDiscordInfix.debug?.referenceRouting?.route, 'model');
+
+  const paddedBareClockRange = await parse('tomorrow 03:30-04:30');
+  assert.equal(paddedBareClockRange.status, 'needs_clarification');
+  assert.equal(paddedBareClockRange.clarificationQuestion, 'Please specify AM or PM for each range endpoint.');
 
   const promotedDateOnlyStyle = await parse('<t:1785643200:D> 1 hour later');
   assert.equal(promotedDateOnlyStyle.status, 'failed');

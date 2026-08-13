@@ -16,16 +16,17 @@ const HARMLESS_WRAPPER = /^[\s`'"“”‘’()[\]{}*_~>|.\\-]*$/u;
 const DISCORD_TIMESTAMP_AMOUNT_SOURCE = String.raw`(?:\d{1,3}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|sixty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|seventy(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|eighty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|ninety(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const UNIT_SOURCE = String.raw`(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)`;
 const CLOCK_SOURCE = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?(?:\s*(?:a(?:\.?m\.?)?|p(?:\.?m\.?)?))?|(?:[01]?\d|2[0-3])[:.][0-5]\d|midnight|noon)`;
+const AFFIRMATIVE_TIMEZONE_SOURCE = String.raw`(?:(?:utc|gmt)(?:\s*[+-]\s*(?:0?\d|1\d|2[0-3])(?::?[0-5]\d)?)?|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+|[+-](?:0\d|1\d|2[0-3]):[0-5]\d)(?![+\-:/\d])`;
 const AFFIRMATIVE_CLOCK_CHANGE = new RegExp(
   String.raw`\bchange\s+(?:(?:the\s+)?time\s+of\s+)?${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}(?=[\s,.!?;]*(?:(?:please|thanks?|now)\b[\s,.!?;]*)*$)`,
   "gi",
 );
 const AFFIRMATIVE_TIMEZONE_CLOCK_CHANGE = new RegExp(
-  String.raw`\b(?:set|change|move|make|use|keep)\s+(?:(?:the\s+)?time\s+of\s+)?${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}\s+(?:utc|gmt|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+|[+-]\d{2}:\d{2})\b`,
+  String.raw`\b(?:set|change|move|make|use|keep)\s+(?:(?:the\s+)?time\s+of\s+)?${TIMESTAMP_SOURCE}\s+(?:to|at)\s+${CLOCK_SOURCE}\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
   "i",
 );
 const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
-  String.raw`(?:\b(?:starts?|begins?)\s+at\s+${TIMESTAMP_SOURCE}\s+and(?:\s+then)?\s+(?:ends?|finishes?)\s+at\s+${CLOCK_SOURCE}|${TIMESTAMP_SOURCE}\s*(?:to|through|until)\s*${CLOCK_SOURCE})\s+(?:utc|gmt|[ecmp][sd]t|bst|ist|jst|aest|aedt|pacific|mountain|central|eastern|tokyo|london|berlin|india|japan|australia|america\/[a-z_]+|europe\/[a-z_]+|asia\/[a-z_]+|[+-]\d{2}:\d{2})\b`,
+  String.raw`(?:\b(?:starts?|begins?)\s+at\s+${TIMESTAMP_SOURCE}\s+and(?:\s+then)?\s+(?:ends?|finishes?)\s+at\s+${CLOCK_SOURCE}|${TIMESTAMP_SOURCE}\s*(?:to|through|until)\s*${CLOCK_SOURCE})\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
   "i",
 );
 const NEGATION_OR_CORRECTION = /\b(?:don['’]?t|do\s+not|not|never|ignore|wrong|incorrect|correction|corrected|instead|changed?|cancel(?:led)?|old\s+time|outdated|mistake)\b/i;
