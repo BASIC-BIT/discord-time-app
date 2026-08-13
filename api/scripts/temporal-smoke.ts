@@ -385,6 +385,13 @@ async function main() {
   );
   assert.equal(rejectedPronounLinkedSingularRange.status, 'failed');
   assert.equal(rejectedPronounLinkedSingularRange.epoch, undefined);
+  const rejectedDuplicateRelativeDay = await executeModelReferenceShift(
+    'move <t:1785643200:t> to tomorrow; publish the announcement tomorrow',
+    '<t:1785643200:t>',
+    { days: 2 },
+  );
+  assert.equal(rejectedDuplicateRelativeDay.status, 'failed');
+  assert.equal(rejectedDuplicateRelativeDay.epoch, undefined);
   const rejectedThirdPersonClockSingularRange = await executeModelReferenceClockComposition(
     'starts at <t:1785643200:t>, ends at 5 pm',
     '<t:1785643200:t>',
@@ -447,6 +454,14 @@ async function main() {
   assert.equal(rejectedMalformedPrepositionlessSetter.status, 'failed');
   assert.equal(rejectedMalformedPrepositionlessSetter.epoch, undefined);
   assert.match(rejectedMalformedPrepositionlessSetter.validation.warnings.join(' '), /malformed clock value/);
+  const rejectedMalformedReferenceLeadingSetter = await executeTemporalPlanPlannerOutput(
+    malformedAtSetterPlan,
+    { text: '<t:1785643200:t> at 25:00', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedMalformedReferenceLeadingSetter.status, 'failed');
+  assert.equal(rejectedMalformedReferenceLeadingSetter.epoch, undefined);
+  assert.match(rejectedMalformedReferenceLeadingSetter.validation.warnings.join(' '), /malformed clock value/);
   const rejectedFinishClockSingularRange = await executeModelReferenceClockComposition(
     'starts at <t:1785643200:t>, finishes at 5 pm',
     '<t:1785643200:t>',
@@ -476,6 +491,22 @@ async function main() {
   assert.equal(acceptedFinishClockRange.status, 'resolved');
   assert.equal(acceptedFinishClockRange.range?.start.epoch, 1785643200);
   assert.equal(acceptedFinishClockRange.range?.end.epoch, 1785704400);
+  const rejectedUnrelatedEndpointClockRange = await executeTemporalPlanPlannerOutput(
+    finishClockRangePlan,
+    { text: 'the copy starts at <t:1785643200:t>; the race finishes at 5 pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() },
+  );
+  assert.equal(rejectedUnrelatedEndpointClockRange.status, 'failed');
+  assert.equal(rejectedUnrelatedEndpointClockRange.range, undefined);
+  const rejectedRangeWithUnrelatedDuration = await executeModelReferenceRangeShift(
+    'starts at <t:1785643200:t>, finishes at 5 pm; publish one hour later',
+    '<t:1785643200:t>',
+    '<t:1785643200:t>',
+    'end',
+    { hours: 1 },
+  );
+  assert.equal(rejectedRangeWithUnrelatedDuration.status, 'failed');
+  assert.equal(rejectedRangeWithUnrelatedDuration.range, undefined);
   const acceptedReferenceLeadingFinishClockRange = await executeTemporalPlanPlannerOutput(
     finishClockRangePlan,
     { text: '<t:1785643200:t> finishes at 5 pm', calendarContext },
