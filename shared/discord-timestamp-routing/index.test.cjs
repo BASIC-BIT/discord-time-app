@@ -129,6 +129,9 @@ test('fails closed for unsupported relationships and ambiguous contexts', () => 
   assert.equal(classify('set <t:1785643200:t> to 5 pm UTC+02:99').reason, 'unsupported_timezone_presentation');
   assert.equal(classify('set <t:1785643200:t> to 5 pm UTC+99:99').reason, 'unsupported_timezone_presentation');
   assert.equal(classify('<t:1785643200:t> to <t:1785654000:t>; set the start to 5 pm UTC').route, 'model');
+  for (const separator of ['through', 'thru', 'until', 'til', 'till']) {
+    assert.equal(classify(`<t:1785643200:t> ${separator} <t:1785654000:t>; set the start to 5 pm UTC`).route, 'model');
+  }
   assert.equal(
     classify('starts at <t:1785643200:t> and ends at 5 pm; add the literal label UTC').reason,
     'unsupported_timezone_presentation',

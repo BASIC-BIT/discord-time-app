@@ -30,7 +30,7 @@ const AFFIRMATIVE_TIMEZONE_REFERENCE_RELATIONSHIP = new RegExp(
   "i",
 );
 const AFFIRMATIVE_TIMEZONE_ENDPOINT_CLOCK_CHANGE = new RegExp(
-  String.raw`^(?=[\s\S]*${TIMESTAMP_SOURCE}\s*(?:[-\u2013\u2014]|to\b|through\b|until\b)\s*${TIMESTAMP_SOURCE})[\s\S]*\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${CLOCK_SOURCE}\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
+  String.raw`^(?=[\s\S]*${TIMESTAMP_SOURCE}\s*(?:[-\u2013\u2014]|to\b|through\b|thru\b|until\b|til\b|till\b)\s*${TIMESTAMP_SOURCE})[\s\S]*\b(?:set|change|move|make)\s+(?:the\s+)?(?:start|end)(?:ing\s+point)?\s+(?:to|at)\s+${CLOCK_SOURCE}\s+${AFFIRMATIVE_TIMEZONE_SOURCE}`,
   "i",
 );
 const AFFIRMATIVE_BETWEEN_REFERENCE_CLOCK = new RegExp(
