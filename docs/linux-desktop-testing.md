@@ -96,6 +96,19 @@ isolating application credentials for offline tests.
 
 ## Native evidence and platform gates
 
+For a cold development check, stop this checkout's dev session, remove only
+`node_modules/.vite`, then run `npm run tauri -- dev --no-watch` in the supported
+native environment. Press Ctrl+Shift+H and confirm that the overlay input loads
+and accepts text. Stop the dev session before running the embedded baseline;
+both use the same application and API resources.
+
+The linked `@hammer-overlay/discord-timestamp-routing` package exports CommonJS.
+Vite's `optimizeDeps.include` explicitly includes it so cold dev loading converts
+its named exports for the WebView. Without that entry the overlay can stay blank
+with `Importing binding name 'classifyDiscordTimestampInput' is not found.`
+Preserve the package exports and production chunk configuration when maintaining
+this setting. A passing production build alone does not check cold dev loading.
+
 The native runner's public command is `npm run test:desktop`. Run serially on a
 worker because the application uses fixed API and single-instance resources. Default coverage uses fresh application
 state, offline parser paths, and zero model calls. An explicitly requested model
