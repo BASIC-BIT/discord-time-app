@@ -440,8 +440,8 @@ class DesktopSession:
 
 
 def fill_fixture(session: DesktopSession, text: str):
-    # Explicit clearing is fixture setup. Clipboard replacement is Task 4's
-    # separate product regression and is deliberately not claimed here.
+    # Explicit clearing is fixture setup. clipboard_replacement separately
+    # exercises direct replacement of imported text without clearing first.
     session.evaluate('document.querySelector("textarea").focus(); return true')
     session.command('xdotool', 'mousemove', '0', '0')
     session.keys('ctrl+a', 'BackSpace')
@@ -528,6 +528,46 @@ def run_baseline(session: DesktopSession) -> None:
     wait_for('clipboard import on reopen', lambda: s.evaluate('return document.querySelector("textarea")?.value') == '<t:1780000000:F>')
     s.capture('04-clipboard-reopen')
     s.passed('global hotkey reopens and imports native clipboard')
+
+    s.phase = 'clipboard_replacement'
+    replacement = '<t:1780000000:t> - <t:1780003600:t>'
+    s.keys('ctrl+a')
+    s.paste(replacement)
+    wait_for('complete clipboard replacement', lambda: s.evaluate('return document.querySelector("textarea")?.value') == replacement)
+    wait_for('replacement five range previews', lambda: s.evaluate('return document.querySelectorAll(".range-row, .row").length') == 5)
+    s.capture('04-clipboard-replacement')
+
+    imported = '<t:1780000000:F>'
+    for variant, selection, typed, expected in (
+        ('selected all typing', [0, 16], 'May', 'May'),
+        ('selected format typing', [14, 15], 'T', '<t:1780000000:T>'),
+        ('caret insertion', [1, 1], 'x', '<xt:1780000000:F>'),
+        ('caret deletion', [16, 16], None, '<t:1780000000:F'),
+    ):
+        s.keys('Escape')
+        wait_for('hide before imported edit', lambda: not s.window_visible())
+        s.set_clipboard(imported)
+        s.keys('ctrl+shift+h')
+        wait_for('reopen before imported edit', s.window_visible)
+        wait_for('fresh imported edit text', lambda: s.evaluate('return document.querySelector("textarea")?.value') == imported)
+        s.settled_geometry()
+        wait_for('import focus and selection', lambda: s.evaluate('''
+            const input = document.querySelector("textarea");
+            return document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === input.value.length;
+        '''))
+        # Set only the selection fixture. Native typing/deletion must still
+        # deliver the browser's real input event to React.
+        s.evaluate('document.querySelector("textarea").setSelectionRange(...arguments[0]); return true', selection)
+        wait_for(variant + ' selection', lambda: s.evaluate('''
+            const input = document.querySelector("textarea");
+            return [input.selectionStart, input.selectionEnd];
+        ''') == selection)
+        if typed is None:
+            s.keys('BackSpace')
+        else:
+            s.command('xdotool', 'type', '--clearmodifiers', '--', typed)
+        wait_for(variant, lambda: s.evaluate('return document.querySelector("textarea")?.value') == expected)
+    s.passed('clipboard_replacement', rows=5, editVariants=['selected all typing', 'selected format typing', 'caret insertion', 'caret deletion'])
 
     s.phase = 'range previews'
     fill_fixture(s, '<t:1780000000:t> - <t:1780003600:t>')

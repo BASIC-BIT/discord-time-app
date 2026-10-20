@@ -730,27 +730,15 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     
-    // If this is clipboard text and user is typing (not just selecting)
+    // A real edit ends clipboard ownership; the browser already applied the edit.
     if (isClipboardText && newValue !== inputText) {
       setIsClipboardText(false);
       setRange(null);
       setClarificationQuestion(null);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
-      // Replace the entire text with just what they typed
-      const selectionStart = e.target.selectionStart;
-      const selectionEnd = e.target.selectionEnd;
-      if (selectionStart === selectionEnd) {
-        // Single cursor position - replace everything
-        const lastChar = newValue[newValue.length - 1];
-        setInputText(lastChar || '');
-      } else {
-        // They selected and typed - use normal behavior
-        setInputText(newValue);
-      }
-    } else {
-      setInputText(newValue);
     }
+    setInputText(newValue);
   };
 
   return (
