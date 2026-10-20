@@ -1,6 +1,6 @@
 # Manual date/time picker
 
-Status: proposed design for review before the combined implementation plan.
+Status: approved in conversation. See [the combined implementation plan](../plans/2026-10-20-desktop-feedback-and-manual-picker.md).
 
 ## Intent and scope
 
