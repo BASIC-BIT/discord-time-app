@@ -18,7 +18,8 @@
     "verify:installed:routing-smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify-installed-routing-smoke.ps1",
     "preview": "vite preview",
     "tauri": "tauri",
-    "start": "tauri dev"
+    "start": "tauri dev",
+    "test:desktop": "python3 scripts/desktop_smoke.py"
   },
   "dependencies": {
     "@hammer-overlay/discord-timestamp-routing": "file:shared/discord-timestamp-routing",

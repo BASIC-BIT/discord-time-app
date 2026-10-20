@@ -96,9 +96,8 @@ isolating application credentials for offline tests.
 
 ## Native evidence and platform gates
 
-The native runner's public command is `npm run test:desktop`, delivered in the
-next implementation task. Run serially on a worker because the application uses
-fixed API and single-instance resources. Default coverage uses fresh application
+The native runner's public command is `npm run test:desktop`. Run serially on a
+worker because the application uses fixed API and single-instance resources. Default coverage uses fresh application
 state, offline parser paths, and zero model calls. An explicitly requested model
 run with missing configuration is blocked; fallback success is not model success.
 
@@ -139,3 +138,65 @@ It reported Debian 12, Node 24.22.0, Python 3.11.2, GTK 3.24.38, WebKitGTK
 1.99.1, and `tauri-driver` 2.1.0. WebKit helpers existed beneath
 `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/`. Repeating `--install` returned ready
 without invoking package installation. This qualifies prerequisites only.
+
+## Running the native baseline
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_desktop_smoke.py' -v
+npm run test:desktop -- --suite baseline
+```
+
+Run both commands inside the same supported environment used for setup. The
+runner checks prerequisites, builds through Tauri's existing `beforeBuildCommand`,
+and finds the debug executable through Cargo metadata. `CARGO_TARGET_DIR` works
+without a hardcoded target path. The Linux config only changes bundle targets and
+updater artifact generation; this command builds no installer.
+
+`--mode offline` is the default. It strips provider, parser, frontend and dev
+entrypoint overrides, disables observability, and uses fresh XDG state and an
+ephemeral local API key. Transport proxy and CA settings remain available. The
+app and driver start from a separate temporary working directory because the
+Rust debug build also searches relative paths for `api/.env`. The real sidecar's
+readiness response must confirm that offline providers are absent. State,
+settings and key files are deleted after extracting sanitized logs. Only the
+current run's SQLite generation IDs and corresponding copy outcome count toward
+the persistence assertion.
+
+`--mode model` requires explicit inherited application provider configuration.
+It uses the existing OpenAI or Plan-IR settings, verifies a model-required live
+smoke row and the persisted model identity, calls and duration, and reports the
+parse latency against the 5-second product SLO. Its 30-second RPC transport bound
+does not alter the app's inference timeout. Missing configuration exits blocked;
+fallback does not count as model coverage. Do not run a paid model merely to
+qualify the offline baseline.
+
+`--repeat N` builds once and runs fresh isolated desktops serially, stopping at
+the first failure. Repetition is offline-only. `--suite picker` and `--suite all`
+are reserved and currently report blocked until picker scenarios are implemented.
+
+Exit `0` means assertions, video validation and cleanup passed. Exit `1` means a
+test or capture failed, and exit `2` means prerequisites, resources or requested
+configuration are blocked. Ordinary WebDriver requests have a 5-second bound,
+startup has 30 seconds, and failure desktop screenshots have 3 seconds. Native
+visibility and settled geometry are polled before reopening and taking captures.
+The pointer stays away from rows during keyboard checks.
+
+The runner owns private process groups for Xvfb, D-Bus, Openbox, WebDriver and
+clipboard helpers, and tracks descendants including the app, sidecar and WebKit.
+It never reuses an occupied API/driver port or kills an existing desktop. Teardown
+allows 5 seconds before terminating remaining owned descendants and reports a
+cleanup failure when forced termination is necessary. Child output goes to files so a surviving clipboard selection owner cannot hold a caller's
+output pipe open.
+
+Each run prints its `artifacts/desktop/<run-id>/` folder. Read `results.json` and
+`summary.md` alongside the desktop PNGs, `desktop.mp4` and sanitized logs. Video
+is finalized and checked with `ffprobe` and a decoded frame. Direct X11 capture
+works when WebDriver is unresponsive. The original assertion error stays visible
+if capture also fails. Visual review remains `pending` until a coding agent
+records what screenshots, sampled frames or video it actually inspected.
+
+The baseline explicitly clears input between fixtures. It does not establish
+that typing or pasting directly over auto-imported clipboard text works; that is
+the separate clipboard regression task. Native format-preference persistence
+also remains outside this assertion because the corresponding Rust commands are
+stubs.
