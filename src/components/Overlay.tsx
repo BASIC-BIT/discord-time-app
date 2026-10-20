@@ -335,7 +335,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setLoading(true);
         setParseProgressMessage('Settling');
         const debounceMs = 300;
-        debounceTimeoutRef.current = setTimeout(() => {
+        debounceTimeoutRef.current = window.setTimeout(() => {
           parseInput(inputText.trim(), isClipboardText);
         }, debounceMs);
       }
