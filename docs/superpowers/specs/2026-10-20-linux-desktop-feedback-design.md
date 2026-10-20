@@ -1,6 +1,6 @@
 # Linux desktop feedback loop
 
-Status: proposed written design, based on the agreed scope. Implementation has not started.
+Status: scope accepted in conversation. Implementation has not started. Plan together with [the manual picker design](2026-10-20-manual-datetime-picker-design.md).
 
 ## Goal and scope
 
