@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Overlay } from "./components/Overlay";
@@ -108,15 +107,11 @@ function App() {
 
       setupWindow();
 
-      const unlistenFocus = appWindow.onFocusChanged(async ({ payload: focused }) => {
+      const unlistenFocus = appWindow.onFocusChanged(({ payload: focused }) => {
         if (focused) {
           setShowOverlay(true);
-          // Reload settings when window gains focus to catch changes from settings window
-          try {
-            await invoke('reload_global_shortcuts');
-          } catch (error) {
-            console.error('Failed to reload shortcuts:', error);
-          }
+          // Settings reloads shortcuts after saving. Reloading on hotkey focus
+          // can deadlock Linux unregistration against the key-release callback.
         }
       });
 
