@@ -2,6 +2,8 @@
 import contextlib
 import http.server
 import io
+import itertools
+import json
 import os
 from pathlib import Path
 import signal
@@ -12,6 +14,9 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
+
+import desktop_smoke
 
 from desktop_smoke import DesktopSession, build_environment, http_json, validate_recording, check_ports, Blocked, make_launch_cwd
 
@@ -100,6 +105,94 @@ class RunnerBoundaries(unittest.TestCase):
                 accepted.close()
                 self.assertEqual(client.recv(1), b'')
         check_ports((port,))
+
+    def exercise_failed_build(self, root, *, fail_step='build', orphan=False):
+        tools = root / 'tools'
+        tools.mkdir()
+        (root / 'scripts').mkdir()
+        fixture = root / 'fixture.py'
+        fixture.write_text("""import json,os,signal,socket,sys,time
+from pathlib import Path
+root=Path(__file__).parent
+step=sys.argv[1]
+if step=='git':
+ if sys.argv[2]=='rev-parse': print('a'*40)
+ sys.exit(0)
+if step=='cargo' and os.environ['FIXTURE_FAIL_STEP']!='cargo':
+ print(json.dumps({'target_directory':str(root/'target'),'packages':[{'manifest_path':str(root/'src-tauri/Cargo.toml'),'targets':[{'name':'fixture-app','kind':['bin']}]}]}))
+ sys.exit(0)
+credentials=[os.environ['OPENAI_API_KEY'],os.environ['HAMMEROVERLAY_API_KEY']]
+for value in credentials:
+ print(value,value[:6]+'...',value[:7]+'...',flush=True)
+(root/('credentials-'+step+'.json')).write_text(json.dumps(credentials))
+if os.environ['FIXTURE_FAIL_STEP']==step:
+ if os.environ['FIXTURE_ORPHAN']=='1':
+  listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen()
+  pid=os.fork()
+  if pid==0:
+   os.setsid();signal.signal(signal.SIGTERM,signal.SIG_IGN)
+   (root/'orphan').write_text(str(os.getpid())+' '+str(listener.getsockname()[1]))
+   while True: time.sleep(1)
+  while not (root/'orphan').exists():time.sleep(.01)
+ sys.exit(1)
+""")
+        for name, step in [('git', 'git'), ('cargo', 'cargo'), ('npm', 'build')]:
+            command = tools / name
+            command.write_text(f'#!{sys.executable}\nimport os,sys\nos.execv(sys.executable,[sys.executable,{str(fixture)!r},{step!r},*sys.argv[1:]])\n')
+            command.chmod(0o700)
+        (root / 'scripts/setup-linux-desktop.sh').write_text(f'exec {sys.executable} {fixture} prerequisites\n')
+        env = {'PATH': str(tools) + os.pathsep + os.environ['PATH'],
+               'OPENAI_API_KEY': 'sk-failed-build-secret-sentinel', 'FIXTURE_FAIL_STEP': fail_step,
+               'FIXTURE_ORPHAN': '1' if orphan else '0'}
+        generated = itertools.count(1)
+        def token_hex(size):
+            return f'generated-{next(generated)}-auth-sentinel' if size == 32 else 'fixture'
+        with patch.object(desktop_smoke, 'ROOT', root), patch.object(sys, 'argv', ['desktop_smoke.py', '--mode', 'model']), patch.dict(os.environ, env), patch.object(desktop_smoke.secrets, 'token_hex', side_effect=token_hex), contextlib.redirect_stdout(io.StringIO()):
+            status = desktop_smoke.main()
+        return status, next((root / 'artifacts/desktop').iterdir())
+
+    def test_failed_build_finalizes_owned_orphan_without_killing_unrelated_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unrelated = subprocess.Popen(['sleep', '60'], start_new_session=True)
+            try:
+                status, artifacts = self.exercise_failed_build(root, orphan=True)
+                pid, port = map(int, (root / 'orphan').read_text().split())
+                self.assertEqual(status, 1)
+                self.assertIsNone(unrelated.poll())
+                stat = Path(f'/proc/{pid}/stat')
+                self.assertFalse(stat.exists() and stat.read_text().split()[2] != 'Z', 'failed build left its detached helper alive')
+                with socket.socket() as released:
+                    released.bind(('127.0.0.1', port))
+                result = json.loads((artifacts / 'results.json').read_text())
+                self.assertEqual(result['error'], 'Native build failed; see build.log')
+                self.assertEqual(result['failurePhase'], 'build')
+                self.assertTrue(any('forced termination' in error for error in result['cleanupErrors']))
+            finally:
+                if (root / 'orphan').exists():
+                    pid = int((root / 'orphan').read_text().split()[0])
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        os.waitpid(pid, 0)
+                    except (ProcessLookupError, ChildProcessError):
+                        pass
+                unrelated.terminate()
+                unrelated.wait(timeout=2)
+
+    def test_pre_session_failures_sanitize_inherited_and_generated_credentials(self):
+        for step, expected_status in [('prerequisites', 2), ('cargo', 1), ('build', 1)]:
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                status, artifacts = self.exercise_failed_build(root, fail_step=step)
+                self.assertEqual(status, expected_status)
+                credentials = json.loads((root / ('credentials-' + step + '.json')).read_text())
+                evidence = '\n'.join(p.read_text() for p in artifacts.iterdir() if p.is_file())
+                for value in credentials:
+                    for emitted in (value, value[:6] + '...', value[:7] + '...'):
+                        self.assertNotIn(emitted, evidence)
+                result = json.loads((artifacts / 'results.json').read_text())
+                self.assertIn('cleanupErrors', result)
+                self.assertFalse((artifacts / 'state').exists())
 
     def test_cleanup_only_terminates_owned_process_groups(self):
         # The grandchild ignores TERM and holds a listening socket. Killing just

@@ -146,6 +146,7 @@ class DesktopSession:
         self.recorder = None
         self.base_url = None
         self.cleanup_errors = []
+        self.finalized = False
         # Adopt orphaned helpers so they can be reaped, even when container PID 1
         # does not reap. This affects only descendants of this runner.
         ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
@@ -271,7 +272,7 @@ class DesktopSession:
     def start(self):
         self.phase = 'startup'
         if not hasattr(self, 'executable'):
-            self.executable = build_executable(self.run_dir, self.mode)
+            self.executable = build_executable(self)
         startup_deadline = time.monotonic() + READINESS
         def remaining():
             budget = startup_deadline - time.monotonic()
@@ -328,10 +329,11 @@ class DesktopSession:
     def cleanup(self):
         self.track()
         for process in reversed(self.owned):
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
         snapshot = processes()
         for pid, started in self.descendants.items():
             if pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z':
@@ -390,14 +392,25 @@ class DesktopSession:
         self.logs.clear()
 
     def __exit__(self, exc_type, exc, tb):
+        self.finalize(exc)
+        if not exc and (self.metadata.get('captureError') or self.cleanup_errors):
+            raise RuntimeError(self.metadata.get('captureError') or '; '.join(self.cleanup_errors))
+
+    def finalize(self, exc=None):
+        # Both context exit and main's finally use this path, including failures
+        # in prerequisites or builds before a desktop was started.
+        if self.finalized:
+            return
+        self.finalized = True
         if exc:
             self.metadata['failurePhase'] = self.phase
             self.metadata['lastCommand'] = self.last_command
             self.metadata['error'] = self.sanitize(str(exc))
-            try:
-                self.desktop_capture('failure')
-            except Exception as capture_error:
-                self.metadata['failureCaptureError'] = self.sanitize(str(capture_error))
+            if 'DISPLAY' in self.env and hasattr(self, 'display'):
+                try:
+                    self.desktop_capture('failure')
+                except Exception as capture_error:
+                    self.metadata['failureCaptureError'] = self.sanitize(str(capture_error))
         if self.recorder:
             try:
                 if self.recorder.stdin:
@@ -407,7 +420,10 @@ class DesktopSession:
                 self.metadata['recording'] = validate_recording(self.run_dir / 'desktop.mp4', self.recorder.returncode)
             except Exception as recording_error:
                 self.metadata['captureError'] = self.sanitize(str(recording_error))
-        self.cleanup()
+        try:
+            self.cleanup()
+        except Exception as cleanup_error:
+            self.cleanup_errors.append(self.sanitize(str(cleanup_error)))
         if hasattr(self, 'display'):
             for resource in (Path(f'/tmp/.X{self.display}-lock'), Path(f'/tmp/.X11-unix/X{self.display}')):
                 if resource.exists():
@@ -421,8 +437,6 @@ class DesktopSession:
         if hasattr(self, 'launch_cwd'):
             shutil.rmtree(self.launch_cwd.parents[2], ignore_errors=True)
         self.metadata['cleanupErrors'] = self.cleanup_errors
-        if not exc and (self.metadata.get('captureError') or self.cleanup_errors):
-            raise RuntimeError(self.metadata.get('captureError') or '; '.join(self.cleanup_errors))
 
 
 def fill_fixture(session: DesktopSession, text: str):
@@ -574,23 +588,28 @@ def run_model(session):
     s.passed('explicit model-required row and persisted identity', generationId=generation_id, latencyMs=latency)
 
 
-def build_executable(run_dir, mode):
-    env = build_environment(os.environ, run_dir, mode)
-    result = subprocess.run(['bash', 'scripts/setup-linux-desktop.sh', '--check'], cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
-    (run_dir / 'prerequisites.log').write_text(result.stdout + result.stderr)
-    if result.returncode:
+def build_executable(session: DesktopSession):
+    # The same environment and secret inventory follow setup, compilation and
+    # desktop execution. Every child belongs to the session even before entry.
+    run_dir = session.run_dir
+    session.last_command = 'Linux prerequisite check'
+    prerequisite = session.spawn('prerequisites', ['bash', 'scripts/setup-linux-desktop.sh', '--check'], cwd=ROOT)
+    if prerequisite.wait(timeout=60):
         raise Blocked('Linux prerequisites are unavailable; see prerequisites.log')
-    metadata = subprocess.run(['cargo', 'metadata', '--no-deps', '--format-version', '1', '--manifest-path', 'src-tauri/Cargo.toml'], cwd=ROOT, env=env, capture_output=True, text=True, check=True, timeout=30)
-    cargo = json.loads(metadata.stdout)
+    session.last_command = 'Cargo metadata'
+    metadata = session.spawn('cargo-metadata', ['cargo', 'metadata', '--no-deps', '--format-version', '1', '--manifest-path', 'src-tauri/Cargo.toml'], cwd=ROOT)
+    if metadata.wait(timeout=30):
+        raise RuntimeError('Cargo metadata failed; see cargo-metadata.log')
+    cargo = json.loads((run_dir / 'cargo-metadata.log').read_text())
     package = next(p for p in cargo['packages'] if Path(p['manifest_path']).resolve() == ROOT / 'src-tauri/Cargo.toml')
     binary = next(target['name'] for target in package['targets'] if 'bin' in target['kind'])
     executable = Path(cargo['target_directory']) / 'debug' / binary
     # Force Cargo to produce this invocation's executable; never run a stale one
     # after a failing frontend/API or native build.
     executable.unlink(missing_ok=True)
-    with (run_dir / 'build.log').open('w') as output:
-        result = subprocess.run(['npm', 'run', 'tauri', '--', 'build', '--debug', '--no-bundle', '--config', 'src-tauri/tauri.linux-test.conf.json'], cwd=ROOT, env=env, stdout=output, stderr=subprocess.STDOUT)
-    if result.returncode or not executable.is_file():
+    session.last_command = 'Tauri native build'
+    build = session.spawn('build', ['npm', 'run', 'tauri', '--', 'build', '--debug', '--no-bundle', '--config', 'src-tauri/tauri.linux-test.conf.json'], cwd=ROOT)
+    if build.wait() or not executable.is_file():
         raise RuntimeError('Native build failed; see build.log')
     return executable
 
@@ -627,6 +646,7 @@ def main():
         run_dir = ROOT / 'artifacts' / 'desktop' / f'{stamp}-{iteration + 1:02d}'
         session = DesktopSession(run_dir=run_dir, mode=args.mode)
         exit_code = 1
+        failure = None
         try:
             session.metadata.update(commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                                     dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)), suite=args.suite)
@@ -639,7 +659,7 @@ def main():
                 raise Blocked('Explicit model mode requires configured OpenAI credentials or an enabled Plan-IR endpoint and model identity')
             session.phase = 'build'
             if executable is None:
-                executable = build_executable(run_dir, args.mode)
+                executable = build_executable(session)
             session.executable = executable
             session.metadata.update(executable=str(executable), executableSha256=hashlib.sha256(executable.read_bytes()).hexdigest())
             if iteration:
@@ -651,13 +671,15 @@ def main():
                     run_model(session)
             exit_code = 0
         except Exception as error:
+            failure = error
             exit_code = 2 if isinstance(error, Blocked) else 1
             session.metadata.setdefault('error', session.sanitize(str(error)))
             session.metadata.setdefault('failurePhase', session.phase)
         finally:
-            # Build/setup failures do not enter the session context.
-            if session.phase == 'build':
-                shutil.rmtree(run_dir / 'state', ignore_errors=True)
+            session.finalize(failure)
+            if exit_code == 0 and (session.metadata.get('captureError') or session.cleanup_errors):
+                exit_code = 1
+                session.metadata.setdefault('error', session.metadata.get('captureError') or '; '.join(session.cleanup_errors))
             write_results(session, exit_code)
             print(f'{session.run_dir}: {"PASS" if exit_code == 0 else "BLOCKED" if exit_code == 2 else "FAIL"}', flush=True)
         if exit_code:
