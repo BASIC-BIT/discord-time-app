@@ -194,6 +194,53 @@ if os.environ['FIXTURE_FAIL_STEP']==step:
                 self.assertIn('cleanupErrors', result)
                 self.assertFalse((artifacts / 'state').exists())
 
+    def test_serial_finalize_reaps_helpers_forked_during_shutdown(self):
+        # A real detached helper forks while its parent handles TERM, retaining
+        # the app-like single-instance socket. Finalize must discover it, signal
+        # it gracefully, reap it, then let the next fresh session bind the socket.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            address = '\0desktop-serial-' + str(os.getpid())
+            code = r"""import os,signal,socket,sys
+from pathlib import Path
+root=Path(sys.argv[1]); listener=socket.socket(socket.AF_UNIX)
+listener.bind('\0'+sys.argv[2]); listener.listen()
+def terminate(signum, frame):
+ pid=os.fork()
+ if pid==0:
+  os.setsid();signal.signal(signal.SIGTERM,signal.SIG_DFL)
+  (root/'child').write_text(str(os.getpid()))
+  while True: signal.pause()
+ os._exit(0)
+signal.signal(signal.SIGTERM,terminate)
+(root/'ready').write_text('ready')
+while True: signal.pause()
+"""
+            class SocketSession(DesktopSession):
+                def start(self):
+                    self.spawn('holder', [sys.executable, '-c', code, str(self.run_dir), address[1:]])
+                    desktop_smoke.wait_for('owned socket holder', lambda: (self.run_dir / 'ready').exists())
+
+            unrelated = subprocess.Popen(['sleep', '60'], start_new_session=True)
+            sessions = []
+            try:
+                for index in range(2):
+                    session = SocketSession(run_dir=root / str(index), mode='offline')
+                    sessions.append(session)
+                    with session:
+                        pass
+                    self.assertEqual(session.cleanup_errors, [])
+                    pid = int((session.run_dir / 'child').read_text())
+                    self.assertFalse(Path(f'/proc/{pid}').exists(), 'owned shutdown helper was not reaped')
+                    with socket.socket(socket.AF_UNIX) as released:
+                        released.bind(address)
+                self.assertIsNone(unrelated.poll())
+            finally:
+                for session in sessions:
+                    session.cleanup()
+                unrelated.terminate()
+                unrelated.wait(timeout=2)
+
     def test_cleanup_only_terminates_owned_process_groups(self):
         # The grandchild ignores TERM and holds a listening socket. Killing just
         # its immediate parent would leave both the descendant and resource live.

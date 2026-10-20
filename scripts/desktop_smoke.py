@@ -334,59 +334,77 @@ class DesktopSession:
                     os.killpg(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-        snapshot = processes()
-        for pid, started in self.descendants.items():
-            if pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z':
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-        deadline = time.monotonic() + TEARDOWN
-        while time.monotonic() < deadline:
+
+        signalled = set()
+        direct = {process.pid for process in self.owned}
+
+        def remaining(signal_number):
+            # Shutdown can fork or orphan helpers. Discover them throughout
+            # convergence, and retain zombies until their parent releases them
+            # and this subreaper can waitpid them.
             self.track()
             snapshot = processes()
-            live = [pid for pid, started in self.descendants.items() if pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z']
-            live += [p.pid for p in self.owned if p.poll() is None]
-            if not live:
-                break
-            time.sleep(.05)
-        self.track()
-        snapshot = processes()
-        if any(pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z' for pid, started in self.descendants.items()) or any(p.poll() is None for p in self.owned):
-            self.cleanup_errors.append('owned processes exceeded the 5-second graceful teardown budget; forced termination required')
-        for pid, started in self.descendants.items():
-            if pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z':
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        for process in self.owned:
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            try:
-                process.wait(timeout=.5)
-            except subprocess.TimeoutExpired:
-                self.cleanup_errors.append(f'owned process {process.pid} survived')
-        # SIGKILL delivery and socket release are asynchronous. Confirm that
-        # descendants actually stop before reporting teardown or removing state.
-        kill_deadline = time.monotonic() + 1
-        while True:
-            for pid in self.descendants:
-                try:
-                    os.waitpid(pid, os.WNOHANG)
-                except ChildProcessError:
-                    pass
+            for pid, started in self.descendants.items():
+                if pid not in snapshot or snapshot[pid][1] != started:
+                    continue
+                if snapshot[pid][2] != 'Z' and (pid, started, signal_number) not in signalled:
+                    try:
+                        os.kill(pid, signal_number)
+                        signalled.add((pid, started, signal_number))
+                    except ProcessLookupError:
+                        pass
+                if pid not in direct:
+                    try:
+                        os.waitpid(pid, os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+            for process in self.owned:
+                if process.poll() is None and signal_number == signal.SIGKILL:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             snapshot = processes()
-            live = [pid for pid, started in self.descendants.items() if pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z']
-            if not live or time.monotonic() >= kill_deadline:
+            return ([(pid, snapshot[pid][2]) for pid, started in self.descendants.items()
+                     if pid in snapshot and snapshot[pid][1] == started]
+                    + [(process.pid, 'running') for process in self.owned if process.poll() is None])
+
+        def resources_released():
+            if not hasattr(self, 'display'):
+                return True
+            try:
+                check_ports()
+                with socket.socket(socket.AF_UNIX) as instance:
+                    instance.bind('\0hammer-overlay-app')
+                return True
+            except (OSError, Blocked):
+                return False
+
+        deadline = time.monotonic() + TEARDOWN
+        pending = []
+        while True:
+            pending = remaining(signal.SIGTERM)
+            if not pending and resources_released():
+                break
+            if time.monotonic() >= deadline:
                 break
             time.sleep(.02)
-        for pid, started in self.descendants.items():
-            if pid in snapshot and snapshot[pid][1] == started and snapshot[pid][2] != 'Z':
-                self.cleanup_errors.append(f'owned descendant {pid} survived')
+        if pending:
+            self.cleanup_errors.append('owned processes exceeded the 5-second graceful teardown budget; forced termination required')
+        # Keep the existing one-second forced-stop budget. Never signal an
+        # untracked owner merely because a fixed port/socket remains occupied.
+        kill_deadline = time.monotonic() + 1
+        while True:
+            pending = remaining(signal.SIGKILL)
+            if not pending and resources_released():
+                break
+            if time.monotonic() >= kill_deadline:
+                break
+            time.sleep(.02)
+        for pid, state in pending:
+            self.cleanup_errors.append(f'owned descendant {pid} survived' + (' unreaped' if state == 'Z' else ''))
+        if not resources_released():
+            self.cleanup_errors.append('desktop API/driver port or single-instance resource remained occupied after teardown')
         for output in self.logs:
             output.close()
         self.logs.clear()
