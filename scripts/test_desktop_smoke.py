@@ -383,21 +383,16 @@ from pathlib import Path
 root=Path(sys.argv[1]); listener=socket.socket(socket.AF_UNIX)
 listener.bind('\0'+sys.argv[2]); listener.listen()
 def terminate(signum, frame):
- signal.signal(signal.SIGTERM,signal.SIG_IGN)
- ready_read,ready_write=os.pipe()
- gate_read,gate_write=os.pipe()
+ # Cleanup can send TERM again while this handler is forking. Keep it
+ # pending until the parent publishes the PID and the child is detached.
+ signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGTERM})
  pid=os.fork()
  if pid==0:
   os.setsid();signal.signal(signal.SIGTERM,signal.SIG_DFL)
-  os.write(ready_write,b'1')
-  # Keep the child waiting until cleanup terminates it. The old child-side
-  # marker would never be published under this controlled schedule.
-  # The inherited gate writer keeps this read blocked after the parent exits.
-  os.read(gate_read,1)
+  signal.pthread_sigmask(signal.SIG_UNBLOCK,{signal.SIGTERM})
   while True: signal.pause()
- os.read(ready_read,1)
- # The parent publishes the actual fork return value before exiting. Child
- # scheduling or termination cannot prevent publication of the cleanup target.
+ # Publish without waiting for the child to run. Unlike ignoring TERM,
+ # blocking preserves an early child signal until its handler is ready.
  (root/'child').write_text(str(pid))
  os._exit(0)
 signal.signal(signal.SIGTERM,terminate)
