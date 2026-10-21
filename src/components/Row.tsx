@@ -6,7 +6,7 @@ interface RowProps {
   formatIndex: number;
   isSelected: boolean;
   isTentative?: boolean;
-  onCopyAndClose: () => void;
+  onCopyAndClose: () => Promise<void>;
   onMouseEnter: () => void;
 }
 
@@ -30,11 +30,24 @@ export function Row({ epoch, formatIndex, isSelected, isTentative = false, onCop
     }
   };
   
+  // Require pointer movement: mounting under a stationary pointer must not select a new format.
   return (
     <div 
       className={`row ${isSelected ? 'selected' : ''} ${isTentative ? 'tentative' : ''} ${copying ? 'copying' : ''}`}
+      role="button"
+      tabIndex={isSelected ? 0 : -1}
+      aria-label={`Copy ${format.description}: ${discordCode}`}
+      onKeyDown={event => {
+        if (event.key === ' ' || event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          void handleClick();
+        }
+      }}
       onClick={handleClick}
-      onMouseEnter={onMouseEnter}
+      onMouseMove={event => {
+        if (event.movementX !== 0 || event.movementY !== 0) onMouseEnter();
+      }}
       style={{ cursor: 'pointer' }}
     >
       <div className="row-content">

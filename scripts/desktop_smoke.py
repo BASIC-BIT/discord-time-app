@@ -19,6 +19,8 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import traceback
+import sys
 from typing import Mapping
 import urllib.error
 import urllib.request
@@ -220,7 +222,7 @@ class DesktopSession:
         source.write_text(text)
         with source.open('rb') as content:
             self.spawn('clipboard', ['xclip', '-quiet', '-selection', 'clipboard', '-i'], stdin=content)
-        wait_for('clipboard owner', lambda: self.clipboard() == text)
+        wait_for('clipboard owner', lambda: (self.clipboard() or '') == text)
         source.unlink()
 
     def paste(self, text: str) -> None:
@@ -282,7 +284,7 @@ class DesktopSession:
         for key in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR'):
             Path(self.env[key]).mkdir(parents=True, mode=0o700, exist_ok=True)
         if self.disable_api:
-            self.env['HAMMEROVERLAY_DISABLE_SUPERVISED_API'] = 'true'
+            self.env['HAMMEROVERLAY_DISABLE_SUPERVISED_API'] = '1'
         check_ports()
         with socket.socket(socket.AF_UNIX) as instance:
             try:
@@ -421,8 +423,43 @@ class DesktopSession:
             return
         self.finalized = True
         if exc:
+            failed_command = self.last_command
+            # Capture owned process states before cleanup signals change them.
+            self.track()
+            process_states = []
+            for pid, started in self.descendants.items():
+                try:
+                    tail = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+                    if int(tail[19]) == started:
+                        process_states.append({'pid': pid, 'parent': int(tail[1]), 'state': tail[0], 'exitCode': int(tail[49])})
+                except (OSError, ValueError, IndexError):
+                    pass
+            try:
+                shm = os.statvfs('/dev/shm')
+            except OSError:
+                shm = None
+            self.metadata['failureDiagnostics'] = {
+                'ownedProcessStatesBeforeCleanup': process_states,
+                'sharedMemoryBytesUsed': (shm.f_blocks - shm.f_bfree) * shm.f_frsize if shm else None,
+                'sharedMemoryBytesTotal': shm.f_blocks * shm.f_frsize if shm else None,
+            }
+            if self.session_id:
+                probes = {}
+                for name, port in (('proxy', 4444), ('native', 4445)):
+                    try:
+                        probes[name] = http_json('GET', f'http://127.0.0.1:{port}/session/{self.session_id}/url', timeout=1)
+                    except Exception as probe_error:
+                        probes[name] = {'error': self.sanitize(str(probe_error))}
+                self.metadata['failureDiagnostics']['readOnlyDriverProbes'] = probes
+            if 'DISPLAY' in self.env:
+                try:
+                    focus = self.command('xdotool', 'getwindowfocus', timeout=1, check=False)
+                    self.metadata['failureDiagnostics']['nativeFocus'] = {'window': focus, 'name': self.command('xdotool', 'getwindowname', focus, timeout=1, check=False) if focus else ''}
+                except Exception as focus_error:
+                    self.metadata['failureDiagnostics']['nativeFocus'] = {'error': self.sanitize(str(focus_error))}
+            self.metadata['failureTraceback'] = self.sanitize(''.join(traceback.format_exception(exc)))
             self.metadata['failurePhase'] = self.phase
-            self.metadata['lastCommand'] = self.last_command
+            self.metadata['lastCommand'] = failed_command
             self.metadata['error'] = self.sanitize(str(exc))
             if 'DISPLAY' in self.env and hasattr(self, 'display'):
                 try:
@@ -464,7 +501,8 @@ def fill_fixture(session: DesktopSession, text: str):
     session.command('xdotool', 'mousemove', '0', '0')
     session.keys('ctrl+a', 'BackSpace')
     wait_for('empty fixture input', lambda: session.evaluate('return document.querySelector("textarea")?.value') == '')
-    session.paste(text)
+    if text:
+        session.paste(text)
     wait_for('fixture paste', lambda: session.evaluate('return document.querySelector("textarea")?.value') == text)
 
 
@@ -580,11 +618,18 @@ def run_baseline(session: DesktopSession) -> None:
             const input = document.querySelector("textarea");
             return [input.selectionStart, input.selectionEnd];
         ''') == selection)
+        s.evaluate('window.__editEvents=[]; window.__editObserve=e=>window.__editEvents.push({type:e.type,key:e.key,ctrl:e.ctrlKey,shift:e.shiftKey,value:e.target.value}); for(const name of ["keydown","keyup","beforeinput","input"]) document.addEventListener(name,window.__editObserve); return true')
         if typed is None:
             s.keys('BackSpace')
         else:
             s.command('xdotool', 'type', '--clearmodifiers', '--', typed)
-        wait_for(variant, lambda: s.evaluate('return document.querySelector("textarea")?.value') == expected)
+        try:
+            wait_for(variant, lambda: s.evaluate('return document.querySelector("textarea")?.value') == expected)
+        except Exception:
+            s.metadata['nativeEditDiagnostic'] = s.evaluate('return {activeTag:document.activeElement?.tagName,documentFocused:document.hasFocus(),value:document.querySelector("textarea")?.value,events:window.__editEvents}')
+            raise
+        finally:
+            s.evaluate('for(const name of ["keydown","keyup","beforeinput","input"]) document.removeEventListener(name,window.__editObserve); delete window.__editObserve; delete window.__editEvents; return true')
     s.passed('clipboard_replacement', rows=5, editVariants=['selected all typing', 'selected format typing', 'caret insertion', 'caret deletion'])
 
     s.phase = 'range previews'
@@ -624,6 +669,483 @@ def run_baseline(session: DesktopSession) -> None:
     s.metadata['generationIds'] = [r['generation_id'] for r in generations]
     s.passed('real SQLite persists this run parse and copy outcome', apiGenerationId=api_generation,
              copiedGenerationId=copied_generation, modelCalls=sum(r['model_calls'] or 0 for r in generations))
+
+
+def click_control(s, selector, *, move_pointer=True):
+    s.settled_geometry()
+    # OS click at the actual webview control; JavaScript only observes geometry.
+    box = s.evaluate('const r=document.querySelector(arguments[0])?.getBoundingClientRect(); return r && [r.x+r.width/2,r.y+r.height/2]', selector)
+    assert box, f'Missing control: {selector}'
+    window_id = s.command('xdotool', 'search', '--onlyvisible', '--name', '^HammerOverlay$').splitlines()[0]
+    s.command('xdotool', 'mousemove', '--window', window_id, str(round(box[0])), str(round(box[1])))
+    s.command('xdotool', 'click', '1')
+    if move_pointer:
+        s.command('xdotool', 'mousemove', '0', '0')
+
+
+def set_picker_fields(s, date, time):
+    # Native input values are fixture setup; keyboard behavior has its own journey.
+    s.evaluate("""
+      for (const [selector,value] of [['#manual-date',arguments[0]],['#manual-time',arguments[1]]]) {
+        const input=document.querySelector(selector);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+      }
+      return true;
+    """, date, time)
+    wait_for('picker fields', lambda: s.evaluate('return [document.querySelector("#manual-date").value,document.querySelector("#manual-time").value]') == [date,time])
+
+
+def selected_code(s):
+    return s.evaluate('return document.querySelector(".row.selected .format-code")?.textContent')
+
+
+def open_picker(s, selector='.calendar-button', *, keyboard=False):
+    # A preceding cancel must finish before this journey can open a fresh editor.
+    wait_for('closed editor and enabled opener', lambda: s.evaluate('return !document.querySelector("#manual-date") && document.querySelector(arguments[0])?.disabled === false', selector))
+    s.evaluate('window.__focusEvents=[]; window.__observeFocus=e=>window.__focusEvents.push({type:e.type,id:e.target.id,tag:e.target.tagName,classes:e.target.className}); document.addEventListener("focusin",window.__observeFocus); document.addEventListener("focusout",window.__observeFocus); return true')
+    if keyboard:
+        s.keys('Tab')
+        wait_for('calendar reachable by Tab', lambda: s.evaluate('return document.activeElement?.classList.contains("calendar-button")'))
+        s.keys('Return')
+    else:
+        click_control(s, selector)
+    wait_for('inline editor', lambda: s.evaluate('return !!document.querySelector("#manual-date")'))
+    try:
+        wait_for('date focus', lambda: s.evaluate('return document.activeElement?.id') == 'manual-date')
+    except Exception:
+        try:
+            s.metadata['focusDiagnostic'] = s.evaluate('return {activeTag:document.activeElement?.tagName,activeId:document.activeElement?.id,activeClass:document.activeElement?.className,documentFocused:document.hasFocus(),events:window.__focusEvents}')
+            s.metadata['nativeFocusDiagnostic'] = s.command('xdotool', 'getwindowfocus', check=False)
+        except Exception as diagnostic_error:
+            s.metadata['focusDiagnosticError'] = s.sanitize(str(diagnostic_error))
+        raise
+    finally:
+        try:
+            s.evaluate('document.removeEventListener("focusin",window.__observeFocus); document.removeEventListener("focusout",window.__observeFocus); delete window.__observeFocus; delete window.__focusEvents; return true')
+        except Exception as diagnostic_error:
+            s.metadata['focusDiagnosticCleanupError'] = s.sanitize(str(diagnostic_error))
+    assert s.evaluate('return document.querySelectorAll(".row").length') == 0
+    assert s.evaluate('return document.querySelector("textarea").disabled')
+
+
+def run_picker(session: DesktopSession) -> None:
+    s = session
+    s.phase = 'manual_from_scratch'
+    if not s.window_visible():
+        s.set_clipboard('')
+        s.keys('ctrl+shift+h')
+        wait_for('picker overlay', s.window_visible)
+    wait_for('picker textarea', lambda: s.evaluate('return !!document.querySelector("textarea")'))
+    fill_fixture(s, '')
+    open_picker(s, keyboard=True)
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    before = s.clipboard()
+    s.capture('picker-01-editor')
+    s.evaluate('''window.__pointerLog=[]; window.__pointerObserve=e=>window.__pointerLog.push({type:e.type,x:e.screenX,y:e.screenY,dx:e.movementX,dy:e.movementY,target:e.target.className}); document.addEventListener('mousemove',window.__pointerObserve); return true''')
+    # Keep the pointer at Apply through settled capture: layout-generated hover must not change f.
+    click_control(s, '.manual-apply', move_pointer=False)
+    wait_for('manual f result', lambda: selected_code(s) == '<t:1781101800:f>')
+    assert s.evaluate('return document.querySelectorAll(".row").length') == 7
+    assert s.evaluate('return document.querySelector(".manual-label")?.textContent') == 'Manual'
+    assert s.clipboard() == before and s.window_visible()
+    s.capture('picker-02-applied')
+    pointer_log = s.evaluate('document.removeEventListener("mousemove",window.__pointerObserve); const events=window.__pointerLog; delete window.__pointerObserve; delete window.__pointerLog; return events')
+    assert selected_code(s) == '<t:1781101800:f>', {'code': selected_code(s), 'pointerEvents': pointer_log}
+    s.keys('Down')
+    wait_for('focused F after Down', lambda: selected_code(s) == '<t:1781101800:F>' and s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    s.keys('Up')
+    wait_for('focused f after Up', lambda: selected_code(s) == '<t:1781101800:f>' and s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    s.keys('Return')
+    wait_for('manual exact copy', lambda: s.clipboard() == '<t:1781101800:f>')
+    wait_for('manual copy hides', lambda: not s.window_visible())
+    s.passed('manual_from_scratch', epoch=1781101800)
+
+    s.phase = 'adjust_parsed_preserves_format_and_seconds'
+    s.set_clipboard('<t:1780000000:F>')
+    s.keys('ctrl+shift+h')
+    wait_for('adjust overlay', s.window_visible)
+    wait_for('imported F', lambda: selected_code(s) == '<t:1780000000:F>')
+    open_picker(s, '.edit-result')
+    assert s.evaluate('return document.querySelector("#manual-time").value') == '20:26:40'
+    set_picker_fields(s, '2026-05-28', '20:27:40')
+    click_control(s, '.manual-apply')
+    wait_for('adjusted F', lambda: selected_code(s) == '<t:1780000060:F>')
+    s.capture('picker-03-adjusted')
+    s.passed('adjust_parsed_preserves_format_and_seconds', epoch=1780000060)
+
+    s.phase = 'cancel_preserves_result'
+    open_picker(s, '.edit-result')
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    click_control(s, '.manual-cancel')
+    wait_for('cancelled draft', lambda: selected_code(s) == '<t:1780000060:F>')
+    s.passed('cancel_preserves_result')
+    run_picker_extended(s)
+    run_picker_races(s)
+    run_picker_initialization_races(s)
+
+
+def assert_manual(s, code='<t:1781101800:f>'):
+    wait_for('authoritative manual result', lambda: selected_code(s) == code)
+    assert s.evaluate('return document.querySelector(".manual-label")?.textContent') == 'Manual'
+    assert not s.evaluate('return document.querySelector(".status-line")?.textContent')
+    assert not s.evaluate('return !!document.querySelector(".verifying-tab.visible")')
+    wait_for('manual result focus', lambda: s.evaluate('return document.activeElement?.classList.contains("selected")'))
+
+
+def run_picker_extended(s):
+    s.phase = 'keyboard_focus_and_validation'
+    open_picker(s, '.edit-result')
+    original_date = s.evaluate('return document.querySelector("#manual-date").value')
+    clipboard = s.clipboard()
+    s.keys('Up')
+    wait_for('native date arrow edit', lambda: s.evaluate('return document.querySelector("#manual-date").value') != original_date)
+    s.keys('Tab')
+    assert s.evaluate('return document.activeElement.closest(".manual-editor") !== null')
+    assert s.clipboard() == clipboard and s.window_visible()
+    set_picker_fields(s, '', '')
+    assert s.evaluate('return document.querySelector(".manual-apply").disabled')
+    s.capture('picker-04-invalid')
+    s.keys('Return')
+    assert s.evaluate('return !!document.querySelector("#manual-date")') and s.clipboard() == clipboard
+    s.keys('Escape')
+    wait_for('cancel focus opener', lambda: s.evaluate('return document.activeElement?.classList.contains("edit-result")'))
+    assert selected_code(s) == '<t:1780000060:F>'
+    open_picker(s, '.edit-result')
+    set_picker_fields(s, '2026-05-28', '20:27:40')
+    s.evaluate('document.querySelector("#manual-time").focus(); return true')
+    s.keys('Return')
+    wait_for('apply focus selected result', lambda: s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    assert s.clipboard() == clipboard and s.window_visible()
+    s.keys('Down', 'Up')
+    wait_for('arrow selection retains focused row', lambda: selected_code(s) == '<t:1780000060:F>' and s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    # Shift-Tab selects earlier formats, then exits the first row to the preceding action.
+    s.keys(*(['shift+Tab'] * 6))
+    wait_for('format group can exit to Use text', lambda: s.evaluate('return document.activeElement?.textContent') == 'Use text')
+    s.keys('Tab')
+    wait_for('Tab re-enters selected result', lambda: selected_code(s) == '<t:1780000060:d>' and s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    s.keys(*(['Down'] * 5))
+    wait_for('format restored after focus traversal', lambda: selected_code(s) == '<t:1780000060:F>')
+    s.passed('keyboard_focus_and_validation', nativeKeys=['Up', 'Down', 'Tab', 'Shift+Tab', 'Return', 'Escape'])
+
+    s.phase = 'return_to_text_and_reopen'
+    s.evaluate('document.querySelector("textarea").focus(); return true')
+    s.keys('Tab', 'Tab', 'Tab')
+    wait_for('Use text reachable by Tab', lambda: s.evaluate('return document.activeElement?.textContent') == 'Use text')
+    s.keys('Return')
+    wait_for('unchanged text reparsed', lambda: selected_code(s) == '<t:1780000000:F>')
+    assert not s.evaluate('return !!document.querySelector(".manual-label")')
+    open_picker(s)
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    click_control(s, '.manual-apply')
+    fill_fixture(s, '<t:1780003600:T>')
+    wait_for('normal edit removes manual', lambda: selected_code(s) == '<t:1780003600:T>')
+    assert not s.evaluate('return !!document.querySelector(".manual-label")')
+    open_picker(s)
+    set_picker_fields(s, '2029-01-01', '10:00:00')
+    # First Escape discards the draft; the second dismisses the overlay.
+    s.keys('Escape')
+    wait_for('draft cancelled before close', lambda: not s.evaluate('return !!document.querySelector("#manual-date")'))
+    s.keys('Escape')
+    wait_for('draft overlay closed', lambda: not s.window_visible())
+    s.set_clipboard('<t:1780000000:F>')
+    s.keys('ctrl+shift+h')
+    wait_for('reopened imported result', lambda: selected_code(s) == '<t:1780000000:F>')
+    open_picker(s, '.edit-result')
+    assert s.evaluate('return document.querySelector("#manual-date").value') == '2026-05-28'
+    s.keys('Escape')
+    open_picker(s)
+    set_picker_fields(s, '2029-01-01', '10:00:00')
+    s.invoke('plugin:window|hide', {'label': 'main'})
+    wait_for('native hide with draft still open', lambda: not s.window_visible())
+    s.set_clipboard('<t:1780003600:T>')
+    s.keys('ctrl+shift+h')
+    wait_for('hotkey discards hidden draft', lambda: selected_code(s) == '<t:1780003600:T>')
+    assert not s.evaluate('return !!document.querySelector("#manual-date")')
+    open_picker(s, '.edit-result')
+    assert s.evaluate('return document.querySelector("#manual-time").value') == '21:26:40'
+    s.keys('Escape')
+    s.passed('return_to_text_and_reopen')
+
+    s.phase = 'range_to_single_apply_and_cancel'
+    fill_fixture(s, '<t:1780000000:t> - <t:1780003600:t>')
+    wait_for('range ready', lambda: s.evaluate('return document.querySelectorAll(".row").length') == 5)
+    original = s.evaluate('return Array.from(document.querySelectorAll(".format-code"), x=>x.textContent)')
+    open_picker(s)
+    assert s.evaluate('return document.querySelector("#manual-time").value.endsWith(":00")')
+    s.keys('Escape')
+    wait_for('range restored', lambda: s.evaluate('return document.querySelectorAll(".row").length') == 5)
+    assert s.evaluate('return Array.from(document.querySelectorAll(".format-code"), x=>x.textContent)') == original
+    open_picker(s)
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    click_control(s, '.manual-apply')
+    assert_manual(s)
+    assert s.evaluate('return document.querySelectorAll(".row").length') == 7
+    s.capture('picker-05-range-to-single')
+    s.passed('range_to_single_apply_and_cancel')
+    s.phase = 'focused_row_space_copies_its_format'
+    s.evaluate('document.querySelector(".row").focus(); return true')
+    s.keys('space')
+    wait_for('focused row own code copied', lambda: s.clipboard() == '<t:1781101800:d>')
+    wait_for('focused row copy hide', lambda: not s.window_visible())
+    s.set_clipboard('<t:1780000000:F>')
+    s.keys('ctrl+shift+h')
+    wait_for('reopen after focused row copy', lambda: selected_code(s) == '<t:1780000000:F>')
+    s.passed('focused_row_space_copies_its_format')
+
+
+def install_pending_fixture(s, command='parse_time_with_local_service', verification=False):
+    s.evaluate('''
+      const originalFetch=window.fetch;
+      const responseMethods=[];
+      const fixture={calls:0,held:false,released:false,verification:arguments[1]};
+      const target=window.__TAURI_INTERNALS__.convertFileSrc(arguments[0],'ipc');
+      const parseTarget=window.__TAURI_INTERNALS__.convertFileSrc('parse_time_with_local_service','ipc');
+      const hold = value => new Promise(resolve => {
+        fixture.held=true;
+        fixture.release=()=>{fixture.released=true; resolve(value);};
+      });
+      // Tauri defines invoke as nonwritable/nonconfigurable. Hold its real IPC
+      // JSON completion before runCallback resolves the actual invoke promise.
+      const wrappedFetch=async function(...args) {
+        const url=String(args[0]);
+        if(url===parseTarget) fixture.calls++;
+        const response=await originalFetch.apply(this,args);
+        if(url===target || (fixture.verification && url.endsWith('/parse/verify'))) {
+          const originalJson=response.json;
+          const json=originalJson.bind(response);
+          responseMethods.push([response,originalJson]);
+          response.json=async()=>{
+            const value=await json();
+            if(url===target) {
+              fixture.generation=value?.body?.generationId;
+              fixture.nativeOk=value?.ok;
+              if(fixture.verification) {
+                // Only the branch precondition changes: epoch/generation/verifier stay real.
+                return {...value,body:{...value.body,method:'agent+plan'}};
+              }
+            } else {
+              fixture.verifierDecision=value.decision;
+            }
+            return hold(value);
+          };
+        }
+        return response;
+      };
+      window.fetch=wrappedFetch;
+      if(window.fetch!==wrappedFetch) throw new Error('Could not install actual IPC completion fixture');
+      fixture.restore=()=>{window.fetch=originalFetch;for(const [response,json] of responseMethods) response.json=json;};
+      window.__pickerTiming=fixture;
+      return true;
+    ''', command, verification)
+
+
+def release_fixture(s):
+    s.evaluate('window.__pickerTiming.release(); return true')
+    wait_for('real response released', lambda: s.evaluate('return window.__pickerTiming.released'))
+    # Two render frames drain promise continuations and React's queued work.
+    s.wd('POST', '/execute/async', {'script': 'const done=arguments[0]; requestAnimationFrame(()=>requestAnimationFrame(()=>done(true)));', 'args': []})
+
+
+def restore_fixture(s):
+    already_failing = sys.exc_info()[0] is not None
+    try:
+        s.evaluate('window.__pickerTiming?.restore(); window.__pickerTiming?.release?.(); delete window.__pickerTiming; return true')
+    except Exception as error:
+        s.metadata['timingFixtureCleanupError'] = s.sanitize(str(error))
+        if not already_failing:
+            raise
+
+
+def run_picker_races(s):
+    for name, text, verification in (
+        ('late_real_parse_response', 'June 12, 2026 at 4 PM', False),
+        ('late_real_parse_rejection', 'this phrase has no date or time whatsoever', False),
+        ('late_real_verification', 'June 13, 2026 at 4 PM', True),
+    ):
+        s.phase = name
+        install_pending_fixture(s, verification=verification)
+        try:
+            fill_fixture(s, text)
+            wait_for('real completion held', lambda: s.evaluate('return window.__pickerTiming.held'), READINESS)
+            generation = s.evaluate('return window.__pickerTiming.generation')
+            if name == 'late_real_parse_rejection':
+                assert s.evaluate('return window.__pickerTiming.nativeOk') is False, 'Expected actual API rejection'
+            if verification:
+                assert s.evaluate('return window.__pickerTiming.verifierDecision') in ('accept', 'reject', 'uncertain')
+            open_picker(s)
+            set_picker_fields(s, '2026-06-10', '14:30:00')
+            click_control(s, '.manual-apply')
+            expected = selected_code(s)
+            assert expected.startswith('<t:1781101800:')
+            assert_manual(s, expected)
+            release_fixture(s)
+            assert_manual(s, expected)
+            assert s.evaluate('return document.querySelector("textarea").value') == text
+            s.capture('picker-' + name)
+            s.keys('Return')
+            wait_for('race manual copy', lambda: s.clipboard() == expected)
+            wait_for('race copy hidden', lambda: not s.window_visible())
+            outcomes = database_rows(s)[1]
+            assert not any(row['generation_id'] == generation and row['action'] == 'copied' for row in outcomes), outcomes
+            s.passed(name, generationId=generation, controlledVerifierBranch=verification)
+        finally:
+            restore_fixture(s)
+        s.set_clipboard('fixture')
+        s.keys('ctrl+shift+h')
+        wait_for('race reopen', s.window_visible)
+        wait_for('race imported fixture', lambda: s.evaluate('return document.querySelector("textarea")?.value') == 'fixture')
+
+    s.phase = 'cancel_pending_resumes_finished_does_not_reparse'
+    install_pending_fixture(s)
+    try:
+        fill_fixture(s, 'June 14, 2026 at 4 PM')
+        wait_for('pending real response', lambda: s.evaluate('return window.__pickerTiming.held'), READINESS)
+        open_picker(s)
+        # Restore dispatch before resuming. The first real response stays held.
+        s.evaluate('window.__pickerTiming.restore(); return true')
+        s.keys('Escape')
+        wait_for('cancel resumed text', lambda: (selected_code(s) or '').startswith('<t:1781452800:'), READINESS)
+        release_fixture(s)
+        install_pending_fixture(s)
+        open_picker(s, '.edit-result')
+        s.keys('Escape')
+        deadline = time.monotonic() + 0.7  # Observe beyond the production 300ms parse debounce.
+        while time.monotonic() < deadline:
+            assert s.evaluate('return window.__pickerTiming.calls') == 0, 'Finished cancel restarted parser'
+        assert (selected_code(s) or '').startswith('<t:1781452800:')
+        s.passed('cancel_pending_resumes_finished_does_not_reparse')
+    finally:
+        restore_fixture(s)
+    assert sum(row['model_calls'] or 0 for row in database_rows(s)[0]) == 0
+
+
+def run_picker_initialization_races(s):
+    for command in ('init_stats_db', 'get_settings', 'plugin:clipboard-manager|read_text'):
+        s.phase = 'initialization ownership: ' + command
+        s.invoke('plugin:window|hide', {'label': 'main'})
+        wait_for('hide for initialization race', lambda: not s.window_visible())
+        install_pending_fixture(s, command=command)
+        try:
+            s.set_clipboard('<t:1780000000:F>')
+            s.keys('ctrl+shift+h')
+            wait_for('initialization real response held', lambda: s.evaluate('return window.__pickerTiming.held'))
+            open_picker(s)
+            set_picker_fields(s, '2026-06-10', '14:30:00')
+            click_control(s, '.manual-apply')
+            assert_manual(s)
+            release_fixture(s)
+            assert_manual(s)
+            assert s.evaluate('return document.activeElement?.classList.contains("selected")')
+            assert s.evaluate('return document.querySelector("textarea").value') == ''
+            s.passed('initialization_revision_' + command)
+        finally:
+            restore_fixture(s)
+    for command in ('get_format_stats', 'get_time_parser_config'):
+        s.phase = 'parse setup ownership: ' + command
+        install_pending_fixture(s, command=command)
+        try:
+            fill_fixture(s, 'June 15, 2026 at 4 PM')
+            wait_for('parse setup real response held', lambda: s.evaluate('return window.__pickerTiming.held'))
+            open_picker(s)
+            set_picker_fields(s, '2026-06-10', '14:30:00')
+            click_control(s, '.manual-apply')
+            assert_manual(s)
+            release_fixture(s)
+            assert_manual(s)
+            assert s.evaluate('return window.__pickerTiming.calls') == 0
+            s.passed('parse_setup_revision_' + command)
+        finally:
+            restore_fixture(s)
+
+
+def open_fresh_picker(s):
+    s.set_clipboard('fixture')
+    s.keys('ctrl+shift+h')
+    wait_for('fresh fixture overlay', s.window_visible)
+    wait_for('fresh imported fixture', lambda: s.evaluate('return document.querySelector("textarea")?.value') == 'fixture')
+    fill_fixture(s, '')
+    open_picker(s)
+
+
+def run_picker_no_api(s):
+    s.phase = 'manual_without_api'
+    open_fresh_picker(s)
+    assert not s.invoke('get_time_parser_config')['available']
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    click_control(s, '.manual-apply')
+    assert_manual(s)
+    s.capture('picker-no-api')
+    s.keys('Return')
+    wait_for('no API manual copied', lambda: s.clipboard() == '<t:1781101800:f>')
+    s.passed('manual_without_api')
+
+
+def run_picker_dst(s):
+    s.phase = 'DST_gap_and_fold'
+    open_fresh_picker(s)
+    assert s.evaluate('return Intl.DateTimeFormat().resolvedOptions().timeZone') == 'America/New_York'
+    set_picker_fields(s, '2026-03-08', '02:30:00')
+    wait_for('gap rejected', lambda: s.evaluate('return document.querySelector("#manual-validation").textContent.includes("does not exist")'))
+    assert s.evaluate('return document.querySelector(".manual-apply").disabled')
+    s.capture('picker-dst-gap')
+    set_picker_fields(s, '2026-11-01', '01:30:00')
+    wait_for('two offset choices', lambda: s.evaluate('return document.querySelectorAll("[name=manual-offset]").length') == 2)
+    assert s.evaluate('return document.querySelector(".manual-apply").disabled')
+    click_control(s, '[name=manual-offset][value="-05:00"]')
+    click_control(s, '.manual-apply')
+    assert_manual(s, '<t:1793514600:f>')
+    for epoch, offset in ((1793511000, '-04:00'), (1793514600, '-05:00')):
+        fill_fixture(s, f'<t:{epoch}:F>')
+        wait_for('existing fold instant', lambda: selected_code(s) == f'<t:{epoch}:F>')
+        open_picker(s, '.edit-result')
+        assert s.evaluate('return document.querySelector("[name=manual-offset]:checked")?.value') == offset
+        s.capture('picker-dst-existing-' + offset.replace(':', ''))
+        click_control(s, '.manual-apply')
+        assert_manual(s, f'<t:{epoch}:F>')
+        open_picker(s, '.edit-result')
+        set_picker_fields(s, '2026-11-01', '01:31:00')
+        assert not s.evaluate('return !!document.querySelector("[name=manual-offset]:checked")')
+        assert s.evaluate('return document.querySelector(".manual-apply").disabled')
+        s.keys('Escape')
+    s.passed('DST_gap_and_fold', unchangedEpochs=[1793511000, 1793514600], editedOffsetCleared=True)
+
+
+def run_picker_short_desktop(s):
+    s.phase = 'short_desktop_native_popup_and_scroll'
+    open_fresh_picker(s)
+    window_id = s.command('xdotool', 'search', '--onlyvisible', '--name', '^HammerOverlay$').splitlines()[0]
+    s.command('xdotool', 'windowmove', window_id, '800', '390')
+    set_picker_fields(s, '', '')  # Validation resize must bring the controls back on screen.
+    s.settled_geometry()
+    geometry = s.command('xdotool', 'getwindowgeometry', '--shell', window_id)
+    values = dict(line.split('=', 1) for line in geometry.splitlines() if '=' in line)
+    assert int(values['WIDTH']) == 480 and int(values['Y']) + int(values['HEIGHT']) <= 600, geometry
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    # Click the native calendar indicator using OS events, then exercise popup navigation.
+    box = s.evaluate('const r=document.querySelector("#manual-date").getBoundingClientRect(); return [r.right-12,r.y+r.height/2]')
+    s.command('xdotool', 'mousemove', '--window', window_id, str(round(box[0])), str(round(box[1])))
+    s.command('xdotool', 'click', '1')
+    s.capture('picker-short-native-calendar')
+    before = s.clipboard()
+    s.keys('Right', 'Down')
+    s.capture('picker-short-calendar-navigation')
+    s.keys('Escape')
+    assert s.window_visible() and s.clipboard() == before
+    assert s.evaluate('return !!document.querySelector("#manual-date")'), 'Popup Escape dismissed the inline editor'
+    set_picker_fields(s, '2026-06-10', '14:30:00')
+    click_control(s, '.manual-apply')
+    assert_manual(s)
+    s.capture('picker-short-results')
+    assert s.evaluate('return document.activeElement?.classList.contains("selected")')
+    s.keys('Down', 'Down')
+    wait_for('last format focused', lambda: selected_code(s) == '<t:1781101800:R>' and s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    assert s.evaluate('const r=document.activeElement.getBoundingClientRect(); return r.top>=0 && r.bottom<=innerHeight'), 'Focused last result is clipped'
+    s.capture('picker-short-last-result')
+    s.keys('Down')
+    s.capture('picker-short-keyboard-results')
+    assert s.window_visible() and s.clipboard() == before
+    s.passed('short_desktop_native_popup_and_scroll', desktop=[1280,600])
 
 
 def run_model(session):
@@ -692,6 +1214,41 @@ def write_results(session, exit_code):
     (session.run_dir / 'summary.md').write_text(session.sanitize('\n'.join(lines)) + '\n')
 
 
+def run_picker_variants(parent):
+    failures = []
+    parent.metadata['pickerFixtures'] = []
+    for name, options, journey in (
+        ('api-unavailable', {'disable_api': True}, run_picker_no_api),
+        ('new-york', {'time_zone': 'America/New_York'}, run_picker_dst),
+        ('short-desktop', {'screen_size': (1280, 600)}, run_picker_short_desktop),
+    ):
+        fixture = DesktopSession(run_dir=parent.run_dir / name, mode=parent.mode, **options)
+        fixture.executable = parent.executable
+        fixture.metadata.update({key: parent.metadata[key] for key in
+                                 ('commit', 'dirty', 'suite', 'executable', 'executableSha256', 'toolVersions')})
+        fixture.metadata.update(timeZone=fixture.time_zone, screenSize=fixture.screen_size, apiDisabled=fixture.disable_api)
+        exit_code, failure = 1, None
+        try:
+            with fixture:
+                journey(fixture)
+            exit_code = 0
+        except Exception as error:
+            failure = error
+            exit_code = 2 if isinstance(error, Blocked) else 1
+        finally:
+            fixture.finalize(failure)
+            if fixture.metadata.get('captureError') or fixture.cleanup_errors:
+                exit_code = 1
+                fixture.metadata.setdefault('error', fixture.metadata.get('captureError') or '; '.join(fixture.cleanup_errors))
+            write_results(fixture, exit_code)
+        parent.metadata['pickerFixtures'].append({'fixture': name, 'exitCode': exit_code, 'runDirectory': str(fixture.run_dir)})
+        if exit_code:
+            failures.append(f'{name}: {fixture.metadata.get("error", "failed")}')
+    if failures:
+        failure_type = Blocked if all(row['exitCode'] in (0, 2) for row in parent.metadata['pickerFixtures']) else RuntimeError
+        raise failure_type('Picker fixture failure: ' + '; '.join(failures))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', choices=('offline', 'model'), default='offline')
@@ -710,8 +1267,6 @@ def main():
                                     dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)), suite=args.suite)
             if args.repeat < 1 or (args.repeat > 1 and args.mode != 'offline'):
                 raise Blocked('Repeat must be positive and is offline-only')
-            if args.suite != 'baseline':
-                raise Blocked('Only the baseline suite is implemented; picker/all arrive with the picker')
             if args.mode == 'model' and not (session.env.get('OPENAI_API_KEY') or (session.env.get('TEMPORAL_FEATURE_PLAN_IR', '').lower() in ('true', '1') and session.env.get('TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL') and session.env.get('TEMPORAL_PLAN_IR_ENDPOINT_MODEL'))):
                 session.metadata['modelCoverage'] = 'blocked: missing provider configuration'
                 raise Blocked('Explicit model mode requires configured OpenAI credentials or an enabled Plan-IR endpoint and model identity')
@@ -724,9 +1279,14 @@ def main():
                 shutil.copyfile(ROOT / 'artifacts' / 'desktop' / f'{stamp}-01' / 'prerequisites.log', run_dir / 'prerequisites.log')
             session.metadata['toolVersions'] = (run_dir / 'prerequisites.log').read_text()
             with session:
-                run_baseline(session)
+                if args.suite in ('baseline', 'all'):
+                    run_baseline(session)
+                if args.suite in ('picker', 'all'):
+                    run_picker(session)
                 if args.mode == 'model':
                     run_model(session)
+            if args.suite in ('picker', 'all'):
+                run_picker_variants(session)
             exit_code = 0
         except Exception as error:
             failure = error

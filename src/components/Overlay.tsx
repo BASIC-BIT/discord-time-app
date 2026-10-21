@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { getCurrentWindow, LogicalSize, currentMonitor, PhysicalPosition } from '@tauri-apps/api/window';
+import { ManualDateTimePicker } from './ManualDateTimePicker';
+import { seedManualDraft, type ManualDraft, type InstantChoice } from '../lib/manualDateTime';
 import { Row } from './Row';
 import { RangeRow } from './RangeRow';
 import { formatDiscordRange, formats, getFormatLabel, getRangeLabel, rangeFormats } from '../lib/formats';
@@ -125,6 +127,16 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [discordReferenceRouting, setDiscordReferenceRouting] = useState(true);
   const [discordReferenceShadow, setDiscordReferenceShadow] = useState(false);
   
+  const [manual, setManual] = useState(false);
+  const [draft, setDraft] = useState<ManualDraft | null>(null);
+  const [parseRequest, setParseRequest] = useState(0);
+  const revisionRef = useRef(0);
+  const ownershipRef = useRef<'text' | 'editor' | 'manual'>('text');
+  const resumeTextRef = useRef(false);
+  const editorOpenerRef = useRef<HTMLElement | null>(null);
+  const restoreOpenerRef = useRef(false);
+  const focusResultRef = useRef(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -139,13 +151,23 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     progressTimeoutsRef.current = [];
   };
 
-  const startBackendProgress = (hasLocalEstimate: boolean) => {
+  const invalidateWork = () => {
+    revisionRef.current += 1;
+    if (debounceTimeoutRef.current !== null) window.clearTimeout(debounceTimeoutRef.current);
+    debounceTimeoutRef.current = null;
+    abortControllerRef.current?.abort();
+    verificationAbortControllerRef.current?.abort();
+    clearProgressTimers();
+    return revisionRef.current;
+  };
+
+  const startBackendProgress = (hasLocalEstimate: boolean, revision: number) => {
     clearProgressTimers();
     setParseProgressMessage(hasLocalEstimate ? 'Checking' : 'APIing');
     progressTimeoutsRef.current = [
-      window.setTimeout(() => setParseProgressMessage('Mathing'), 1500),
-      window.setTimeout(() => setParseProgressMessage('Picking'), 3600),
-      window.setTimeout(() => setParseProgressMessage('Still working safely'), 5000),
+      window.setTimeout(() => { if (revisionRef.current === revision) setParseProgressMessage('Mathing'); }, 1500),
+      window.setTimeout(() => { if (revisionRef.current === revision) setParseProgressMessage('Picking'); }, 3600),
+      window.setTimeout(() => { if (revisionRef.current === revision) setParseProgressMessage('Still working safely'); }, 5000),
     ];
   };
 
@@ -187,13 +209,24 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
   // Initialize and load clipboard content. Re-run when Rust reports a fresh overlay open.
   useEffect(() => {
+    const revision = invalidateWork();
+    ownershipRef.current = 'text';
+    setDraft(null);
+    setManual(false);
+    setInputText('');
+    setIsClipboardText(false);
+    setParseRequest(value => value + 1);
+    let focusTimer: number | undefined;
+    const active = () => revisionRef.current === revision;
     const initialize = async () => {
       try {
         // Initialize stats database
         await initStats();
+        if (!active()) return;
 
         try {
           const settings = await invoke<AppSettings>('get_settings');
+          if (!active()) return;
           setDeterministicPreflight(settings.deterministic_preflight);
           setDiscordReferenceRouting(settings.discord_reference_routing);
           setDiscordReferenceShadow(settings.discord_reference_shadow);
@@ -210,22 +243,23 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           clipboardText = '';
         }
         
-        if (clipboardText) {
-          setInputText(clipboardText);
-          setIsClipboardText(true);
-        }
+        if (!active()) return;
+        setInputText(clipboardText);
+        setIsClipboardText(Boolean(clipboardText));
+        setParseRequest(value => value + 1);
         
         // Focus the window
-        const window = getCurrentWindow();
+        const appWindow = getCurrentWindow();
         try {
-          await window.setFocus();
+          await appWindow.setFocus();
         } catch (error) {
           console.error('Error focusing window:', error);
         }
         
         // Then focus the textarea after a short delay
-        setTimeout(() => {
-          if (textareaRef.current) {
+        if (!active()) return;
+        focusTimer = window.setTimeout(() => {
+          if (active() && textareaRef.current) {
             textareaRef.current.focus();
             if (clipboardText) {
               textareaRef.current.select();
@@ -239,11 +273,17 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       }
     };
     
-    initialize();
+    void initialize();
+    return () => {
+      window.clearTimeout(focusTimer);
+      invalidateWork();
+    };
   }, [openToken]);
 
   // Parse input text when it changes (with debounce)
   useEffect(() => {
+    if (ownershipRef.current !== 'text') return;
+    const revision = revisionRef.current;
     // Clear previous debounce timeout
     if (debounceTimeoutRef.current) {
       clearTimeout(debounceTimeoutRef.current);
@@ -336,7 +376,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setParseProgressMessage('Settling');
         const debounceMs = 300;
         debounceTimeoutRef.current = window.setTimeout(() => {
-          parseInput(inputText.trim(), isClipboardText);
+          if (revisionRef.current === revision) void parseInput(inputText.trim(), isClipboardText, revision);
         }, debounceMs);
       }
     } else {
@@ -353,30 +393,67 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       selectionTouchedRef.current = false;
       setLoading(false);
     }
-  }, [inputText, discordReferenceRouting, discordReferenceShadow]);
+  }, [inputText, discordReferenceRouting, discordReferenceShadow, parseRequest]);
 
-  // Auto-resize window height based on content (only for main window)
+  // Observe editor validation as well as result changes, and fit the physical desktop.
   useEffect(() => {
-    const window = getCurrentWindow();
-    // Only resize if this is the main window
-    if (window.label !== 'main') return;
-    
-    const resizeWindow = async () => {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 50)); // Wait for DOM update
-        const contentHeight = document.body.scrollHeight;
-        await window.setSize(new LogicalSize(480, Math.max(contentHeight, 100)));
-      } catch (error) {
-        console.error('Error resizing window:', error);
-      }
+    const appWindow = getCurrentWindow();
+    const element = overlayRef.current;
+    if (appWindow.label !== 'main' || !element) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const resize = () => {
+      window.clearTimeout(timer);
+      const revision = revisionRef.current;
+      timer = window.setTimeout(async () => {
+        const active = () => !disposed && revisionRef.current === revision;
+        try {
+          const monitor = await currentMonitor();
+          if (!active()) return;
+          const scale = monitor?.scaleFactor ?? 1;
+          const maxHeight = monitor ? monitor.size.height / scale - 32 : window.screen.availHeight - 32;
+          element.style.maxHeight = `${maxHeight - 2}px`;
+          const height = Math.min(maxHeight, Math.max(100, element.scrollHeight + 2));
+          await appWindow.setSize(new LogicalSize(480, height));
+          if (!active() || !monitor) return;
+          const position = await appWindow.outerPosition();
+          if (!active()) return;
+          const x = Math.max(monitor.position.x, Math.min(position.x, monitor.position.x + monitor.size.width - 480 * scale));
+          const y = Math.max(monitor.position.y, Math.min(position.y, monitor.position.y + monitor.size.height - height * scale));
+          if (x !== position.x || y !== position.y) await appWindow.setPosition(new PhysicalPosition(x, y));
+        } catch (resizeError) {
+          if (active()) console.error('Error resizing window:', resizeError);
+        }
+      }, 0);
     };
-    
-    resizeWindow();
-  }, [epoch, range, selectedIndex, loading, error, clarificationQuestion, clarificationAlternatives]); // Resize when content changes
+    const observer = new ResizeObserver(resize);
+    for (const child of element.children) observer.observe(child);
+    resize();
+    return () => { disposed = true; window.clearTimeout(timer); observer.disconnect(); };
+  }, [draft !== null, epoch, range, loading, error, clarificationQuestion, clarificationAlternatives]);
+
+  useEffect(() => {
+    if (draft === null && restoreOpenerRef.current) {
+      restoreOpenerRef.current = false;
+      const selector = editorOpenerRef.current?.classList.contains('edit-result') ? '.edit-result' : '.calendar-button';
+      overlayRef.current?.querySelector<HTMLElement>(selector)?.focus();
+    }
+    if (draft === null && focusResultRef.current) {
+      focusResultRef.current = false;
+      overlayRef.current?.querySelector<HTMLElement>('.row.selected')?.focus();
+    }
+  }, [draft, epoch]);
+
+  useEffect(() => {
+    if (document.activeElement?.classList.contains('row')) {
+      overlayRef.current?.querySelector<HTMLElement>('.row.selected')?.focus();
+    }
+  }, [selectedIndex]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      invalidateWork();
       if (debounceTimeoutRef.current) {
         clearTimeout(debounceTimeoutRef.current);
       }
@@ -390,10 +467,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     };
   }, []);
 
-  const parseInput = async (text: string, isFromClipboard: boolean = false) => {
+  const parseInput = async (text: string, isFromClipboard: boolean, revision: number) => {
+    if (revisionRef.current !== revision) return;
     // Create new abort controller for this request
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    const active = () => revisionRef.current === revision && !abortController.signal.aborted;
     
     setError(null);
     setRange(null);
@@ -406,7 +485,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     
     try {
       // Check if request was already cancelled
-      if (abortController.signal.aborted) {
+      if (!active()) {
         return;
       }
 
@@ -415,11 +494,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       const timezone = getUserTimezone();
       
       // Check again if request was cancelled
-      if (abortController.signal.aborted) {
+      if (!active()) {
         return;
       }
       
       const apiClient = await createAPIClient();
+      if (!active()) return;
       const referenceRouting = classifyDiscordTimestampInput(text);
       const hasDiscordReference = referenceRouting.references.length > 0 || referenceRouting.malformedCount > 0;
       const fallbackEpoch = apiClient || isFromClipboard || hasDiscordReference ? null : parseFallback(text);
@@ -437,7 +517,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       let apiError: Error | null = null;
       
       if (apiClient) {
-        startBackendProgress(displayedFallback);
+        startBackendProgress(displayedFallback, revision);
         try {
           result = await apiClient.parseTime(text, timezone, abortController.signal, {
             requestId: crypto.randomUUID(),
@@ -445,9 +525,11 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             discordReferenceRouting,
             discordReferenceShadow,
           });
+          if (!active()) return;
           setGenerationId(result.generationId);
           console.log("API Result: ", result);
         } catch (error) {
+          if (!active()) return;
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
@@ -463,7 +545,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       }
 
       // Check if request was cancelled after API call
-      if (abortController.signal.aborted) {
+      if (!active()) {
         return;
       }
       
@@ -487,7 +569,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setClarificationQuestion(null);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
-        void verifyDisplayedResult(apiClient, text, timezone, result);
+        void verifyDisplayedResult(apiClient, text, timezone, result, revision);
       } else {
         const hardParseRejection = apiError instanceof TimeParserAPIError && apiError.status === 400;
         if (displayedFallback && !hardParseRejection) {
@@ -511,6 +593,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         }
       }
     } catch (error) {
+      if (!active()) return;
       // Don't show errors for aborted requests
       if (error instanceof Error && error.name === 'AbortError') {
         console.log('Parsing request aborted');
@@ -521,7 +604,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       setError('Something went wrong. Please try again or check your internet connection.');
     } finally {
       // Only set loading to false if this request wasn't aborted
-      if (!abortController.signal.aborted) {
+      if (active()) {
         clearProgressTimers();
         setParseProgressMessage(null);
         setLoading(false);
@@ -529,18 +612,19 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     }
   };
 
-  const verifyDisplayedResult = async (apiClient: Awaited<ReturnType<typeof createAPIClient>>, text: string, timezone: string, result: ParseResponse) => {
-    if (!apiClient || result.method !== 'agent+plan' || result.kind === 'time_range') {
+  const verifyDisplayedResult = async (apiClient: Awaited<ReturnType<typeof createAPIClient>>, text: string, timezone: string, result: ParseResponse, revision: number) => {
+    if (revisionRef.current !== revision || !apiClient || result.method !== 'agent+plan' || result.kind === 'time_range') {
       return;
     }
 
     const verificationController = new AbortController();
     verificationAbortControllerRef.current = verificationController;
+    const active = () => revisionRef.current === revision && !verificationController.signal.aborted;
     setVerifying(true);
 
     try {
       const verification = await apiClient.verifyParse({ text, tz: timezone, ...result }, verificationController.signal);
-      if (verificationController.signal.aborted) {
+      if (!active()) {
         return;
       }
       if (verification.decision === 'uncertain' && verification.reasonCodes.includes('missing_openai_api_key')) {
@@ -559,12 +643,13 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       if (error instanceof Error && error.name === 'AbortError') {
         return;
       }
+      if (!active()) return;
       console.log('Post-display verification failed:', error);
     } finally {
       if (verificationAbortControllerRef.current === verificationController) {
         verificationAbortControllerRef.current = null;
       }
-      if (!verificationController.signal.aborted) {
+      if (active()) {
         setVerifying(false);
       }
     }
@@ -592,7 +677,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             : hasResolvedResult
               ? 'ready'
               : 'idle';
-  const footerHint = hasSelectableClarification
+  const footerHint = draft !== null ? 'Tab to move • Enter to use date/time • Esc to cancel' : hasSelectableClarification
     ? '←→/Tab or 1-9/0 to choose • Enter to use • Esc to close'
     : hasClarification
       ? 'Edit the expression to clarify • Esc to close'
@@ -631,20 +716,31 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setSelectedAlternativeIndex(0);
   };
 
-  const recordParserOutcome = async (action: 'copied' | 'dismissed') => {
+  const recordParserOutcome = async (action: 'copied' | 'dismissed', formatIndex = selectedIndex) => {
     if (generationId === null) {
       return;
     }
     try {
       const apiClient = await createAPIClient();
-      await apiClient?.recordOutcome({ generationId, action, selectedFormatIndex: selectedIndex });
+      await apiClient?.recordOutcome({ generationId, action, selectedFormatIndex: formatIndex });
     } catch (error) {
       console.log('Parser outcome logging failed:', error);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (draft !== null) {
+      if (e.key === 'Escape') { e.preventDefault(); cancelEditor(); }
+      return;
+    }
+    // Buttons retain native Enter/Space and Tab semantics.
+    if (e.target instanceof HTMLButtonElement && e.key !== 'Escape') return;
     const formatCount = range !== null ? rangeFormats.length : formats.length;
+    // Tab traverses formats, then leaves the group at either end; arrows still wrap.
+    const onResult = e.target instanceof HTMLElement && e.target.classList.contains('row');
+    if (e.key === 'Tab' && onResult && (
+      (e.shiftKey && selectedIndex === 0) || (!e.shiftKey && selectedIndex === formatCount - 1)
+    )) return;
 
     if (e.key === 'Escape') {
       void recordParserOutcome('dismissed');
@@ -682,26 +778,28 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       if (hasResolvedResult) {
         handleCopy();
       }
-    } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+    } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey && e.target instanceof HTMLElement && e.target.classList.contains('row'))) {
       e.preventDefault();
       selectionTouchedRef.current = true;
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : formatCount - 1));
-    } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+    } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey && e.target instanceof HTMLElement && e.target.classList.contains('row'))) {
       e.preventDefault();
       selectionTouchedRef.current = true;
       setSelectedIndex((prev) => (prev < formatCount - 1 ? prev + 1 : 0));
     }
   };
 
-  const handleCopy = async () => {
-    if (verifying) {
+  const handleCopy = async (formatIndex = selectedIndex) => {
+    const revision = revisionRef.current;
+    if (ownershipRef.current === 'editor' || verifying) {
       return;
     }
 
     if (range !== null) {
       try {
-        await writeText(formatDiscordRange(range, selectedIndex));
-        void recordParserOutcome('copied');
+        await writeText(formatDiscordRange(range, formatIndex));
+        if (revisionRef.current !== revision) return;
+        void recordParserOutcome('copied', formatIndex);
         onClose();
       } catch (error) {
         console.error('Error copying range:', error);
@@ -711,10 +809,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
     if (epoch !== null) {
       try {
-        const discordCode = `<t:${epoch}${formats[selectedIndex].code}>`;
+        const discordCode = `<t:${epoch}${formats[formatIndex].code}>`;
         await writeText(discordCode);
-        await incrementFormatUsage(selectedIndex);
-        void recordParserOutcome('copied');
+        if (revisionRef.current !== revision) return;
+        await incrementFormatUsage(formatIndex);
+        if (revisionRef.current !== revision) return;
+        void recordParserOutcome('copied', formatIndex);
         onClose();
       } catch (error) {
         console.error('Error copying:', error);
@@ -728,6 +828,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    invalidateWork();
+    ownershipRef.current = 'text';
+    setManual(false);
     const newValue = e.target.value;
     
     // A real edit ends clipboard ownership; the browser already applied the edit.
@@ -741,28 +844,92 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setInputText(newValue);
   };
 
+  const openEditor = (opener: HTMLElement) => {
+    editorOpenerRef.current = opener;
+    resumeTextRef.current = ownershipRef.current === 'text' && (loading || verifying);
+    invalidateWork();
+    ownershipRef.current = 'editor';
+    setLoading(false);
+    setVerifying(false);
+    setParseProgressMessage(null);
+    setDraft(seedManualDraft({ epochSeconds: epoch, now: new Date(), timeZone: getUserTimezone() }));
+  };
+
+  const cancelEditor = () => {
+    invalidateWork();
+    ownershipRef.current = manual ? 'manual' : 'text';
+    setDraft(null);
+    restoreOpenerRef.current = true;
+    if (resumeTextRef.current) setParseRequest(value => value + 1);
+    resumeTextRef.current = false;
+  };
+
+  const applyManual = (choice: InstantChoice) => {
+    invalidateWork();
+    ownershipRef.current = 'manual';
+    setManual(true);
+    if (epoch === null) setSelectedIndex(formatIndexForCode(':f'));
+    setEpoch(choice.epochSeconds);
+    setRange(null);
+    setGenerationId(null);
+    setConfidence(1);
+    setError(null);
+    setClarificationQuestion(null);
+    setClarificationAlternatives([]);
+    setLoading(false);
+    setVerifying(false);
+    setParseProgressMessage(null);
+    selectionTouchedRef.current = true;
+    focusResultRef.current = true;
+    resumeTextRef.current = false;
+    setDraft(null);
+  };
+
+  const useText = () => {
+    invalidateWork();
+    ownershipRef.current = 'text';
+    setManual(false);
+    setParseRequest(value => value + 1);
+    textareaRef.current?.focus();
+  };
+
   return (
-    <div className={`overlay ${overlayTone}`} onKeyDown={handleKeyDown} tabIndex={-1}>
+    <div ref={overlayRef} className={`overlay ${overlayTone}`} onKeyDown={handleKeyDown} tabIndex={-1}>
       <div className="input-section">
+        <div className="input-controls">
         <textarea
           ref={textareaRef}
+          disabled={draft !== null}
+          aria-label="Time expression"
           value={inputText}
           onChange={handleInputChange}
           placeholder="Enter date/time (e.g., 'tomorrow at 2pm', 'next Friday')"
           className="input-textarea"
           rows={2}
         />
-        {range !== null && !hasClarification && (
+        <button className="calendar-button" type="button" aria-label="Choose date and time"
+          aria-expanded={draft !== null} aria-controls="manual-picker" disabled={draft !== null}
+          onClick={event => openEditor(event.currentTarget)}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 11h18M7 15h3M14 15h3"/></svg>
+        </button>
+        </div>
+        {draft !== null && <div id="manual-picker"><ManualDateTimePicker initialDraft={draft} onApply={applyManual} onCancel={cancelEditor} /></div>}
+        {range !== null && draft === null && !hasClarification && (
           <div className="found-time-card" aria-live="polite">
             <div className="found-time-value">{getRangeLabel(range, selectedIndex)}</div>
           </div>
         )}
-        {epoch !== null && range === null && !hasClarification && (
-          <div className="found-time-card" aria-live="polite">
-            <div className="found-time-value">{getFormatLabel(epoch, 5)}</div>
+        {epoch !== null && range === null && draft === null && !hasClarification && (
+          <div className="result-heading">
+            <button type="button" className="found-time-card edit-result" aria-label="Edit date and time"
+              onClick={event => openEditor(event.currentTarget)}>
+              <span className="found-time-value">{getFormatLabel(epoch, 5)}</span>
+              <span className="edit-result-hint">Edit</span>
+            </button>
+            {manual && <div className="manual-provenance"><span className="manual-label">Manual</span><button type="button" onClick={useText}>Use text</button></div>}
           </div>
         )}
-        {hasInlineStatus && (
+        {draft === null && hasInlineStatus && (
           <div className={`status-card ${statusTone}`}>
             {error && <div className="status-line">{error}</div>}
             {hasClarification && (
@@ -801,7 +968,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         )}
       </div>
 
-      {epoch !== null && range === null && (
+      {draft === null && epoch !== null && range === null && (
         <div className="results-section">
           <div className="format-list">
             {formats.map((_, index) => (
@@ -811,7 +978,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
                 formatIndex={index}
                 isSelected={index === selectedIndex}
                 isTentative={isBusy && index === selectedIndex}
-                onCopyAndClose={handleCopy}
+                onCopyAndClose={() => handleCopy(index)}
                 onMouseEnter={() => handleRowMouseEnter(index)}
               />
             ))}
@@ -819,7 +986,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         </div>
       )}
 
-      {range !== null && (
+      {draft === null && range !== null && (
         <div className="results-section">
           <div className="format-list">
             {rangeFormats.map((_, index) => (
@@ -829,7 +996,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
                 formatIndex={index}
                 isSelected={index === selectedIndex}
                 isTentative={isBusy && index === selectedIndex}
-                onCopyAndClose={handleCopy}
+                onCopyAndClose={() => handleCopy(index)}
                 onMouseEnter={() => handleRowMouseEnter(index)}
               />
             ))}
