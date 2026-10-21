@@ -823,3 +823,51 @@ body {
   margin-bottom: 16px;
   font-size: 14px;
 }
+
+/* The inline calendar is part of the overlay's normal focus and scroll flow. */
+.overlay { overflow-y: auto; }
+.calendar-button, .manual-actions button, .manual-provenance button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #49525b;
+  border-radius: 5px;
+  color: #dce8f0;
+  background: #252e35;
+}
+.input-controls { display: flex; align-items: flex-start; gap: 8px; }
+.input-controls .input-textarea { flex: 1; min-width: 0; }
+.calendar-button {
+  flex-shrink: 0; min-height: 36px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 9px; font-size: 12px;
+}
+button:disabled { cursor: default; opacity: .5; }
+.input-textarea:disabled { opacity: .6; resize: none; }
+button:focus-visible, .row:focus-visible, .manual-editor input:focus-visible {
+  outline: 2px solid #64baff; outline-offset: 2px;
+}
+.manual-editor {
+  margin-top: 12px; padding: 14px; border: 1px solid #465766;
+  border-radius: 7px; background: #202930; color-scheme: dark;
+}
+.manual-heading { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.manual-fields { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+.manual-fields label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #c6d3de; }
+.manual-fields input {
+  width: 100%; min-width: 0; padding: 8px 6px; font: inherit; font-size: 14px;
+  color: #fff; background: #151c22; border: 1px solid #586673; border-radius: 4px;
+}
+.manual-zone { margin-top: 10px; font-size: 12px; color: #a9bece; }
+.manual-validation { color: #ffc78b; font-size: 12px; line-height: 1.45; }
+.manual-validation:not(:empty) { margin-top: 10px; }
+.manual-offsets { margin-top: 12px; padding: 10px; border: 1px solid #586673; font-size: 12px; }
+.manual-offsets label { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.manual-actions { display: flex; gap: 8px; margin-top: 16px; }
+.manual-actions button { padding: 8px 12px; font-size: 12px; }
+.manual-actions .manual-apply { background: #166b9e; border-color: #4095c9; color: white; }
+.edit-result { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; cursor: pointer; }
+.edit-result-hint { font-size: 11px; color: #92c3df; }
+.manual-provenance { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; }
+.manual-label { color: #a8d8b7; font-size: 11px; }
+.manual-provenance button { font-size: 11px; padding: 3px 7px; background: transparent; }
+.footer { flex-shrink: 0; }

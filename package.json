@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\dev-hammer-overlay.ps1",
     "build": "vite build",
-    "test": "npm run test:routing && npm --prefix api test",
+    "test": "npm run test:routing && npm run test:manual && npm --prefix api test",
     "test:routing": "node --test shared/discord-timestamp-routing/index.test.cjs",
     "build:api": "npm --prefix api run build",
     "reload:api": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\reload-local-parser-api.ps1",
@@ -18,10 +18,13 @@
     "verify:installed:routing-smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify-installed-routing-smoke.ps1",
     "preview": "vite preview",
     "tauri": "tauri",
-    "start": "tauri dev"
+    "start": "tauri dev",
+    "test:desktop": "python3 scripts/desktop_smoke.py",
+    "test:manual": "node --test src/lib/manualDateTime.test.ts"
   },
   "dependencies": {
     "@hammer-overlay/discord-timestamp-routing": "file:shared/discord-timestamp-routing",
+    "@js-temporal/polyfill": "0.5.1",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-global-shortcut": "^2.3.1",
@@ -34,6 +37,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",

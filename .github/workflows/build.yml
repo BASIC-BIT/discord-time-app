@@ -150,3 +150,76 @@ jobs:
           echo "📝 This was a development build for testing purposes"
           echo ""
           echo "✅ Build artifacts are available in the Actions artifacts"
+
+  linux-desktop:
+    runs-on: ubuntu-24.04
+    container:
+      image: node:24-bookworm@sha256:14078204b6bb268c107ceff6d3c43f45a888105e5c2b18b14c32b3409d93a1b0
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cache/linux-desktop/cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.cache/linux-desktop/rustup
+      npm_config_cache: ${{ github.workspace }}/.cache/linux-desktop/npm
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      LANGFUSE_ENABLED: 'false'
+      TEMPORAL_FEATURE_PLAN_IR: 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Node.js and expose Cargo tools
+        run: |
+          node -e 'if (process.versions.node.split(".")[0] !== "24") process.exit(1)'
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Trust checked-out repository in job container
+        run: |
+          # Checkout's temporary Git configuration does not cover later shells.
+          # Trust only this known checkout in the ephemeral job container.
+          git config --global --add safe.directory "$PWD"
+          git rev-parse --verify HEAD
+
+      - name: Cache desktop dependencies and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/linux-desktop
+            src-tauri/target
+          key: linux-desktop-bookworm-14078204-rust-1.99.1-${{ hashFiles('scripts/setup-linux-desktop.sh', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'package-lock.json', 'api/package-lock.json') }}
+
+      - name: Install and check Linux desktop prerequisites
+        run: |
+          bash scripts/setup-linux-desktop.sh --install
+          bash scripts/setup-linux-desktop.sh --check
+
+      - name: Install frontend and API dependencies
+        run: |
+          npm ci
+          npm --prefix api ci
+
+      - name: Run offline routing, picker and API tests
+        env:
+          DB_PATH: ${{ runner.temp }}/hammer-overlay-linux-tests/usage.db
+        run: |
+          install -d -m 700 "$(dirname "$DB_PATH")"
+          npm test
+
+      - name: Run desktop runner boundary tests with installed proxy
+        run: |
+          command -v tauri-driver
+          python3 -m unittest discover -s scripts -p 'test_desktop_smoke.py' -v
+
+      - name: Run full native desktop suite
+        run: npm run test:desktop -- --suite all
+
+      - name: Upload Linux desktop evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-desktop-evidence
+          path: artifacts/desktop/
+          retention-days: 7
