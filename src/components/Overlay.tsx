@@ -733,8 +733,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       if (e.key === 'Escape') { e.preventDefault(); cancelEditor(); }
       return;
     }
-    // Buttons retain native Enter/Space and Tab semantics.
-    if (e.target instanceof HTMLButtonElement && e.key !== 'Escape') return;
+    // Ordinary actions keep native keys; clarification options retain their advertised shortcuts.
+    if (e.target instanceof HTMLButtonElement && !e.target.classList.contains('clarification-option') && e.key !== 'Escape') return;
     const formatCount = range !== null ? rangeFormats.length : formats.length;
     // Tab traverses formats, then leaves the group at either end; arrows still wrap.
     const onResult = e.target instanceof HTMLElement && e.target.classList.contains('row');

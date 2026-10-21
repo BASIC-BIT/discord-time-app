@@ -729,8 +729,36 @@ def open_picker(s, selector='.calendar-button', *, keyboard=False):
     assert s.evaluate('return document.querySelector("textarea").disabled')
 
 
+def run_clarification_keyboard(s):
+    s.phase = 'focused_clarification_keyboard'
+    if not s.window_visible():
+        s.set_clipboard('')
+        s.keys('ctrl+shift+h')
+        wait_for('clarification overlay', s.window_visible)
+    wait_for('clarification input', lambda: s.evaluate('return !!document.querySelector("textarea")'))
+    wait_for('real parser ready for clarification', lambda: s.invoke('get_time_parser_config')['available'], READINESS)
+    fill_fixture(s, 'next Saturday 1')
+    wait_for('actual offline clarification options', lambda: s.evaluate('return document.querySelectorAll(".clarification-option").length') == 2, READINESS)
+    assert s.evaluate('return Array.from(document.querySelectorAll(".clarification-label"), item => item.textContent)') == ['1 AM', '1 PM']
+    expected_preview = s.evaluate('return document.querySelectorAll(".clarification-preview")[1].textContent')
+    clipboard = s.clipboard()
+    # Focus is fixture setup; all shortcut events below come from the native keyboard.
+    s.evaluate('document.querySelector(".clarification-option").focus(); return true')
+    for key, index in (('Right', 1), ('Left', 0), ('Down', 1), ('Up', 0)):
+        s.keys(key)
+        wait_for('focused option ' + key, lambda: s.evaluate('return document.querySelectorAll(".clarification-option")[arguments[0]].getAttribute("aria-pressed")', index) == 'true')
+    s.capture('picker-clarification-focused')
+    s.keys('2')
+    wait_for('number chooses actual second alternative', lambda: s.evaluate('return document.querySelector(".row.selected .preview")?.textContent') == expected_preview)
+    assert s.evaluate('return document.querySelectorAll(".clarification-option").length') == 0
+    assert s.window_visible() and s.clipboard() == clipboard
+    assert sum(row['model_calls'] or 0 for row in database_rows(s)[0]) == 0
+    s.passed('focused_clarification_keyboard', nativeKeys=['Right', 'Left', 'Down', 'Up', '2'], modelCalls=0)
+
+
 def run_picker(session: DesktopSession) -> None:
     s = session
+    run_clarification_keyboard(s)
     s.phase = 'manual_from_scratch'
     if not s.window_visible():
         s.set_clipboard('')
@@ -771,8 +799,8 @@ def run_picker(session: DesktopSession) -> None:
     set_picker_fields(s, '2026-05-28', '20:27:40')
     click_control(s, '.manual-apply')
     wait_for('adjusted F', lambda: selected_code(s) == '<t:1780000060:F>')
+    assert s.clipboard() == '<t:1780000000:F>' and s.window_visible(), 'Adjust Apply must not copy or dismiss'
     s.capture('picker-03-adjusted')
-    s.passed('adjust_parsed_preserves_format_and_seconds', epoch=1780000060)
 
     s.phase = 'cancel_preserves_result'
     open_picker(s, '.edit-result')
@@ -827,6 +855,23 @@ def run_picker_extended(s):
     s.keys(*(['Down'] * 5))
     wait_for('format restored after focus traversal', lambda: selected_code(s) == '<t:1780000060:F>')
     s.passed('keyboard_focus_and_validation', nativeKeys=['Up', 'Down', 'Tab', 'Shift+Tab', 'Return', 'Escape'])
+
+    s.phase = 'adjusted_result_native_copy'
+    wait_for('adjusted result focused before copy', lambda: s.evaluate('return document.activeElement?.classList.contains("selected")'))
+    s.keys('Return')
+    wait_for('adjusted exact native copy', lambda: s.clipboard() == '<t:1780000060:F>')
+    wait_for('adjusted copy hides', lambda: not s.window_visible())
+    s.passed('adjust_parsed_preserves_format_and_seconds', epoch=1780000060, clipboard='<t:1780000060:F>', seconds=40)
+
+    # Reopen the original text and restore the manual adjustment for the Use text journey.
+    s.set_clipboard('<t:1780000000:F>')
+    s.keys('ctrl+shift+h')
+    wait_for('original input reopened after adjusted copy', lambda: s.window_visible() and selected_code(s) == '<t:1780000000:F>')
+    open_picker(s, '.edit-result')
+    set_picker_fields(s, '2026-05-28', '20:27:40')
+    click_control(s, '.manual-apply')
+    assert_manual(s, '<t:1780000060:F>')
+    assert s.clipboard() == '<t:1780000000:F>' and s.window_visible()
 
     s.phase = 'return_to_text_and_reopen'
     s.evaluate('document.querySelector("textarea").focus(); return true')
