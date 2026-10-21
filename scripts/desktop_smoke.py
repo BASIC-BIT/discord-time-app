@@ -1301,9 +1301,30 @@ def run_picker_dst(s):
 
 
 def run_picker_short_desktop(s):
-    s.phase = 'short_desktop_native_popup_and_scroll'
+    s.phase = 'short_desktop_window_position_permission'
     open_fresh_picker(s)
     window_id = s.command('xdotool', 'search', '--onlyvisible', '--name', '^HammerOverlay$').splitlines()[0]
+    s.settled_geometry()
+    requested = {'x': 120, 'y': 24}
+    proof = {'command': 'plugin:window|set_position', 'requested': requested, 'accepted': False}
+    s.metadata['windowPositionPermission'] = proof
+    try:
+        # This is the SDK's PhysicalPosition wire shape. Require real IPC
+        # authorization so Openbox's automatic relocation cannot mask a denial.
+        s.invoke(proof['command'], {'label': 'main', 'value': {'Physical': requested}})
+    except Exception as error:
+        proof['error'] = str(error)
+        raise
+    proof['accepted'] = True
+    wait_for('authorized native window position', lambda: s.invoke('plugin:window|outer_position', {'label': 'main'}) == requested)
+    geometry = s.command('xdotool', 'getwindowgeometry', '--shell', window_id)
+    values = dict(line.split('=', 1) for line in geometry.splitlines() if '=' in line)
+    assert (int(values['X']), int(values['Y'])) == (requested['x'], requested['y']), geometry
+    proof['nativeGeometry'] = values
+    s.capture('picker-short-authorized-position')
+    s.passed('short_desktop_window_position_permission', command=proof['command'], position=requested)
+
+    s.phase = 'short_desktop_native_popup_and_scroll'
     s.command('xdotool', 'windowmove', window_id, '800', '390')
     set_picker_fields(s, '', '')  # Validation resize must bring the controls back on screen.
     s.settled_geometry()
