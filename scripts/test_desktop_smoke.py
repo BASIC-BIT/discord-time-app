@@ -106,6 +106,62 @@ class RunnerBoundaries(unittest.TestCase):
                 self.assertEqual(client.recv(1), b'')
         check_ports((port,))
 
+    def test_cargo_metadata_warning_preserves_json_and_exit_status(self):
+        for cargo_status in (0, 1):
+            with self.subTest(cargo_status=cargo_status), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                tools = root / 'tools'
+                tools.mkdir()
+                (root / 'scripts').mkdir()
+                (root / 'scripts/setup-linux-desktop.sh').write_text('exit 0\n')
+                secret = 'cargo-warning-secret-sentinel'
+                executable = root / 'target/debug/fixture-app'
+                metadata = {'target_directory': str(root / 'target'), 'fixtureCredential': secret,
+                            'packages': [{'manifest_path': str(root / 'src-tauri/Cargo.toml'),
+                                          'targets': [{'name': 'fixture-app', 'kind': ['bin']}]}]}
+                cargo = tools / 'cargo'
+                cargo.write_text(f'#!{sys.executable}\nimport sys\n'
+                                 f'print({json.dumps(metadata)!r})\n'
+                                 f'print({("warning: " + secret + " " + secret[:6] + "... " + secret[:7] + "...")!r}, file=sys.stderr)\n'
+                                 f'sys.exit({cargo_status})\n')
+                cargo.chmod(0o700)
+                npm = tools / 'npm'
+                npm.write_text(f'#!{sys.executable}\nfrom pathlib import Path\n'
+                               f'executable = Path({str(executable)!r})\n'
+                               'executable.parent.mkdir(parents=True)\n'
+                               'executable.write_text("fresh executable")\n')
+                npm.chmod(0o700)
+                with patch.object(desktop_smoke, 'ROOT', root), patch.dict(os.environ, {'PATH': str(tools) + os.pathsep + os.environ['PATH']}):
+                    session = DesktopSession(run_dir=root / 'artifacts', mode='offline')
+                    session.secrets.add(secret)
+                    failure = None
+                    try:
+                        if cargo_status:
+                            with self.assertRaisesRegex(RuntimeError, 'Cargo metadata failed') as raised:
+                                desktop_smoke.build_executable(session)
+                            failure = raised.exception
+                            self.assertFalse(executable.exists(), 'nonzero metadata exit started a build')
+                        else:
+                            try:
+                                resolved = desktop_smoke.build_executable(session)
+                            except json.JSONDecodeError:
+                                self.fail('Cargo metadata warning corrupted JSON stdout')
+                            self.assertEqual(resolved, executable)
+                            self.assertEqual(executable.read_text(), 'fresh executable')
+                    finally:
+                        session.finalize(failure)
+                self.assertEqual(session.cleanup_errors, [])
+                self.assertTrue(all(process.poll() is not None for process in session.owned))
+                self.assertEqual(session.logs, [])
+                self.assertFalse((session.run_dir / 'state').exists())
+                stdout = (session.run_dir / 'cargo-metadata.log').read_text()
+                self.assertTrue((session.run_dir / 'cargo-metadata.stderr.log').is_file(), 'Cargo stderr diagnostics were not retained separately')
+                stderr = (session.run_dir / 'cargo-metadata.stderr.log').read_text()
+                self.assertEqual(json.loads(stdout)['target_directory'], str(root / 'target'))
+                self.assertIn('warning:', stderr)
+                for emitted in (secret, secret[:6] + '...', secret[:7] + '...'):
+                    self.assertNotIn(emitted, stdout + stderr)
+
     def exercise_failed_build(self, root, *, fail_step='build', orphan=False):
         tools = root / 'tools'
         tools.mkdir()

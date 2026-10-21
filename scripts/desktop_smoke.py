@@ -174,11 +174,15 @@ class DesktopSession:
                     self.descendants[pid] = started
                     changed = True
 
-    def spawn(self, name: str, args: list[str], *, env=None, cwd=None, stdin=None):
+    def spawn(self, name: str, args: list[str], *, env=None, cwd=None, stdin=None, separate_stderr=False):
         output = open(self.run_dir / f'{name}.log', 'ab', buffering=0)
         self.logs.append(output)
+        errors = output
+        if separate_stderr:
+            errors = open(self.run_dir / f'{name}.stderr.log', 'ab', buffering=0)
+            self.logs.append(errors)
         process = subprocess.Popen(args, cwd=cwd, env=env or self.env, stdin=stdin or subprocess.DEVNULL,
-                                   stdout=output, stderr=output, start_new_session=True)
+                                   stdout=output, stderr=errors, start_new_session=True)
         self.owned.append(process)
         self.track()
         return process
@@ -1222,9 +1226,10 @@ def build_executable(session: DesktopSession):
     if prerequisite.wait(timeout=60):
         raise Blocked('Linux prerequisites are unavailable; see prerequisites.log')
     session.last_command = 'Cargo metadata'
-    metadata = session.spawn('cargo-metadata', ['cargo', 'metadata', '--no-deps', '--format-version', '1', '--manifest-path', 'src-tauri/Cargo.toml'], cwd=ROOT)
+    # Cargo warnings belong in diagnostic evidence, outside its JSON stdout.
+    metadata = session.spawn('cargo-metadata', ['cargo', 'metadata', '--no-deps', '--format-version', '1', '--manifest-path', 'src-tauri/Cargo.toml'], cwd=ROOT, separate_stderr=True)
     if metadata.wait(timeout=30):
-        raise RuntimeError('Cargo metadata failed; see cargo-metadata.log')
+        raise RuntimeError('Cargo metadata failed; see cargo-metadata.log and cargo-metadata.stderr.log')
     cargo = json.loads((run_dir / 'cargo-metadata.log').read_text())
     package = next(p for p in cargo['packages'] if Path(p['manifest_path']).resolve() == ROOT / 'src-tauri/Cargo.toml')
     binary = next(target['name'] for target in package['targets'] if 'bin' in target['kind'])
