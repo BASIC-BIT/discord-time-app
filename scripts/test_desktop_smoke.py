@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -47,6 +48,63 @@ class RunnerBoundaries(unittest.TestCase):
             self.assertNotIn('sk-sentinel-secret', session.sanitize('key=sk-sentinel-secret'))
             self.assertNotIn('sk-sen...', session.sanitize('key=sk-sen...'))
         self.assertNotIn('sk-sentinel-secret', output.getvalue())
+
+    @unittest.skipUnless(shutil.which('tauri-driver'), 'requires installed tauri-driver')
+    def test_tauri_proxy_does_not_reuse_a_native_close_connection(self):
+        # WebKit replies with Content-Length but no Connection header, even when
+        # asked to close. Hold that close window open until the proxy's next
+        # request arrives: reusing this socket must fail, without timing luck.
+        received = []
+        class Native(http.server.BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                received.append(payload)
+                body = json.dumps({'value': payload}).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                for offset in range(0, len(body), 4096):
+                    self.wfile.write(body[offset:offset + 4096])
+                self.wfile.flush()
+                if self.headers.get('Connection', '').lower() == 'close':
+                    self.connection.settimeout(2)
+                    try:
+                        self.connection.recv(1, socket.MSG_PEEK)
+                    except TimeoutError:
+                        pass
+            def log_message(self, *_args):
+                pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Native)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        with tempfile.TemporaryDirectory() as tmp:
+            session = DesktopSession(run_dir=Path(tmp), mode='offline')
+            with socket.socket() as port_probe:
+                port_probe.bind(('127.0.0.1', 0))
+                port = port_probe.getsockname()[1]
+            try:
+                session.spawn('proxy', ['tauri-driver', '--port', str(port), '--native-port',
+                                      str(server.server_port), '--native-driver', '/bin/true'])
+                def listening():
+                    try:
+                        with socket.create_connection(('127.0.0.1', port), timeout=.1):
+                            return True
+                    except OSError:
+                        return False
+                desktop_smoke.wait_for('proxy listener', listening)
+                for size in (1, 131072):
+                    for number in range(2):
+                        payload = {'number': number, 'text': 'x' * size}
+                        self.assertEqual(http_json('POST', f'http://127.0.0.1:{port}/execute/sync', payload),
+                                         {'value': payload})
+                self.assertEqual(len(received), 4, 'a command was lost or retried')
+            finally:
+                session.cleanup()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+            self.assertEqual(session.cleanup_errors, [])
 
     def test_stalled_webdriver_times_out(self):
         class Hung(http.server.BaseHTTPRequestHandler):

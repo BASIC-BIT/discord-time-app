@@ -6,6 +6,7 @@ import argparse
 import ctypes
 import datetime
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -22,8 +23,7 @@ import time
 import traceback
 import sys
 from typing import Mapping
-import urllib.error
-import urllib.request
+import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 READINESS = 30
@@ -75,15 +75,24 @@ def check_ports(ports=(8857, 4444, 4445)):
 
 
 def http_json(method: str, url: str, payload: object = None, *, timeout: float = REQUEST) -> object:
+    target = urllib.parse.urlsplit(url)
+    if target.scheme != 'http' or target.hostname not in ('127.0.0.1', 'localhost', '::1'):
+        raise ValueError('Desktop requests require a loopback HTTP URL')
     data = None if payload is None else json.dumps(payload).encode()
-    request = urllib.request.Request(url, data=data, method=method, headers={'Content-Type': 'application/json'})
-    # Local WebDriver/API traffic must never traverse an inherited HTTP proxy.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    # urllib forces Connection: close, which tauri-driver forwards upstream.
+    # WebKit omits that response header: Hyper can reuse the socket before FIN.
+    # Read the whole response, then close our own connection; never retry a command.
+    # HTTPConnection also bypasses inherited HTTP proxy settings.
+    connection = http.client.HTTPConnection(target.hostname, target.port, timeout=timeout)
     try:
-        with opener.open(request, timeout=timeout) as response:
-            result = json.load(response)
-    except urllib.error.HTTPError as error:
-        raise RuntimeError(f'HTTP {error.code}: {error.read(8192).decode(errors="replace")}') from error
+        path = urllib.parse.urlunsplit(('', '', target.path or '/', target.query, ''))
+        connection.request(method, path, body=data, headers={'Content-Type': 'application/json'})
+        response = connection.getresponse()
+        if response.status >= 300:
+            raise RuntimeError(f'HTTP {response.status}: {response.read(8192).decode(errors="replace")}')
+        result = json.loads(response.read())
+    finally:
+        connection.close()
     if isinstance(result, dict) and isinstance(result.get('value'), dict) and result['value'].get('error'):
         raise RuntimeError(str(result['value']))
     return result
