@@ -152,14 +152,16 @@ It reported Debian 12, Node 24.22.0, Python 3.11.2, GTK 3.24.38, WebKitGTK
 `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/`. Repeating `--install` returned ready
 without invoking package installation. This qualifies prerequisites only.
 
-## Running the native baseline
+## Running the native suites
 
 ```sh
 python3 -m unittest discover -s scripts -p 'test_desktop_smoke.py' -v
 npm run test:desktop -- --suite baseline
+npm run test:desktop -- --suite picker
+npm run test:desktop -- --suite all
 ```
 
-Run both commands inside the same supported environment used for setup. The
+Run these commands inside the same supported environment used for setup. The
 runner checks prerequisites, builds through Tauri's existing `beforeBuildCommand`,
 and finds the debug executable through Cargo metadata. `CARGO_TARGET_DIR` works
 without a hardcoded target path. The Linux config only changes bundle targets and
@@ -183,9 +185,22 @@ does not alter the app's inference timeout. Missing configuration exits blocked;
 fallback does not count as model coverage. Do not run a paid model merely to
 qualify the offline baseline.
 
+`baseline` has 12 named checks. `picker` has 20 named checks: 17 in the main
+desktop and one each in three additional fresh desktops (API unavailable,
+America/New_York DST, and a 1280×600 screen). `all` combines them for 32 named
+checks across four desktop sessions. These are check counts, not repeated runs.
+
 `--repeat N` builds once and runs fresh isolated desktops serially, stopping at
-the first failure. Repetition is offline-only. `--suite picker` and `--suite all`
-are reserved and currently report blocked until picker scenarios are implemented.
+the first non-pass. Repetition is offline-only. The one-time qualification is:
+
+```sh
+npm run test:desktop -- --suite all --repeat 20
+```
+
+Every iteration gets a separate result directory and the same executable hash.
+Each full iteration includes the three fresh picker fixtures. A failed iteration
+breaks the streak; preserve its evidence and diagnose it before another
+qualification invocation. There are no automatic retries.
 
 Exit `0` means assertions, video validation and cleanup passed. Exit `1` means a
 test or capture failed, and exit `2` means prerequisites, resources or requested
@@ -208,8 +223,130 @@ works when WebDriver is unresponsive. The original assertion error stays visible
 if capture also fails. Visual review remains `pending` until a coding agent
 records what screenshots, sampled frames or video it actually inspected.
 
-The baseline explicitly clears input between fixtures. It does not establish
-that typing or pasting directly over auto-imported clipboard text works; that is
-the separate clipboard regression task. Native format-preference persistence
-also remains outside this assertion because the corresponding Rust commands are
-stubs.
+The baseline now checks native Ctrl+A/paste over auto-imported clipboard text,
+selected-text typing, caret insertion, and deletion. The auxiliary typing/caret
+cases set selection through WebDriver, then use real X11 edits; they do not prove
+native selection navigation. Native format-preference persistence remains outside
+this assertion because the corresponding Rust commands are stubs.
+
+## Coverage and controlled fixtures
+
+Baseline checks cover the hotkey, supervised API startup, authenticated Rust/Node
+parse, seven previews, Down/Enter copy and native hide, clipboard reopen/import
+and replacement, five range previews, malformed input, offline natural language,
+Escape dismissal, and this run's SQLite generation/copy records with zero model
+calls. The fixed main desktop timezone is UTC.
+
+Picker checks cover focused clarification arrows/numeric activation; choosing
+from scratch; adjusting a parsed instant while retaining seconds and format
+(including exact native copy); cancel, validation and focus; native field keys;
+returning to text and discarding a draft on reopen; range-to-single conversion;
+and Space copying the focused row's own format. Additional checks hold actual
+IPC response completion to test late parse success, service rejection, verifier
+completion, pending-cancel resume, completed-cancel without reparsing, and five
+initialization/parse-setup ownership boundaries. The verifier fixture tags a
+real offline parse response to enter the verifier branch; it tests ownership,
+not model interpretation. These controlled wrappers restore in `finally`.
+
+The three serial fresh fixtures verify manual operation with the API disabled;
+DST gap rejection, both repeated-hour offsets and unchanged-epoch preservation
+in America/New_York; and native popup/keyboard/scroll usability at 1280×600.
+Calendar values for some cases are fixture setup; native keyboard and clipboard
+assertions use X11 events, not synthetic DOM key events. Unit conversion tests
+add exact bounds/calendar cases beyond these native journeys.
+
+## Explicit model mode
+
+Use `npm run test:desktop -- --suite baseline --mode model` only when a model run
+is intended and its existing provider is configured in the invoking environment.
+For OpenAI, provide `OPENAI_API_KEY` and the intended `OPENAI_MODEL`; for Plan-IR,
+provide `TEMPORAL_FEATURE_PLAN_IR=true`, `TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL`, and
+`TEMPORAL_PLAN_IR_ENDPOINT_MODEL`, plus endpoint authentication/settings required
+by that existing service. Checkout `.env` files are deliberately not loaded.
+Never put credentials in artifact files or commit them. No new provider or model
+infrastructure is part of this runner.
+
+The explicit model-required row uses `day after next saturday at l33t time`,
+America/New_York, reference `2026-05-24T12:00:00Z`, and exact epoch `1780249020`.
+It requires an agent/tool method and persisted positive model-call count, model
+identity, and duration. The manifest records elapsed parse latency against the
+5-second product SLO; a fallback cannot satisfy this check. Missing configuration
+exits 2 as blocked. This work ran offline only and made no model calls.
+
+## Qualification and release record
+
+Fresh managed cloud task restoration is **BLOCKED**: this session has no fresh
+task creation tooling. The provisioned Debian 12 Docker environment establishes
+ordinary-system-path setup on the current worker, not a fresh cloud task. The
+remaining acceptance run must provision a genuinely fresh task, install both
+lockfiles, run setup/check and one full native suite without this chat's scratch
+files, and retain its output.
+
+Repeatability qualification is **BLOCKED** pending 20 consecutive full passes.
+The current qualification result and retained failures are recorded below; do
+not treat a single successful suite as qualification. Linux CI is deferred under
+the approved qualification rule; `.github/workflows/build.yml` retains its
+existing Windows job. Once qualified, add `ubuntu-24.04`, Node 24, Rust 1.99.1,
+tauri-driver 2.1.0, dependency caches, setup, root/API `npm ci`, root `npm test`,
+the Python boundary unittest command above, and one full native suite. Upload
+`artifacts/desktop/` with `if: always()` and fail on assertion/capture/cleanup
+errors (no `continue-on-error`).
+
+On 2026-10-21, the single required invocation of
+`npm run test:desktop -- --suite all --repeat 20` exited 1 and stopped at run 2:
+
+| Directory under `artifacts/desktop/` | Actual outcome |
+| --- | --- |
+| `20261021T001002-57e2e3-01/` | PASS: 29 main checks + 3 fresh-fixture checks = 32; all four recordings readable and all cleanup lists empty |
+| `20261021T001002-57e2e3-02/` | FAIL: 6 baseline checks passed, then caret deletion timed out during clipboard replacement; readable 12.584s recording and empty cleanup list |
+
+Both results identify commit `d1d7b32` and the same executable SHA-256
+`7f8537ad38052330dc24e6029e7016b1ac08c0560f1268742cc607b75b9b1216`.
+Run 1 records clean source; run 2 records dirty source because this documentation
+was being written during the invocation. Application and runner source did not
+change and the executable was built only once. Only one full iteration passed;
+runs 3–20 did not execute.
+
+Run 2 recorded Backspace keyup with no keydown/input, despite focused textarea,
+focused native HammerOverlay window, live app/WebKit helpers and responsive
+read-only driver probes. A separate bounded diagnostic at
+`artifacts/desktop/task7-raw-input-diagnostic-2/` reproduced missing DOM keydown
+for caret insertion: the XI2 observer recorded raw press and release immediately
+after `xdotool type x`, while DOM recorded only keyup `x`. This narrows the
+observation past X server raw input; it does not establish where native delivery
+or WebKit processing lost the keydown. The first diagnostic directory
+`task7-raw-input-diagnostic/` preserves an observer-setup failure caused by absent
+`xmodmap`, corrected by using Xlib keycode lookup in the second diagnostic.
+Neither diagnostic counts toward qualification. No causal fix, timeout increase,
+retry, or second qualification invocation was made.
+
+Installed Windows acceptance is **NOT RUN**; see the
+[exact MSI checklist and record](manual-picker-windows-smoke.md). Linux native
+and deterministic evidence cannot lift the `AGENTS.md` desktop PR/merge/release
+gate.
+
+Historical current-product evidence at commit `d1d7b32`: picker
+`artifacts/desktop/20261021T000605-0794eb-01/` passed 20 named checks; full suite
+`artifacts/desktop/20261021T000713-3bbdee-01/` passed 32. Both used executable
+SHA-256 `7f8537ad38052330dc24e6029e7016b1ac08c0560f1268742cc607b75b9b1216`.
+These passes do not erase earlier missing native keydown, unexpected date focus
+loss, or WebDriver `RemoteDisconnected` observations. The retained baseline
+failure at `artifacts/desktop/20261021T000007-f4af3b-01/` recorded only keyup during
+caret deletion. No root cause or reliability fix has been established for those
+observations.
+
+Coding-agent visual review is documented in
+`artifacts/desktop/20261020T234832-cc5360-01/controller-visual-review.json`:
+selected screenshots and sampled MP4 frames, not full video playback or an
+independent model judge. It found readable 480px controls, correct DST choices,
+reachable short-screen results, and a calendar fitting near the edge. Transient
+resize/scroll repaint was observed; renderer behavior versus capture timing is
+unresolved. The later fix review inspected clarification and adjusted-result
+screenshots in `20261021T000605-0794eb-01`. Artifacts are ignored local evidence;
+retain/archive them with a handoff because a clean clone will not contain them.
+
+Task 7's additional review is recorded in
+`artifacts/desktop/20261021T001002-57e2e3-01/task7-visual-review.json`: adjusted
+result and failure screenshots, plus a short-desktop frame at 2s and the failed
+run at 9s. Controls and seconds are readable, and the failed edit still shows
+the unchanged token/caret. This is sampled-frame review, not full playback.

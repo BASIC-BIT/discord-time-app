@@ -39,6 +39,7 @@ A desktop overlay application for quickly converting natural language time expre
 
 - **Global Hotkey:** Press `Ctrl+Shift+H` to open the overlay
 - **Input:** Type a natural language time expression (e.g., "tomorrow at 2pm", "next Friday")
+- **Choose or adjust:** Open the calendar button for a manual date/time, or activate a single timestamp result to adjust it. The editor uses your device timezone and preserves seconds. Apply previews the result; a separate Enter copies it. Cancel discards the draft, and **Use text** returns a manual result to parsing.
 - **Navigate:** Use ↑/↓ arrows to see all 7 Discord timestamp formats
 - **Copy:** Press Enter to copy the selected format to clipboard
 - **Close:** Press Escape to close the overlay
@@ -61,6 +62,19 @@ A desktop overlay application for quickly converting natural language time expre
 - **Smart suggestions** based on your most-used formats
 - **Global hotkey** support
 - **Clipboard integration** for seamless workflow
+- **Manual date/time picker** with seven previews, timezone offsets, and explicit daylight-saving choices; works without the parser API
+
+## Desktop verification
+
+On a supported Linux environment, run `npm run test:desktop -- --suite all` for
+the actual Tauri app, bundled API, native keyboard/clipboard, and picker checks.
+See [Linux setup, coverage, evidence, and qualification status](docs/linux-desktop-testing.md).
+Twenty consecutive fresh-state runs are required before adding the Linux CI job;
+qualification is currently blocked. The existing Windows build workflow remains.
+
+The [installed Windows MSI checklist and result](docs/manual-picker-windows-smoke.md)
+is **NOT RUN** because Windows access is unavailable. Installed-app evidence is
+required before a desktop/runtime PR, merge, or release under `AGENTS.md`.
 
 ## Architecture
 
