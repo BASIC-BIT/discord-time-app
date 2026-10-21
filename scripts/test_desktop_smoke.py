@@ -308,6 +308,69 @@ if os.environ['FIXTURE_FAIL_STEP']==step:
                 self.assertIn('cleanupErrors', result)
                 self.assertFalse((artifacts / 'state').exists())
 
+    def test_picker_variants_stop_and_preserve_first_nonpass(self):
+        for cause in ('blocked', 'journey', 'capture', 'cleanup'):
+            with self.subTest(cause=cause), tempfile.TemporaryDirectory() as tmp:
+                parent = DesktopSession(run_dir=Path(tmp), mode='offline')
+                parent.executable = Path('/unused-fixture-app')
+                parent.metadata.update(commit='a' * 40, dirty=False, suite='all',
+                                       executable=str(parent.executable), executableSha256='fixture', toolVersions='fixture')
+                started, journeys, fixtures = [], [], []
+
+                class Fixture(DesktopSession):
+                    def start(self):
+                        started.append(self.run_dir.name)
+                        fixtures.append(self)
+                        self.phase = 'controlled-journey'
+                        self.spawn('owned-helper', ['sleep', '60'])
+
+                    def cleanup(self):
+                        super().cleanup()
+                        if cause == 'cleanup':
+                            self.cleanup_errors.append('controlled cleanup failure')
+
+                def journey(session):
+                    journeys.append(session.run_dir.name)
+                    session.passed('retained-before-nonpass')
+                    if cause == 'blocked':
+                        raise Blocked('controlled blocked journey')
+                    if cause == 'journey':
+                        raise AssertionError('controlled journey failure')
+                    if cause == 'capture':
+                        session.recorder = session.spawn('recorder', [sys.executable, '-c', 'raise SystemExit(1)'])
+                        session.recorder.wait(timeout=2)
+
+                expected = Blocked if cause == 'blocked' else RuntimeError
+                failure = None
+                try:
+                    with patch.object(desktop_smoke, 'DesktopSession', Fixture), \
+                         patch.object(desktop_smoke, 'run_picker_no_api', journey), \
+                         patch.object(desktop_smoke, 'run_picker_dst', journey), \
+                         patch.object(desktop_smoke, 'run_picker_short_desktop', journey):
+                        with self.assertRaises(expected) as raised:
+                            desktop_smoke.run_picker_variants(parent)
+                        failure = raised.exception
+                    self.assertTrue(all(process.poll() is not None for fixture in fixtures for process in fixture.owned),
+                                    'fixture finalization left an owned helper alive')
+                finally:
+                    parent.finalize(failure)
+                    desktop_smoke.write_results(parent, 2 if cause == 'blocked' else 1)
+                    for fixture in fixtures:
+                        fixture.cleanup()
+                self.assertEqual(started, ['api-unavailable'], 'a later desktop session started after a non-pass')
+                self.assertEqual(journeys, ['api-unavailable'], 'a later fixture journey ran after a non-pass')
+                result = json.loads((parent.run_dir / 'api-unavailable/results.json').read_text())
+                self.assertEqual(result['status'], 'blocked' if cause == 'blocked' else 'failed')
+                self.assertEqual(result['checks'], [{'check': 'retained-before-nonpass', 'passed': True}])
+                self.assertTrue(result.get('error'))
+                if cause == 'capture':
+                    self.assertIn('recording', result['captureError'])
+                if cause == 'cleanup':
+                    self.assertEqual(result['cleanupErrors'], ['controlled cleanup failure'])
+                parent_result = json.loads((parent.run_dir / 'results.json').read_text())
+                self.assertEqual(parent_result['pickerFixtures'], [{'fixture': 'api-unavailable',
+                    'exitCode': result['exitCode'], 'runDirectory': str(parent.run_dir / 'api-unavailable')}])
+
     def test_serial_finalize_reaps_helpers_forked_during_shutdown(self):
         # A real detached helper forks while its parent handles TERM, retaining
         # the app-like single-instance socket. Finalize must discover it, signal
@@ -320,11 +383,22 @@ from pathlib import Path
 root=Path(sys.argv[1]); listener=socket.socket(socket.AF_UNIX)
 listener.bind('\0'+sys.argv[2]); listener.listen()
 def terminate(signum, frame):
+ signal.signal(signal.SIGTERM,signal.SIG_IGN)
+ ready_read,ready_write=os.pipe()
+ gate_read,gate_write=os.pipe()
  pid=os.fork()
  if pid==0:
   os.setsid();signal.signal(signal.SIGTERM,signal.SIG_DFL)
-  (root/'child').write_text(str(os.getpid()))
+  os.write(ready_write,b'1')
+  # Keep the child waiting until cleanup terminates it. The old child-side
+  # marker would never be published under this controlled schedule.
+  # The inherited gate writer keeps this read blocked after the parent exits.
+  os.read(gate_read,1)
   while True: signal.pause()
+ os.read(ready_read,1)
+ # The parent publishes the actual fork return value before exiting. Child
+ # scheduling or termination cannot prevent publication of the cleanup target.
+ (root/'child').write_text(str(pid))
  os._exit(0)
 signal.signal(signal.SIGTERM,terminate)
 (root/'ready').write_text('ready')

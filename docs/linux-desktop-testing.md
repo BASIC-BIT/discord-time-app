@@ -411,8 +411,30 @@ offline tests, and all 12 Python boundaries. The native step stopped before
 build with Git's dubious-ownership rejection; the failure evidence was uploaded.
 A mismatched-owner fixture reproduced that rejection with checkout-only trust,
 passed after adding exact-directory trust to the job configuration, and verified
-that an unrelated repository remained untrusted. Full hosted native execution
-and cache save remain unverified until a subsequent run succeeds.
+that an unrelated repository remained untrusted. This first failure remains
+historical evidence, not a current hosted blocker.
+
+Hosted run
+[39557777802](https://github.com/BASIC-BIT/discord-time-app/actions/runs/39557777802)
+succeeded at PR head `4fb4a3a`, testing merge commit
+`1375ebb9e997d5b2f319712326366029cbbc6467`. Linux job `119081514398`
+passed offline root tests, all 12 Python boundaries with the installed proxy,
+and all 32 native checks. Its four sessions had empty cleanup error lists and
+readable recordings lasting 44.5, 3, 8.666667, and 6.5 seconds. Artifact
+`12326846155` was uploaded, downloaded, and reviewed through representative
+screenshots and a sampled video frame. The job logs confirm cache save. The
+Windows job also passed, including Rust tests, build, MSI/executable verification,
+and artifact upload.
+
+The later run
+[39622968439](https://github.com/BASIC-BIT/discord-time-app/actions/runs/39622968439)
+at head `4a53871` also succeeded on Linux and Windows. Linux job `119300896110`
+passed all 12 boundaries and the full native suite, with evidence under
+`artifacts/desktop/20261021T151002-ebd213-01/` in artifact `12354973387`.
+It used the existing dependency cache. These hosted records validate those
+revisions; subsequent source changes require their own relevant verification.
+Installed Windows MSI and WebView2 smoke remain **NOT RUN**. Windows CI success
+does not establish installed-app behavior.
 
 The first fresh invocation stopped before build because root did not trust the
 host-owned Git checkout. Its failure remains in

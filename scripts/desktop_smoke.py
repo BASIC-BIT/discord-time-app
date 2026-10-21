@@ -930,6 +930,8 @@ def run_picker_extended(s):
     s.keys('Escape')
     s.passed('return_to_text_and_reopen')
 
+    run_picker_range_keyboard(s)
+
     s.phase = 'range_to_single_apply_and_cancel'
     fill_fixture(s, '<t:1780000000:t> - <t:1780003600:t>')
     wait_for('range ready', lambda: s.evaluate('return document.querySelectorAll(".row").length') == 5)
@@ -955,6 +957,61 @@ def run_picker_extended(s):
     s.keys('ctrl+shift+h')
     wait_for('reopen after focused row copy', lambda: selected_code(s) == '<t:1780000000:F>')
     s.passed('focused_row_space_copies_its_format')
+
+
+def run_picker_range_keyboard(s):
+    s.phase = 'range_keyboard_navigation_and_copy'
+    expression = '<t:1780000000:t> - <t:1780003600:t>'
+    fill_fixture(s, expression)
+    wait_for('keyboard range ready', lambda: s.evaluate('return document.querySelectorAll(".row").length') == 5)
+    codes = s.evaluate('return Array.from(document.querySelectorAll(".format-code"), x=>x.textContent)')
+    def focused_format(index):
+        return s.evaluate('return Array.from(document.querySelectorAll(".row")).indexOf(document.activeElement) === arguments[0] && document.activeElement.classList.contains("selected")', index)
+    s.keys('Tab')
+    wait_for('range calendar reached by Tab', lambda: s.evaluate('return document.activeElement?.classList.contains("calendar-button")'))
+    s.keys('Return')
+    wait_for('range picker opened by keyboard', lambda: s.evaluate('return document.activeElement?.id') == 'manual-date')
+    s.keys('Escape')
+    wait_for('range picker cancel restores calendar focus', lambda: s.evaluate('return document.activeElement?.classList.contains("calendar-button")'))
+    s.keys('Tab')
+    wait_for('range result reached by Tab', lambda: focused_format(0))
+    # Leave the group at either end, while arrows continue to wrap.
+    s.keys('Up')
+    wait_for('range arrow wraps to last row', lambda: focused_format(4))
+    s.keys(*(['shift+Tab'] * 4))
+    wait_for('range Shift-Tab selects first focused row', lambda: focused_format(0))
+    s.keys('shift+Tab')
+    wait_for('range group exits to calendar', lambda: s.evaluate('return document.activeElement?.classList.contains("calendar-button")'))
+    s.keys('Tab', 'Tab')
+    wait_for('range Tab selects second focused row', lambda: focused_format(1))
+    s.keys('Tab', 'Tab', 'Tab')
+    wait_for('range Tab selects last focused row', lambda: focused_format(4))
+    s.keys('Tab')
+    wait_for('range group can exit its last row', lambda: not s.evaluate('return document.activeElement?.classList.contains("row")'))
+    s.keys('shift+Tab')
+    wait_for('range Shift-Tab re-enters last row', lambda: focused_format(4))
+    s.keys('shift+Tab', 'shift+Tab', 'shift+Tab')
+    wait_for('range second row refocused', lambda: focused_format(1))
+    s.capture('picker-range-keyboard')
+    s.set_clipboard('before range Space copy')
+    s.keys('space')
+    wait_for('focused range Space copy', lambda: s.clipboard() == codes[1])
+    wait_for('focused range copy hides', lambda: not s.window_visible())
+    s.set_clipboard('range keyboard fixture')
+    s.keys('ctrl+shift+h')
+    wait_for('reopen after range copy', s.window_visible)
+    fill_fixture(s, expression)
+    wait_for('range restored for textarea shortcuts', lambda: selected_code(s) == codes[0])
+    s.set_clipboard('before range Enter copy')
+    s.keys('Down')
+    wait_for('range arrow from textarea', lambda: s.evaluate('return Array.from(document.querySelectorAll(".row")).indexOf(document.querySelector(".row.selected"))') == 1)
+    s.keys('Return')
+    wait_for('range Enter copy', lambda: s.clipboard() == codes[1])
+    wait_for('range Enter copy hides', lambda: not s.window_visible())
+    s.set_clipboard('range keyboard fixture complete')
+    s.keys('ctrl+shift+h')
+    wait_for('reopen after range keyboard checks', s.window_visible)
+    s.passed('range_keyboard_navigation_and_copy', nativeKeys=['Tab', 'Shift+Tab', 'Up', 'Down', 'Return', 'space', 'Escape'])
 
 
 def install_pending_fixture(s, command='parse_time_with_local_service', verification=False):
@@ -1279,7 +1336,6 @@ def write_results(session, exit_code):
 
 
 def run_picker_variants(parent):
-    failures = []
     parent.metadata['pickerFixtures'] = []
     for name, options, journey in (
         ('api-unavailable', {'disable_api': True}, run_picker_no_api),
@@ -1307,10 +1363,8 @@ def run_picker_variants(parent):
             write_results(fixture, exit_code)
         parent.metadata['pickerFixtures'].append({'fixture': name, 'exitCode': exit_code, 'runDirectory': str(fixture.run_dir)})
         if exit_code:
-            failures.append(f'{name}: {fixture.metadata.get("error", "failed")}')
-    if failures:
-        failure_type = Blocked if all(row['exitCode'] in (0, 2) for row in parent.metadata['pickerFixtures']) else RuntimeError
-        raise failure_type('Picker fixture failure: ' + '; '.join(failures))
+            failure_type = Blocked if exit_code == 2 else RuntimeError
+            raise failure_type(f'Picker fixture failure: {name}: {fixture.metadata.get("error", "failed")}')
 
 
 def main():

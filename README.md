@@ -72,10 +72,14 @@ See [Linux setup, coverage, evidence, and qualification status](docs/linux-deskt
 Shared desktop PR/merge validation uses native Linux evidence and coding-agent
 visual review. The Escape keydown and WebDriver transport causes are fixed;
 clean-checkout restoration passed all 32 native checks and all 12 runner boundary
-tests in a fresh supported container. The build workflow now configures the same
-Linux environment and uploads desktop evidence. This configuration has not yet
-run on GitHub. The operating guide records commands, review limits, and retained
-failures.
+tests in a fresh supported container. Hosted run
+[39557777802](https://github.com/BASIC-BIT/discord-time-app/actions/runs/39557777802)
+at head `4fb4a3a` passed offline tests, all 12 boundaries, all 32 native checks,
+four readable recordings, empty cleanup error lists, evidence upload/download,
+and cache save. Run
+[39622968439](https://github.com/BASIC-BIT/discord-time-app/actions/runs/39622968439)
+at head `4a53871` also passed Linux and Windows CI. The operating guide records
+commands, source revisions, review limits, and retained failures.
 
 The [installed Windows MSI checklist and result](docs/manual-picker-windows-smoke.md)
 is **NOT RUN** because Windows access is unavailable. It tracks WebView2 and

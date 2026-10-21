@@ -33,6 +33,16 @@ export function RangeRow({ range, formatIndex, isSelected, isTentative = false, 
   return (
     <div
       className={`row ${isSelected ? 'selected' : ''} ${isTentative ? 'tentative' : ''} ${copying ? 'copying' : ''}`}
+      role="button"
+      tabIndex={isSelected ? 0 : -1}
+      aria-label={`Copy ${format.description}: ${discordCode}`}
+      onKeyDown={event => {
+        if (event.key === ' ' || event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          void handleClick();
+        }
+      }}
       onClick={handleClick}
       onMouseEnter={onMouseEnter}
       style={{ cursor: 'pointer' }}
