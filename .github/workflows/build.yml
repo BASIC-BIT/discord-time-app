@@ -176,6 +176,13 @@ jobs:
           node -e 'if (process.versions.node.split(".")[0] !== "24") process.exit(1)'
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
+      - name: Trust checked-out repository in job container
+        run: |
+          # Checkout's temporary Git configuration does not cover later shells.
+          # Trust only this known checkout in the ephemeral job container.
+          git config --global --add safe.directory "$PWD"
+          git rev-parse --verify HEAD
+
       - name: Cache desktop dependencies and build output
         uses: actions/cache@v4
         with:

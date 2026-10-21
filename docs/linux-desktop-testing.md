@@ -401,9 +401,18 @@ Node 24, caches the declared dependencies/build output, runs maintained setup,
 both lockfile installs, offline root tests, all Python boundaries with the
 installed proxy on `PATH`, and one full native suite. Assertion, capture, and
 cleanup failures fail the job. It uploads `artifacts/desktop/` with
-`if: always()`. The YAML and shell commands were checked locally; no GitHub
-Actions execution is claimed. GitHub's runner, cache, and artifact integration
-remain unverified until the workflow runs there.
+`if: always()`. The job explicitly trusts only its checked-out directory in the
+ephemeral container's Git configuration. Checkout's temporary configuration does
+not carry into later shell steps, and container root may differ from the owner
+of the bind-mounted checkout.
+
+The first hosted run, `39557313119`, passed setup, dependency installation,
+offline tests, and all 12 Python boundaries. The native step stopped before
+build with Git's dubious-ownership rejection; the failure evidence was uploaded.
+A mismatched-owner fixture reproduced that rejection with checkout-only trust,
+passed after adding exact-directory trust to the job configuration, and verified
+that an unrelated repository remained untrusted. Full hosted native execution
+and cache save remain unverified until a subsequent run succeeds.
 
 The first fresh invocation stopped before build because root did not trust the
 host-owned Git checkout. Its failure remains in
