@@ -14,6 +14,41 @@ install packages or create caches. A ready prerequisite check does not establish
 that the application builds, that native scenarios pass, or that the Windows
 installer works.
 
+## Validation policy, amended 2026-10-21
+
+A real Tauri Linux cloud-container run is sufficient PR/merge validation for
+shared desktop behavior when it exercises the shared UI, native API, SQLite,
+clipboard, hotkey, and layout, and includes screenshots, finalized video, and
+coding-agent review. Report the tested commit and actual coverage. Linux cannot
+prove WebView2, MSI, or Windows-specific behavior.
+
+Windows-specific installer, updater, runtime, native integration, local SLM
+launcher, and installed-path changes require smoke evidence from the exact
+installed MSI before PR/merge. Every Windows release requires that evidence.
+The shared picker does not change Windows packaging, so its Windows `NOT RUN`
+record is a tracked platform limitation rather than a blanket PR/merge blocker.
+The v0.1.2 installed local SLM launcher failure remains the reason for the
+Windows-specific gate in `AGENTS.md`.
+
+After a causal fix, run the targeted regression and the relevant full smoke suite.
+For lifecycle changes, document a small repeat sample and why its size covers the
+affected transitions. No fixed passing streak is required. Preserve every
+failure, stop at the first non-pass, and diagnose before rerunning; do not add
+silent retries or discard failures to obtain a pass. Routine shared UI changes
+need their relevant native scenarios and visual review.
+
+Prove restoration in a fresh supported container using maintained setup and a
+clean checkout, both lockfile installs, setup/check, and one full native suite.
+Record the image, versions, commands, cache mounts, and evidence. Explicit Cargo,
+Rustup, npm, or build dependency caches may be reused; do not reuse application
+state, a chat scratch runtime, a sysroot, or onboarding helpers. Native packages
+must remain at the container's ordinary system paths. Creating a new managed
+task is not a separate gate.
+
+This amendment replaces the earlier fixed 20-pass, fresh-managed-task, and blanket
+installed-Windows gates. It does not clear the native keydown blocker, establish
+restoration, or enable CI; current status and historical evidence appear below.
+
 ## Supported provisioning
 
 Use Debian or Ubuntu with Node major 24 already provisioned and root or
@@ -121,15 +156,9 @@ cleanliness. Exclude credentials and authentication headers. Report visual revie
 as screenshots, sampled frames, or direct video review according to what was
 actually inspected.
 
-Ordinary development needs the relevant native scenarios once. Twenty consecutive
-full runs with fresh application state, including hide/reopen, qualify lifecycle
-repeatability before Linux testing becomes a required CI gate. A failed run
-breaks that streak.
-
-Linux evidence does not establish WebView2, native popup, or installed Windows
-behavior. `AGENTS.md` requires installed Windows MSI smoke evidence before a
-desktop/runtime PR, merge, or release that depends on installed-app behavior.
-This setup does not satisfy that gate.
+Use the validation policy above to select relevant scenarios and a justified
+repeat sample after lifecycle changes. Keep Windows coverage explicit in the
+[installed MSI record](manual-picker-windows-smoke.md).
 
 ## Observed environments
 
@@ -191,16 +220,15 @@ America/New_York DST, and a 1280×600 screen). `all` combines them for 32 named
 checks across four desktop sessions. These are check counts, not repeated runs.
 
 `--repeat N` builds once and runs fresh isolated desktops serially, stopping at
-the first non-pass. Repetition is offline-only. The one-time qualification is:
-
-```sh
-npm run test:desktop -- --suite all --repeat 20
-```
+the first non-pass. Repetition is offline-only. Choose and record `N` for the
+lifecycle transitions being checked, rather than using a fixed qualification
+streak. For example, a small sample can check clipboard replacement and
+hide/reopen after their causal fix, alongside the targeted regression and full
+suite. This is an operating policy; the runner's command interface is unchanged.
 
 Every iteration gets a separate result directory and the same executable hash.
-Each full iteration includes the three fresh picker fixtures. A failed iteration
-breaks the streak; preserve its evidence and diagnose it before another
-qualification invocation. There are no automatic retries.
+Each full iteration includes the three fresh picker fixtures. Preserve failed
+iterations and diagnose them before rerunning. There are no automatic retries.
 
 Exit `0` means assertions, video validation and cleanup passed. Exit `1` means a
 test or capture failed, and exit `2` means prerequisites, resources or requested
@@ -275,24 +303,25 @@ exits 2 as blocked. This work ran offline only and made no model calls.
 
 ## Qualification and release record
 
-Fresh managed cloud task restoration is **BLOCKED**: this session has no fresh
-task creation tooling. The provisioned Debian 12 Docker environment establishes
-ordinary-system-path setup on the current worker, not a fresh cloud task. The
-remaining acceptance run must provision a genuinely fresh task, install both
-lockfiles, run setup/check and one full native suite without this chat's scratch
-files, and retain its output.
+Restoration is **NOT YET RE-PROVEN** under the amended policy. The recipe's
+current-worker prerequisite pass is recorded above; it does not establish a
+clean-checkout full run in a fresh container without chat scratch runtime/sysroot
+files. Use the maintained setup and explicit cache contract above. Lack of fresh
+managed-task creation tooling is no longer a blocker.
 
-Repeatability qualification is **BLOCKED** pending 20 consecutive full passes.
-The current qualification result and retained failures are recorded below; do
-not treat a single successful suite as qualification. Linux CI is deferred under
-the approved qualification rule; `.github/workflows/build.yml` retains its
-existing Windows job. Once qualified, add `ubuntu-24.04`, Node 24, Rust 1.99.1,
-tauri-driver 2.1.0, dependency caches, setup, root/API `npm ci`, root `npm test`,
-the Python boundary unittest command above, and one full native suite. Upload
-`artifacts/desktop/` with `if: always()` and fail on assertion/capture/cleanup
-errors (no `continue-on-error`).
+Native reliability is **BLOCKED** pending diagnosis and a causal fix for the
+missing native keydown observation below. Then run its targeted regression, the
+relevant full suite, and a small repeat sample justified by the lifecycle change.
+The earlier 20-pass requirement is superseded; its failed runs remain evidence.
 
-On 2026-10-21, the single required invocation of
+Linux CI is **NOT ENABLED**. `.github/workflows/build.yml` retains its existing
+Windows job. After restoration and native reliability are verified, add
+`ubuntu-24.04`, Node 24, Rust 1.99.1, tauri-driver 2.1.0, dependency caches,
+setup, root/API `npm ci`, root `npm test`, the Python boundary unittest command
+above, and one full native suite. Upload `artifacts/desktop/` with `if: always()`
+and fail on assertion/capture/cleanup errors, without `continue-on-error`.
+
+On 2026-10-21, the invocation under the former 20-pass policy of
 `npm run test:desktop -- --suite all --repeat 20` exited 1 and stopped at run 2:
 
 | Directory under `artifacts/desktop/` | Actual outcome |
@@ -305,7 +334,8 @@ Both results identify commit `d1d7b32` and the same executable SHA-256
 Run 1 records clean source; run 2 records dirty source because this documentation
 was being written during the invocation. Application and runner source did not
 change and the executable was built only once. Only one full iteration passed;
-runs 3–20 did not execute.
+runs 3–20 did not execute. The retained results are historical evidence, not a
+current passing-streak requirement.
 
 Run 2 recorded Backspace keyup with no keydown/input, despite focused textarea,
 focused native HammerOverlay window, live app/WebKit helpers and responsive
@@ -317,13 +347,14 @@ observation past X server raw input; it does not establish where native delivery
 or WebKit processing lost the keydown. The first diagnostic directory
 `task7-raw-input-diagnostic/` preserves an observer-setup failure caused by absent
 `xmodmap`, corrected by using Xlib keycode lookup in the second diagnostic.
-Neither diagnostic counts toward qualification. No causal fix, timeout increase,
+Neither diagnostic establishes acceptance. No causal fix, timeout increase,
 retry, or second qualification invocation was made.
 
 Installed Windows acceptance is **NOT RUN**; see the
 [exact MSI checklist and record](manual-picker-windows-smoke.md). Linux native
-and deterministic evidence cannot lift the `AGENTS.md` desktop PR/merge/release
-gate.
+and deterministic evidence cannot establish Windows-specific behavior. This
+`NOT RUN` limitation alone does not block shared picker PR/merge; exact installed
+MSI evidence remains required for Windows-specific changes and Windows releases.
 
 Historical current-product evidence at commit `d1d7b32`: picker
 `artifacts/desktop/20261021T000605-0794eb-01/` passed 20 named checks; full suite

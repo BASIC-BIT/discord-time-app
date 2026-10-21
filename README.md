@@ -69,12 +69,17 @@ A desktop overlay application for quickly converting natural language time expre
 On a supported Linux environment, run `npm run test:desktop -- --suite all` for
 the actual Tauri app, bundled API, native keyboard/clipboard, and picker checks.
 See [Linux setup, coverage, evidence, and qualification status](docs/linux-desktop-testing.md).
-Twenty consecutive fresh-state runs are required before adding the Linux CI job;
-qualification is currently blocked. The existing Windows build workflow remains.
+Shared desktop PR/merge validation uses native Linux evidence and coding-agent
+visual review. Native keydown delivery is still under diagnosis; restoration has
+not yet been re-proven under the updated policy, and Linux CI is not enabled.
+The operating guide records the current blockers and retained failures.
 
 The [installed Windows MSI checklist and result](docs/manual-picker-windows-smoke.md)
-is **NOT RUN** because Windows access is unavailable. Installed-app evidence is
-required before a desktop/runtime PR, merge, or release under `AGENTS.md`.
+is **NOT RUN** because Windows access is unavailable. It tracks WebView2 and
+Windows behavior that Linux cannot prove. The shared picker does not change
+Windows packaging, so this limitation alone does not block its PR/merge.
+`AGENTS.md` requires exact installed-MSI evidence for Windows-specific changes
+before PR/merge and for every Windows release.
 
 ## Architecture
 

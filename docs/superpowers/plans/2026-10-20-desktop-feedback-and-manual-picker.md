@@ -10,6 +10,24 @@
 
 **Spec:** [Linux desktop feedback](../specs/2026-10-20-linux-desktop-feedback-design.md) and [manual picker](../specs/2026-10-20-manual-datetime-picker-design.md), both approved in conversation.
 
+## Policy amendment, 2026-10-21
+
+The user authorized the Linux cloud-container policy in
+[`AGENTS.md`](../../../AGENTS.md) and the canonical
+[Linux operating guide](../../linux-desktop-testing.md). This supersedes the
+original fixed 20-pass streak, newly created managed-task restoration gate,
+and blanket installed-Windows PR/merge gate. Task 7 below reflects that change.
+It does not claim native keydown delivery is fixed, restoration is re-proven,
+or Linux CI is enabled.
+
+Real Tauri Linux shared UI/native API/SQLite/clipboard/hotkey/layout coverage,
+screenshots, finalized video, and coding-agent review suffice for shared desktop
+PR/merge. Linux cannot establish WebView2, MSI, or Windows-specific behavior.
+The shared picker changes no Windows packaging; its Windows `NOT RUN` record is
+a platform limitation. Exact installed-MSI smoke remains required before
+PR/merge for Windows-specific installer, updater, runtime, native integration,
+local SLM launcher, and installed-path changes, and before Windows releases.
+
 ## Global Constraints
 
 - Expose the native command as `npm run test:desktop`; use ignored `artifacts/desktop/` for evidence.
@@ -20,9 +38,9 @@
 - Use native date/time controls with seconds, device timezone only, explicit handling of gaps/repeated local times, and no date-picker library.
 - Manual editing works without the parser API. Parser defaults and semantic interpretation rules do not change.
 - Use coding-agent visual review. Describe sampled-frame review accurately; independent model judging is deferred.
-- Complete 20 consecutive fresh-state native runs before enforcing CI; ordinary UI development does not require 20 runs.
+- After a causal fix, run its targeted regression and relevant full smoke. Justify a small repeat sample for lifecycle changes; preserve failures, stop on failure, and use no silent retries or fixed passing streak.
 - Preserve `AGENTS.md`: hotkey prewarm, 5-second parsing SLO, accuracy requirements, and hosted temporal-model maximum `$50/month`. Do not train or provision models for this work.
-- Do not open a desktop/runtime PR, merge, or release changes depending on installed behavior before installed Windows MSI smoke evidence exists. Linux evidence cannot satisfy that gate.
+- Apply the scoped exact installed-MSI gate in the dated amendment above. Keep untested Windows coverage explicit.
 - Continue in the existing isolated cloud checkout.
 
 ## Review Focus
@@ -60,7 +78,7 @@ Task order is 1 → 2 → 3 → 4 → 5 → 6 → 7. Each task ends with a worki
 - [ ] **Step 1: Establish the environment failure condition.** Check whether the supported managed-environment setup can install WebKit helpers at their compiled system paths. Inspect readiness and proxy/CA policy through supplied runtime tools and `/etc/codex/network-policy.json` when available. A workspace-only extraction does not qualify. On the current worker, the existing workspace sysroot must not make `--check` pass. Do not change environment publication/access settings implicitly.
 - [ ] **Step 2: Implement the setup script.** Resolve the checkout from the script path. Check GTK/WebKit pkg-config packages, `WebKitWebDriver`, `Xvfb`, `openbox`, `dbus-run-session`, `xdotool`, `xclip`, `xdpyinfo`, `xwininfo`, `ffmpeg`, and `ffprobe`, plus the pinned toolchain. `--install` uses supported package installation for `libwebkit2gtk-4.1-dev`, `webkit2gtk-driver`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, X11 utilities and desktop tools. Preserve proxy/CA settings, use writable Cargo/npm caches, and do not repurpose `HOME` or `CODEX_HOME`.
 - [ ] **Step 3: Verify the recipe twice.** Run `bash scripts/setup-linux-desktop.sh --install`, then `bash scripts/setup-linux-desktop.sh --check` twice. Expected: ready, pinned executable versions, helper files present at ordinary paths, and no destructive reinstallation. If installation is unavailable, record blocked status and obtain the supported environment setup before claiming native verification. Independent source/test work may continue, but native acceptance remains blocked.
-- [ ] **Step 4: Document fresh-task startup and commit.** Include the two commands, the prerequisite gate, where artifacts will live, and platform limits. Do not copy spike paths or onboarding helpers. Commit as `chore: add supported Linux desktop test setup`.
+- [ ] **Step 4: Document fresh-container startup and commit.** Include the two commands, the prerequisite gate, where artifacts will live, and platform limits. Do not copy spike paths or onboarding helpers. Commit as `chore: add supported Linux desktop test setup`.
 
 ### Task 2: Build the native runner, evidence, and lifecycle checks
 
@@ -155,16 +173,16 @@ function resolveManualDraft(draft: ManualDraft): DraftResolution;
 
 **Files:** Modify `.github/workflows/build.yml`, `docs/linux-desktop-testing.md`, `README.md`; create `docs/manual-picker-windows-smoke.md`; modify `scripts/desktop_smoke.py` only if qualification exposes a diagnosed lifecycle issue.
 
-**Interfaces:** `npm run test:desktop -- --suite all --repeat 20` creates 20 fresh-state runs with separate outcomes and fails at the first non-pass. The manifest identifies the same build across that invocation. CI uses the same command without a framework-specific runner.
+**Interfaces:** `npm run test:desktop -- --suite all --repeat N` creates `N` fresh-state runs with separate outcomes and fails at the first non-pass. Choose a small `N` justified by the lifecycle change; no fixed streak is required. The manifest identifies the same build across that invocation. CI uses one full suite without a framework-specific runner.
 
-- [ ] **Step 1: Verify fresh-task restoration.** Use the supported cloud configuration/setup mechanism in a genuinely fresh task; run setup, installs, and one full native run without this chat's scratch/onboarding files. Preserve its evidence. If a fresh task or required setup is unavailable, mark this acceptance item blocked rather than substituting another current-worker run.
-- [ ] **Step 2: Qualify the final native suite.** Run the 20-run command after Tasks 1–6. Inspect individual outcomes, finalized captures, cleanup, clipboard replacement and hide/reopen. Any failure breaks the streak and remains in evidence. Diagnose the cause and rerun qualification only after a justified fix. Do not add silent retries, delete failures, or require this loop after every routine UI edit.
+- [ ] **Step 1: Verify fresh-container restoration.** Use maintained setup and a clean checkout in a fresh supported container. Run setup/check, both lockfile installs, and one full native suite without chat scratch runtime/sysroot or onboarding files. Explicit dependency caches are allowed; record them with the image, versions, commands, and evidence. New managed-task creation is not a separate gate. Do not claim restoration from a current-worker prerequisite check alone.
+- [ ] **Step 2: Diagnose and verify native reliability.** Diagnose the retained missing-keydown failure and make a causal fix. Then run the targeted regression, relevant full suite, and a small repeat sample justified by the changed lifecycle transitions. Inspect individual outcomes, finalized captures, cleanup, clipboard replacement, and hide/reopen. Preserve failures and stop on failure; rerun only after diagnosis and a justified fix. Do not add silent retries or delete failures.
 - [ ] **Step 3: Add the Linux CI job after qualification.** Use `ubuntu-24.04`, Node 24, pinned Rust/driver setup, dependency caches, root/API `npm ci`, root `npm test` including the new conversion tests, `python3 -m unittest discover -s scripts -p 'test_desktop_smoke.py' -v`, and one `npm run test:desktop -- --suite all`. Upload `artifacts/desktop/` with `if: always()`. Keep the Windows job; make the new job a real failure on assertion/capture failure rather than using `continue-on-error`. Repository branch-protection settings need not change automatically.
-- [ ] **Step 4: Verify the installed Windows path before a desktop PR.** On Windows, run `npm run tauri:build -- --config src-tauri/tauri.ci.conf.json`, install that exact MSI, record its hash/version, and execute both picker journeys, clipboard replacement, native date/time popup keyboard handling, timezone/DST choices, focus restoration, and sizing near desktop edges. Save screenshots/video and a result in the smoke document. Run the existing `npm run verify:installed:routing-smoke` when its documented runtime prerequisites are available, without claiming it covers the picker. If Windows access is unavailable, preserve that blocker and do not open the desktop/runtime PR under `AGENTS.md`.
+- [ ] **Step 4: Record Windows platform verification.** On Windows, run `npm run tauri:build -- --config src-tauri/tauri.ci.conf.json`, install that exact MSI, record its hash/version, and execute both picker journeys, clipboard replacement, native date/time popup keyboard handling, timezone/DST choices, focus restoration, and sizing near desktop edges. Save screenshots/video and a result in the smoke document. Run the existing `npm run verify:installed:routing-smoke` when its documented runtime prerequisites are available, without claiming it covers the picker. If Windows access is unavailable, retain `NOT RUN` as a platform limitation for this shared picker. Require exact installed-MSI evidence before PR/merge for Windows-specific changes and before Windows releases, under the dated amendment and `AGENTS.md`. Do not claim Linux proves Windows behavior.
 - [ ] **Step 5: Document and commit the result.** README links to the Linux command and Windows record. Document provider-mode configuration, failure evidence, qualification summary, and coding-agent review artifact references; do not invent successful evidence. Re-run affected commands only if fixes changed relevant behavior. Commit as `ci: add qualified Linux desktop smoke checks` once the qualification and intended CI changes are verified.
 
 ## Completion and execution handoff
 
-Deliverables are the setup recipe, one native runner with readable artifacts, the two small regressions fixed, the manual picker, and qualified CI. Installed Windows evidence controls PR/release readiness; unavailable provider access is explicitly separate from offline coverage.
+Deliverables are the setup recipe, one native runner with readable artifacts, the two small regressions fixed, the manual picker, and qualified CI. Shared desktop PR/merge readiness follows the amended Linux policy; Windows-specific PR/merge and Windows releases require exact installed-MSI evidence. Unavailable provider access is explicitly separate from offline coverage.
 
-This plan has been written and reviewed as a planning artifact, not executed. Recommended execution is native in this session because tasks share the runner and Overlay interfaces and the user requested low overhead. After plan review and execution-method selection, use the corresponding execution skill; do not begin implementation during planning.
+This plan records the approved implementation sequence. Current execution evidence and outstanding acceptance work are tracked in the Linux operating guide; unchecked steps here are not proof of current completion.

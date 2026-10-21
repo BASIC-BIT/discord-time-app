@@ -1,11 +1,17 @@
 # Installed Windows manual picker smoke record
 
-**Result: NOT RUN — Windows access/tooling is unavailable in this cloud task.**
+**Result: NOT RUN. Windows access/tooling is unavailable in this cloud task.**
 No MSI was built or installed here, and no Windows screenshots/video exist.
-Linux evidence does not establish WebView2 or installed-app behavior. Under
-`AGENTS.md`, desktop/runtime PR, merge, and release remain blocked until the
-installed MSI path is smoke-tested. The existing Windows build job is retained;
-its successful build alone cannot satisfy this record.
+Linux evidence does not establish WebView2, MSI, or Windows-specific behavior.
+
+Policy amendment, 2026-10-21: the shared picker does not change Windows packaging.
+This `NOT RUN` record is a platform limitation, not a blanket PR/merge blocker
+for shared UI. Shared desktop acceptance follows the [Linux operating guide](linux-desktop-testing.md).
+Under `AGENTS.md`, Windows-specific installer, updater, runtime, native integration,
+local SLM launcher, and installed-path changes require smoke evidence from the
+exact installed MSI before PR/merge. Every Windows release requires that evidence.
+The existing Windows build job is retained; its successful build alone cannot
+satisfy this record.
 
 ## Record to complete on the Windows test machine
 

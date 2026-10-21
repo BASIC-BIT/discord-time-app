@@ -1,6 +1,27 @@
 # Linux desktop feedback loop
 
-Status: approved in conversation. Implementation has not started. See [the combined implementation plan](../plans/2026-10-20-desktop-feedback-and-manual-picker.md) and [the manual picker design](2026-10-20-manual-datetime-picker-design.md).
+Status: approved in conversation. Execution evidence is maintained in the Linux operating guide. See [the combined implementation plan](../plans/2026-10-20-desktop-feedback-and-manual-picker.md) and [the manual picker design](2026-10-20-manual-datetime-picker-design.md).
+
+## Policy amendment, 2026-10-21
+
+The user authorized Linux cloud-container validation for shared desktop PR/merge.
+This amendment supersedes the original fixed 20-pass streak, new-managed-task
+restoration requirement, and blanket Windows-MSI PR/merge gate. Use the
+[Linux operating guide](../../linux-desktop-testing.md) for the current policy,
+commands, and blockers. Require targeted regression after a causal fix, relevant
+full smoke, and a small repeat sample justified by lifecycle changes. Preserve
+failures and use no silent retries. A fresh supported container with maintained
+setup, a clean checkout, and explicit dependency caches proves restoration;
+chat scratch runtime/sysroot files do not qualify.
+
+Shared UI/native API/SQLite/clipboard/hotkey/layout evidence must include
+screenshots, finalized video, and coding-agent review. Linux cannot prove
+WebView2, MSI, or Windows-specific behavior. Exact installed-MSI smoke remains
+required before PR/merge for Windows-specific installer, updater, runtime,
+native integration, local SLM launcher, and installed-path changes, and before
+Windows releases. The shared picker changes no Windows packaging; its Windows
+`NOT RUN` record is a platform limitation. Native keydown diagnosis and restoration
+remain pending; CI is not enabled by this amendment.
 
 ## Goal and scope
 
@@ -14,7 +35,7 @@ Coding-agent review is sufficient for v1. Independent LLM/VLM/video judging is d
 
 The supported environment contains Node 24, a pinned Rust toolchain and Tauri driver, WebKitGTK and its driver, Xvfb, a small window manager, D-Bus, X11 input/clipboard tools, and FFmpeg. Install native dependencies through the environment's supported setup mechanism at their expected system paths. Qualify that mechanism first; do not assume this worker permits system installation. If it cannot provide those paths, report the bootstrap as blocked. PRoot and a custom relocation layer are outside the maintained v1 design.
 
-The setup script checks prerequisites and can run again without damaging existing state. It does not depend on `/workspace/scratch`, onboarding helpers, a particular checkout path, or artifacts left by this chat. Record tested versions; the dependency recipe must also work from a fresh cloud task.
+The setup script checks prerequisites and can run again without damaging existing state. It does not depend on `/workspace/scratch`, onboarding helpers, a particular checkout path, or artifacts left by this chat. Record tested versions; prove the dependency recipe in a fresh supported container with maintained setup and a clean checkout, allowing explicit dependency caches.
 
 Each test run:
 
@@ -43,10 +64,19 @@ The coding agent inspects screenshots and representative recording frames for cl
 
 ## Acceptance and rollout
 
-Start with the cloud command. It must run successfully in a fresh cloud task, preserve useful evidence on failure, and leave no owned live app/helper processes or occupied resources behind.
+Start with the cloud command. Prove restoration under the amended policy above,
+preserve useful evidence on failure, and leave no owned app/helper processes or
+occupied resources behind.
 
-Before making native testing a required CI check, complete 20 consecutive full native runs, each using fresh application state and exercising hide/reopen. This is a one-time qualification and a focused check after changes to test lifecycle behavior, not work required after every UI edit. Any failure remains visible and breaks the qualification streak. Ordinary development runs the relevant scenarios once.
+After a causal fix, pass its targeted regression and the relevant full native
+suite. Justify a small fresh-state repeat sample for lifecycle changes, including
+hide/reopen when affected. Preserve failures and diagnose before rerunning.
+Ordinary development runs relevant scenarios with coding-agent visual review.
 
-After qualification, add a Linux job alongside the existing Windows workflow and upload artifacts even on failure. Reuse the same command. Existing API tests remain in place; model-backed tests run only in their explicitly configured mode. Changes that depend on installed-app behavior still require the installed Windows MSI smoke evidence specified in `AGENTS.md`.
+After restoration and native reliability are verified, add a Linux job alongside
+the existing Windows workflow and upload artifacts even on failure. Reuse the
+same command. Existing API tests remain in place; model-backed tests run only in
+their explicitly configured mode. Apply the scoped Windows gate above and in
+`AGENTS.md`.
 
 The picker design follows this specification. The testing setup must support both of its acceptance journeys: open, choose, copy; and type, resolve, adjust, copy. It does not determine the picker layout or expand v1 into a cross-platform release system.

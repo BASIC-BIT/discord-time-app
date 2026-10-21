@@ -2,6 +2,16 @@
 
 Status: approved in conversation. See [the combined implementation plan](../plans/2026-10-20-desktop-feedback-and-manual-picker.md).
 
+## Policy amendment, 2026-10-21
+
+Use the amended [Linux operating guide](../../linux-desktop-testing.md) for
+shared desktop PR/merge validation, restoration, repeat sampling, and current
+blockers. It supersedes the original fixed 20-pass, new-managed-task, and blanket
+Windows-MSI gates. The shared picker changes no Windows packaging; Windows
+`NOT RUN` is a tracked platform limitation. Exact installed-MSI evidence remains
+required for Windows-specific changes before PR/merge and for Windows releases.
+Linux cannot prove WebView2, MSI, or Windows-specific behavior.
+
 ## Intent and scope
 
 Support two equally important journeys in the desktop overlay: choose an exact date/time from scratch, and adjust an existing parsed timestamp. Reuse the existing seven Discord previews, format selection, and copy action. Keep the collapsed overlay compact and preserve the current natural-language workflow.
@@ -26,7 +36,7 @@ Opening focuses the date field. Native fields own their arrow keys and Tab navig
 
 Cancel restores focus to the opener. Apply moves focus to the selected result so a subsequent deliberate Enter can copy normally. Give buttons accessible names, expose expanded state on the calendar button, associate validation errors with fields, and update the footer hint while editing.
 
-Keep the existing 480px width. Include editor visibility and validation changes in content-driven native resizing, ensure controls/popups remain usable near screen edges, and keep result content scrollable if it exceeds the available desktop height. Verify native popup, focus, and Escape behavior in Linux and the installed Windows app.
+Keep the existing 480px width. Include editor visibility and validation changes in content-driven native resizing, ensure controls/popups remain usable near screen edges, and keep result content scrollable if it exceeds the available desktop height. Verify native popup, focus, and Escape behavior in Linux. Track installed Windows coverage separately under the amended platform policy.
 
 ## Correctness and ownership
 
@@ -51,4 +61,4 @@ Add these scenarios to the cloud desktop runner from the companion Linux design:
 
 Use focused deterministic tests for exact epoch conversion, seconds preservation, bounds, daylight-saving gaps/repeated times, and a late parser response after a manual commit. The timing regression may control a pending response; the native end-to-end journeys still use the actual application and sidecar. Capture meaningful states for coding-agent visual review.
 
-The combined implementation plan starts with a usable Linux runner, then implements the picker and adds its scenarios. The cloud design's repeat-run qualification is required before enforcing a CI gate, not before beginning picker work. Installed Windows MSI evidence remains required for the desktop changes under `AGENTS.md`.
+The combined implementation plan starts with a usable Linux runner, then implements the picker and adds its scenarios. Apply the amended validation and restoration policy above before enabling Linux CI. Installed Windows evidence follows the scoped gate in `AGENTS.md`.
