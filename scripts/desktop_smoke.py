@@ -604,8 +604,13 @@ def run_baseline(session: DesktopSession) -> None:
         ('caret insertion', [1, 1], 'x', '<xt:1780000000:F>'),
         ('caret deletion', [16, 16], None, '<t:1780000000:F'),
     ):
+        # A handled Escape must not be repropagated by WebKit after native hide.
+        # Observe the real event after React's handler, without synthesizing input.
+        s.evaluate('window.__escapeHandled=null; window.__observeEscape=e=>{if(e.key==="Escape") window.__escapeHandled=e.defaultPrevented;}; document.addEventListener("keydown",window.__observeEscape); return true')
         s.keys('Escape')
         wait_for('hide before imported edit', lambda: not s.window_visible())
+        escape_handled = s.evaluate('document.removeEventListener("keydown",window.__observeEscape); delete window.__observeEscape; const handled=window.__escapeHandled; delete window.__escapeHandled; return handled')
+        assert escape_handled is True, 'Overlay Escape hid the window without consuming the native keydown'
         s.set_clipboard(imported)
         s.keys('ctrl+shift+h')
         wait_for('reopen before imported edit', s.window_visible)
@@ -634,7 +639,7 @@ def run_baseline(session: DesktopSession) -> None:
             raise
         finally:
             s.evaluate('for(const name of ["keydown","keyup","beforeinput","input"]) document.removeEventListener(name,window.__editObserve); delete window.__editObserve; delete window.__editEvents; return true')
-    s.passed('clipboard_replacement', rows=5, editVariants=['selected all typing', 'selected format typing', 'caret insertion', 'caret deletion'])
+    s.passed('clipboard_replacement', rows=5, escapeConsumedBeforeHide=True, editVariants=['selected all typing', 'selected format typing', 'caret insertion', 'caret deletion'])
 
     s.phase = 'range previews'
     fill_fixture(s, '<t:1780000000:t> - <t:1780003600:t>')

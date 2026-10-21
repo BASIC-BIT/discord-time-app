@@ -743,6 +743,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     )) return;
 
     if (e.key === 'Escape') {
+      // Consume before hiding: WebKitGTK can otherwise replay this key after unmap
+      // and discard the first keydown on the next open.
+      e.preventDefault();
       void recordParserOutcome('dismissed');
       onClose();
     } else if (hasSelectableClarification) {
