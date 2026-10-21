@@ -46,8 +46,8 @@ must remain at the container's ordinary system paths. Creating a new managed
 task is not a separate gate.
 
 This amendment replaces the earlier fixed 20-pass, fresh-managed-task, and blanket
-installed-Windows gates. It does not clear the native keydown blocker, establish
-restoration, or enable CI; current status and historical evidence appear below.
+installed-Windows gates. Current acceptance, CI configuration, and retained
+historical failures appear below.
 
 ## Supported provisioning
 
@@ -120,6 +120,8 @@ export CARGO_HOME="${CARGO_HOME:-$PWD/.cache/linux-desktop/cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$PWD/.cache/linux-desktop/rustup}"
 export npm_config_cache="${npm_config_cache:-$PWD/.cache/linux-desktop/npm}"
 export RUSTUP_TOOLCHAIN=1.99.1
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_INCREMENTAL=0
 export PATH="$CARGO_HOME/bin:$PATH"
 bash scripts/setup-linux-desktop.sh --check
 ```
@@ -128,6 +130,65 @@ Install JavaScript dependencies from the lockfiles with `npm ci` and
 `npm --prefix api ci`. Setup does not read application `.env` files, configure
 models, or make provider calls. Keep transport proxy and CA configuration when
 isolating application credentials for offline tests.
+
+## Clean-checkout Docker recipe
+
+Run from the source checkout in a managed environment with Docker available.
+Check environment readiness and network policy first. The managed Docker client
+supplies its proxy defaults; keep its configuration unchanged. This recipe mounts
+the provided public proxy CA and combined system trust bundle read-only. It
+creates a tracked-files-only clone with empty dependency caches and no application
+state, `.env`, or chat runtime files. Keep the clone after the run to review its
+`artifacts/desktop/` evidence.
+
+```sh
+set -euo pipefail
+env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS \
+  -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+  docker --host=unix:///var/run/docker.sock info >/dev/null
+fresh_checkout="$(mktemp -d /tmp/hammer-desktop-checkout.XXXXXX)"
+git clone --local --no-hardlinks "$PWD" "$fresh_checkout"
+env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS \
+  -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+  docker --host=unix:///var/run/docker.sock run --rm -i --user 0:0 \
+  --mount "type=bind,src=$fresh_checkout,dst=/workspace/discord-time-app" \
+  --mount "type=bind,src=${CODEX_PROXY_CERT:?provided proxy CA required},dst=/run/proxy-ca.pem,readonly" \
+  --mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/combined-ca.pem,readonly \
+  -e NODE_EXTRA_CA_CERTS=/run/proxy-ca.pem \
+  -e SSL_CERT_FILE=/run/combined-ca.pem -e CURL_CA_BUNDLE=/run/combined-ca.pem \
+  -w /workspace/discord-time-app \
+  node:24-bookworm@sha256:14078204b6bb268c107ceff6d3c43f45a888105e5c2b18b14c32b3409d93a1b0 \
+  bash -se <<'CONTAINER'
+set -euo pipefail
+# Trust only this known bind checkout inside the owned ephemeral container.
+git config --global --add safe.directory /workspace/discord-time-app
+export CARGO_HOME="$PWD/.cache/linux-desktop/cargo"
+export RUSTUP_HOME="$PWD/.cache/linux-desktop/rustup"
+export npm_config_cache="$PWD/.cache/linux-desktop/npm"
+export RUSTUP_TOOLCHAIN=1.99.1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0
+export PATH="$CARGO_HOME/bin:$PATH"
+bash scripts/setup-linux-desktop.sh --install
+bash scripts/setup-linux-desktop.sh --check
+npm ci
+npm --prefix api ci
+test_state="$(mktemp -d)"
+DB_PATH="$test_state/usage.db" LANGFUSE_ENABLED=false TEMPORAL_FEATURE_PLAN_IR=false npm test
+command -v tauri-driver
+python3 -m unittest discover -s scripts -p 'test_desktop_smoke.py' -v
+npm run test:desktop -- --suite all
+CONTAINER
+echo "Evidence: $fresh_checkout/artifacts/desktop/"
+```
+
+The exact `safe.directory` entry fixes Git's dubious-ownership rejection when a
+root container reads a host-owned bind checkout. It changes only the ephemeral
+container's Git configuration. Do not use a wildcard or change host-global Git
+trust. A matching checkout UID is an alternative once system setup is complete.
+The declared dependency caches are `.cache/linux-desktop/{cargo,rustup,npm}` and
+Cargo's `src-tauri/target`. They start empty here; later runs may reuse only those
+dependency/build caches. The runner creates and cleans private application state
+for each desktop. No privileged mode, TLS bypass, or sandbox-disabling flags are
+needed. Never bake session CAs or credentials into an image.
 
 ## Native evidence and platform gates
 
@@ -303,23 +364,64 @@ exits 2 as blocked. This work ran offline only and made no model calls.
 
 ## Qualification and release record
 
-Restoration is **NOT YET RE-PROVEN** under the amended policy. The recipe's
-current-worker prerequisite pass is recorded above; it does not establish a
-clean-checkout full run in a fresh container without chat scratch runtime/sysroot
-files. Use the maintained setup and explicit cache contract above. Lack of fresh
-managed-task creation tooling is no longer a blocker.
+Clean-checkout restoration and native acceptance passed on 2026-10-21. A fresh
+tracked clone in the pinned `node:24-bookworm` container passed maintained
+setup/install/check, both `npm ci` commands, and a cold native build in 3m42s.
+No old Cargo, Rustup, npm, application state, scratch runtime, or sysroot files
+were reused. Root `npm test` passed offline with a private SQLite path at
+`4360e55`; the later transport change touches only the Python runner and its
+regression. Root tests also passed against that transport change in the original
+container, with zero model calls.
 
-Native reliability is **BLOCKED** pending diagnosis and a causal fix for the
-missing native keydown observation below. Then run its targeted regression, the
-relevant full suite, and a small repeat sample justified by the lifecycle change.
-The earlier 20-pass requirement is superseded; its failed runs remain evidence.
+The final fresh run at clean commit `8d9c7fb` passed `--suite all`, 32 named
+checks across four desktop sessions. Evidence is archived under
+`artifacts/desktop/fresh-container/20261021T063324-80b1fb-01/`. All four sessions
+exited 0, had empty cleanup error lists, and produced readable videos lasting
+41.917, 2.417, 8.917, and 6.75 seconds. All used executable SHA-256
+`6b7380e45eab67851ceacb60b44943171c9859047b3fa4c031afad67d461c5d7`.
+The updated Python boundary discovery passed all 12 tests in 12.609s, including
+the actual installed `tauri-driver` proxy regression with no skips. The initial
+fresh restoration at `4360e55` also passed all 32 checks in
+`artifacts/desktop/fresh-container/20261021T062813-915a7e-01/`.
 
-Linux CI is **NOT ENABLED**. `.github/workflows/build.yml` retains its existing
-Windows job. After restoration and native reliability are verified, add
-`ubuntu-24.04`, Node 24, Rust 1.99.1, tauri-driver 2.1.0, dependency caches,
-setup, root/API `npm ci`, root `npm test`, the Python boundary unittest command
-above, and one full native suite. Upload `artifacts/desktop/` with `if: always()`
-and fail on assertion/capture/cleanup errors, without `continue-on-error`.
+Two causes now have causal fixes and regressions. Consuming overlay Escape before
+native hide prevents WebKit's stale key-forwarding state from dropping the first
+keydown after reopen. The HTTP caller now uses stdlib `HTTPConnection`, reads
+the complete response, and closes its own connection without forcing upstream
+`Connection: close`. A controlled real-proxy regression reproduced the old
+WebKit/Hyper close-window race and passes with the fixed caller. It checks small
+and multiwrite responses without retries. After both fixes, a maintained
+`--suite all --repeat 2` invocation in the original container passed 32 checks per
+sample, preserving the same assertions. Two samples exercised fresh sessions and
+repeated hide/reopen, clipboard, and picker lifecycle transitions.
+
+Linux CI is configured in `.github/workflows/build.yml` beside the unchanged
+Windows job. It runs on `ubuntu-24.04` inside the pinned bookworm image, validates
+Node 24, caches the declared dependencies/build output, runs maintained setup,
+both lockfile installs, offline root tests, all Python boundaries with the
+installed proxy on `PATH`, and one full native suite. Assertion, capture, and
+cleanup failures fail the job. It uploads `artifacts/desktop/` with
+`if: always()`. The YAML and shell commands were checked locally; no GitHub
+Actions execution is claimed. GitHub's runner, cache, and artifact integration
+remain unverified until the workflow runs there.
+
+The first fresh invocation stopped before build because root did not trust the
+host-owned Git checkout. Its failure remains in
+`artifacts/desktop/fresh-container/20261021T062741-9289fe-01/`. Trusting only the
+exact bind path inside that owned container corrected provisioning before the
+successful run. The Docker recipe above includes that step.
+
+Earlier failures remain below as historical evidence. The earlier 20-pass
+requirement is superseded.
+
+Final fresh-run visual review is recorded in
+`artifacts/desktop/fresh-container/20261021T063324-80b1fb-01/controller-visual-review.json`.
+The coding agent inspected four screenshots and a main-video frame at 20s.
+Fields, seconds, timezone, actions, the retained DST offset, and the last result
+after keyboard scrolling were readable. This is sampled review, without full
+video playback or an independent model judge. The earlier fresh-run 2s resize
+frame still records a transient blank lower rectangle; settled controls were
+readable. The final sample does not establish that transient repaint is absent.
 
 On 2026-10-21, the invocation under the former 20-pass policy of
 `npm run test:desktop -- --suite all --repeat 20` exited 1 and stopped at run 2:
@@ -347,8 +449,9 @@ observation past X server raw input; it does not establish where native delivery
 or WebKit processing lost the keydown. The first diagnostic directory
 `task7-raw-input-diagnostic/` preserves an observer-setup failure caused by absent
 `xmodmap`, corrected by using Xlib keycode lookup in the second diagnostic.
-Neither diagnostic establishes acceptance. No causal fix, timeout increase,
-retry, or second qualification invocation was made.
+Neither diagnostic established acceptance. The later Escape fix and regression
+described above resolved the stale key-forwarding cause without a timeout
+increase or retry.
 
 Installed Windows acceptance is **NOT RUN**; see the
 [exact MSI checklist and record](manual-picker-windows-smoke.md). Linux native
@@ -360,11 +463,15 @@ Historical current-product evidence at commit `d1d7b32`: picker
 `artifacts/desktop/20261021T000605-0794eb-01/` passed 20 named checks; full suite
 `artifacts/desktop/20261021T000713-3bbdee-01/` passed 32. Both used executable
 SHA-256 `7f8537ad38052330dc24e6029e7016b1ac08c0560f1268742cc607b75b9b1216`.
-These passes do not erase earlier missing native keydown, unexpected date focus
+These passes did not erase earlier missing native keydown, unexpected date focus
 loss, or WebDriver `RemoteDisconnected` observations. The retained baseline
 failure at `artifacts/desktop/20261021T000007-f4af3b-01/` recorded only keyup during
-caret deletion. No root cause or reliability fix has been established for those
-observations.
+caret deletion. The later Escape and transport fixes address their proven
+causes; no causal fix is claimed for the separate historical date-focus
+observation. The retained post-Escape full failure at
+`artifacts/desktop/20261021T061902-b7fcdf-01/` passed all four native edit variants
+before stopping on `RemoteDisconnected`. The subsequent transport regression
+reproduced that failure class through the real proxy before fixing the caller.
 
 Coding-agent visual review is documented in
 `artifacts/desktop/20261020T234832-cc5360-01/controller-visual-review.json`:

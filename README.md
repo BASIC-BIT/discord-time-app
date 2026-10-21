@@ -70,9 +70,12 @@ On a supported Linux environment, run `npm run test:desktop -- --suite all` for
 the actual Tauri app, bundled API, native keyboard/clipboard, and picker checks.
 See [Linux setup, coverage, evidence, and qualification status](docs/linux-desktop-testing.md).
 Shared desktop PR/merge validation uses native Linux evidence and coding-agent
-visual review. Native keydown delivery is still under diagnosis; restoration has
-not yet been re-proven under the updated policy, and Linux CI is not enabled.
-The operating guide records the current blockers and retained failures.
+visual review. The Escape keydown and WebDriver transport causes are fixed;
+clean-checkout restoration passed all 32 native checks and all 12 runner boundary
+tests in a fresh supported container. The build workflow now configures the same
+Linux environment and uploads desktop evidence. This configuration has not yet
+run on GitHub. The operating guide records commands, review limits, and retained
+failures.
 
 The [installed Windows MSI checklist and result](docs/manual-picker-windows-smoke.md)
 is **NOT RUN** because Windows access is unavailable. It tracks WebView2 and
