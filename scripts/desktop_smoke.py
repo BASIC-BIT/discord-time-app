@@ -931,6 +931,8 @@ def run_picker_extended(s):
     s.passed('return_to_text_and_reopen')
 
     run_picker_range_keyboard(s)
+    run_picker_pointer(s)
+    run_picker_pointer(s, single=True)
 
     s.phase = 'range_to_single_apply_and_cancel'
     fill_fixture(s, '<t:1780000000:t> - <t:1780003600:t>')
@@ -1012,6 +1014,73 @@ def run_picker_range_keyboard(s):
     s.keys('ctrl+shift+h')
     wait_for('reopen after range keyboard checks', s.window_visible)
     s.passed('range_keyboard_navigation_and_copy', nativeKeys=['Tab', 'Shift+Tab', 'Up', 'Down', 'Return', 'space', 'Escape'])
+
+
+def run_picker_pointer(s, *, single=False):
+    kind = 'single' if single else 'range'
+    selected_format = 6 if single else 4
+    s.phase = kind + '_cancel_preserves_selection_under_stationary_pointer'
+    expression = '<t:1780000000:f>' if single else '<t:1780000000:t> - <t:1780003600:t>'
+    fill_fixture(s, expression)
+    wait_for('pointer results ready', lambda: s.evaluate('return document.querySelectorAll(".row").length') == (7 if single else 5))
+    window_id = s.command('xdotool', 'search', '--onlyvisible', '--name', '^HammerOverlay$').splitlines()[0]
+    # Leave room for either layout so desktop-edge clamping cannot change the target.
+    s.command('xdotool', 'windowmove', window_id, '200', '50')
+    s.settled_geometry()
+    codes = s.evaluate('return Array.from(document.querySelectorAll(".format-code"), x=>x.textContent)')
+    def selected_index():
+        return s.evaluate('return Array.from(document.querySelectorAll(".row")).indexOf(document.querySelector(".row.selected"))')
+    first_box = s.evaluate('const r=document.querySelector(".row").getBoundingClientRect(); return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]')
+    s.keys(*(['Down', 'Down'] if single else ['Up']))
+    wait_for('deliberately selected last format', lambda: selected_index() == selected_format)
+    open_picker(s, keyboard=True)
+    s.evaluate('''window.__rangePointerEvents=[]; window.__rangePointerObserve=e=>{
+      window.__rangePointerEvents.push({type:e.type,timeStamp:e.timeStamp,key:e.key,x:e.screenX,y:e.screenY,
+        dx:e.movementX,dy:e.movementY,editor:!!document.querySelector('#manual-date'),
+        target:e.target.tagName,classes:e.target.className});
+    }; for(const type of ['mousemove','mouseover','keydown']) document.addEventListener(type,window.__rangePointerObserve,true); return true''')
+    # Move only while results are unmounted, then keep this actual X11 pointer
+    # over the future first row through native keyboard cancellation and layout.
+    s.command('xdotool', 'mousemove', '--window', window_id, *map(str, first_box))
+    before_pointer = s.command('xdotool', 'getmouselocation', '--shell')
+    s.keys('Escape')
+    wait_for('results remounted after keyboard cancel', lambda: s.evaluate('return document.querySelectorAll(".row").length') == (7 if single else 5))
+    s.capture(f'picker-{kind}-stationary-cancel')
+    after_pointer = s.command('xdotool', 'getmouselocation', '--shell')
+    hovered = s.evaluate('return Array.from(document.querySelectorAll(".row")).findIndex(row=>row.matches(":hover"))')
+    details = {'beforeIndex': selected_format, 'afterIndex': selected_index(), 'expectedCode': codes[selected_format],
+               'actualCode': selected_code(s), 'hoveredIndex': hovered,
+               'beforePointer': before_pointer, 'afterPointer': after_pointer,
+               'events': s.evaluate('for(const type of ["mousemove","mouseover","keydown"]) document.removeEventListener(type,window.__rangePointerObserve,true); const events=window.__rangePointerEvents; delete window.__rangePointerObserve; delete window.__rangePointerEvents; return events')}
+    s.metadata[kind + 'CancelPointer'] = details
+    assert before_pointer == after_pointer, details
+    assert hovered == 0, details
+    assert s.evaluate('return Array.from(document.querySelectorAll(".format-code"), x=>x.textContent)') == codes, details
+    assert selected_index() == selected_format and selected_code(s) == codes[selected_format], details
+    s.set_clipboard('before cancelled result copy')
+    s.keys(*(['Tab', 'Tab', 'Return'] if single else ['Tab', 'Return']))
+    wait_for('cancelled result exact selected-format copy', lambda: s.clipboard() == codes[selected_format])
+    wait_for('cancelled result copy hides', lambda: not s.window_visible())
+
+    s.set_clipboard('range movement fixture')
+    s.keys('ctrl+shift+h')
+    wait_for('reopen for actual range mouse movement', s.window_visible)
+    fill_fixture(s, expression)
+    wait_for('result restored for real movement', lambda: selected_index() == (4 if single else 0))
+    s.settled_geometry()
+    box = s.evaluate('const r=document.querySelectorAll(".row")[2].getBoundingClientRect(); return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]')
+    s.command('xdotool', 'mousemove', '--window', window_id, *map(str, box))
+    wait_for('actual pointer movement selects third range', lambda: selected_index() == 2 and selected_code(s) == codes[2])
+    s.capture(f'picker-{kind}-real-movement')
+    s.set_clipboard('before moved range copy')
+    s.keys('Return')
+    wait_for('real movement exact range copy', lambda: s.clipboard() == codes[2])
+    wait_for('real movement copy hides', lambda: not s.window_visible())
+    s.set_clipboard('range pointer fixture complete')
+    s.keys('ctrl+shift+h')
+    wait_for('reopen after range pointer checks', s.window_visible)
+    s.passed(kind + '_cancel_preserves_selection_under_stationary_pointer', selectedIndex=selected_format,
+             copiedCode=codes[selected_format], realMovementIndex=2, realMovementCopiedCode=codes[2])
 
 
 def install_pending_fixture(s, command='parse_time_with_local_service', verification=False):

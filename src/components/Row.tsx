@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { formats, formatDiscordTimestamp, getFormatLabel } from '../lib/formats';
 
 interface RowProps {
@@ -12,6 +12,7 @@ interface RowProps {
 
 export function Row({ epoch, formatIndex, isSelected, isTentative = false, onCopyAndClose, onMouseEnter }: RowProps) {
   const [copying, setCopying] = useState(false);
+  const mountedAt = useRef(performance.now());
   
   const format = formats[formatIndex];
   const discordCode = formatDiscordTimestamp(epoch, formatIndex);
@@ -46,6 +47,8 @@ export function Row({ epoch, formatIndex, isSelected, isTentative = false, onCop
       }}
       onClick={handleClick}
       onMouseMove={event => {
+        // WebKit can replay pre-mount motion with nonzero deltas after layout changes.
+        if (event.timeStamp < mountedAt.current) return;
         if (event.movementX !== 0 || event.movementY !== 0) onMouseEnter();
       }}
       style={{ cursor: 'pointer' }}

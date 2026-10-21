@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { formatDiscordRange, getRangeLabel, rangeFormats } from '../lib/formats';
 import type { ParseRangeResult } from '../lib/api-client';
 
@@ -13,6 +13,7 @@ interface RangeRowProps {
 
 export function RangeRow({ range, formatIndex, isSelected, isTentative = false, onCopyAndClose, onMouseEnter }: RangeRowProps) {
   const [copying, setCopying] = useState(false);
+  const mountedAt = useRef(performance.now());
   const format = rangeFormats[formatIndex];
   const discordCode = formatDiscordRange(range, formatIndex);
   const preview = getRangeLabel(range, formatIndex);
@@ -44,7 +45,11 @@ export function RangeRow({ range, formatIndex, isSelected, isTentative = false, 
         }
       }}
       onClick={handleClick}
-      onMouseEnter={onMouseEnter}
+      onMouseMove={event => {
+        // WebKit can replay pre-mount motion with nonzero deltas after layout changes.
+        if (event.timeStamp < mountedAt.current) return;
+        if (event.movementX !== 0 || event.movementY !== 0) onMouseEnter();
+      }}
       style={{ cursor: 'pointer' }}
     >
       <div className="row-content">
