@@ -39,6 +39,7 @@ A desktop overlay application for quickly converting natural language time expre
 
 - **Global Hotkey:** Press `Ctrl+Shift+H` to open the overlay
 - **Input:** Type a natural language time expression (e.g., "tomorrow at 2pm", "next Friday")
+- **Choose or adjust:** Open the calendar button for a manual date/time, or activate a single timestamp result to adjust it. The editor uses your device timezone and preserves seconds. Apply previews the result; a separate Enter copies it. Cancel discards the draft, and **Use text** returns a manual result to parsing.
 - **Navigate:** Use ↑/↓ arrows to see all 7 Discord timestamp formats
 - **Copy:** Press Enter to copy the selected format to clipboard
 - **Close:** Press Escape to close the overlay
@@ -61,6 +62,31 @@ A desktop overlay application for quickly converting natural language time expre
 - **Smart suggestions** based on your most-used formats
 - **Global hotkey** support
 - **Clipboard integration** for seamless workflow
+- **Manual date/time picker** with seven previews, timezone offsets, and explicit daylight-saving choices; works without the parser API
+
+## Desktop verification
+
+On a supported Linux environment, run `npm run test:desktop -- --suite all` for
+the actual Tauri app, bundled API, native keyboard/clipboard, and picker checks.
+See [Linux setup, coverage, evidence, and qualification status](docs/linux-desktop-testing.md).
+Shared desktop PR/merge validation uses native Linux evidence and coding-agent
+visual review. The Escape keydown and WebDriver transport causes are fixed;
+clean-checkout restoration passed all 32 native checks and all 12 runner boundary
+tests in a fresh supported container. Hosted run
+[39557777802](https://github.com/BASIC-BIT/discord-time-app/actions/runs/39557777802)
+at head `4fb4a3a` passed offline tests, all 12 boundaries, all 32 native checks,
+four readable recordings, empty cleanup error lists, evidence upload/download,
+and cache save. Run
+[39622968439](https://github.com/BASIC-BIT/discord-time-app/actions/runs/39622968439)
+at head `4a53871` also passed Linux and Windows CI. The operating guide records
+commands, source revisions, review limits, and retained failures.
+
+The [installed Windows MSI checklist and result](docs/manual-picker-windows-smoke.md)
+is **NOT RUN** because Windows access is unavailable. It tracks WebView2 and
+Windows behavior that Linux cannot prove. The shared picker does not change
+Windows packaging, so this limitation alone does not block its PR/merge.
+`AGENTS.md` requires exact installed-MSI evidence for Windows-specific changes
+before PR/merge and for every Windows release.
 
 ## Architecture
 
