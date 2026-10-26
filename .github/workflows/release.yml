@@ -231,10 +231,11 @@ jobs:
           ## HammerOverlay ${{ env.VERSION }}
 
           ### What's New
-          - Discord timestamps now participate in semantic time arithmetic instead of silently discarding meaningful surrounding language.
-          - Ambiguous clock composition can return selectable AM/PM alternatives in the overlay.
-          - Superseded parse requests are cancelled through the desktop and backend path to avoid wasted local-model work.
-          - The promoted Qwen3.5-0.8B V22 Temporal Plan-IR adapter adds broader timestamp, shift, clock-order, typo, clarification, range-format, and infix coverage.
+          - Choose a date and time directly from the overlay, or edit an existing timestamp while preserving its format and seconds.
+          - Preview all Discord timestamp formats before copying. Cancel keeps the original result, and Use text returns to text parsing.
+          - Manual entry works without the parser API and handles daylight-saving gaps and repeated times explicitly.
+          - Improved keyboard navigation, focus, format selection, and layout on short desktops.
+          - Added real Linux desktop validation with screenshots and video captures.
 
           ### Installation
           1. Download the MSI installer below.
@@ -258,7 +259,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "HammerOverlay ${{ env.VERSION }}" \
             --notes-file release-notes.md \
-            --latest
+            --draft
 
       - name: Print build summary
         shell: bash
@@ -270,8 +271,8 @@ jobs:
           echo ""
           echo "📝 Next steps:"
           echo "1. Verify the release assets were uploaded correctly"
-          echo "2. Test the auto-updater with the new version"
-          echo "3. Announce the release to users"
+          echo "2. Smoke-test the exact installed MSI before publishing"
+          echo "3. Publish the draft as latest after validation"
           
           # List uploaded files
           echo ""
