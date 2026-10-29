@@ -65,6 +65,13 @@ const LOCAL_SLM_DEFAULT_DOCKER_IMAGE: &str =
 const LOCAL_SLM_ADAPTER_PACKAGE_URL: &str = "https://github.com/BASIC-BIT/discord-time-app/releases/download/local-slm-runtime-qwen35-range-format-infix-v22/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora.zip";
 const LOCAL_SLM_ADAPTER_PACKAGE_SHA256: &str =
     "fcd12698c93736cfa1a62ec49e93e1c50919a45c42548beb8322f51a1d3a84ce";
+const SLM_MODE_LOCAL: &str = "local";
+const SLM_MODE_HOSTED: &str = "hosted";
+// Hosted SLM defaults. Fill these in the release that turns the hosted endpoint on
+// (see docs/HOSTED_SLM.md); while they are empty, hosted mode falls back to local.
+const HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL: &str = "";
+const HOSTED_SLM_DEFAULT_API_KEY: &str = "";
+const HOSTED_SLM_DEFAULT_MODEL: &str = LOCAL_SLM_DEFAULT_MODEL;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -102,6 +109,9 @@ pub struct LocalSlmStatus {
     pub ready: bool,
     pub state: String,
     pub message: String,
+    /// Effective runtime after fallback: "local" or "hosted".
+    pub mode: String,
+    pub api_key_configured: bool,
     pub endpoint_base_url: String,
     pub model: String,
     pub adapter_path: String,
@@ -186,6 +196,12 @@ pub struct AppSettings {
     pub local_slm_adapter_path: String,
     pub local_slm_docker_image: String,
     pub local_slm_startup_timeout_seconds: u64,
+    /// "local" runs the Docker runtime on this machine; "hosted" sends Plan-IR
+    /// requests to a remote OpenAI-compatible endpoint and never touches Docker.
+    pub slm_mode: String,
+    pub hosted_slm_endpoint_base_url: String,
+    pub hosted_slm_model: String,
+    pub hosted_slm_api_key: String,
 }
 
 impl Default for AppSettings {
@@ -210,6 +226,10 @@ impl Default for AppSettings {
             local_slm_adapter_path: LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string(),
             local_slm_docker_image: LOCAL_SLM_DEFAULT_DOCKER_IMAGE.to_string(),
             local_slm_startup_timeout_seconds: LOCAL_SLM_DEFAULT_STARTUP_TIMEOUT_SECONDS,
+            slm_mode: SLM_MODE_LOCAL.to_string(),
+            hosted_slm_endpoint_base_url: HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL.to_string(),
+            hosted_slm_model: HOSTED_SLM_DEFAULT_MODEL.to_string(),
+            hosted_slm_api_key: HOSTED_SLM_DEFAULT_API_KEY.to_string(),
         }
     }
 }
@@ -541,18 +561,69 @@ fn docker_image_installed(image: &str) -> bool {
     command_success_with_timeout(command, Duration::from_secs(3))
 }
 
-fn apply_local_slm_api_env(command: &mut Command, settings: &AppSettings) {
+#[derive(Debug, Clone, PartialEq)]
+struct HostedSlmEndpoint {
+    base_url: String,
+    model: String,
+    api_key: Option<String>,
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+/// Resolves the hosted endpoint when hosted mode is selected and usable.
+/// Returns `None` (meaning: use the local runtime) when the mode is local, no URL is
+/// configured, or the URL would send the bearer key over plain HTTP to a remote host.
+fn hosted_slm_endpoint(settings: &AppSettings) -> Option<HostedSlmEndpoint> {
+    if settings.slm_mode.trim() != SLM_MODE_HOSTED {
+        return None;
+    }
+    let base_url = non_empty(&settings.hosted_slm_endpoint_base_url)
+        .or_else(|| non_empty(HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL))?
+        .trim_end_matches('/')
+        .to_string();
+    let secure = base_url.starts_with("https://") || parse_local_http_url(&base_url).is_some();
+    if !secure {
+        return None;
+    }
+    let model = non_empty(&settings.hosted_slm_model)
+        .or_else(|| non_empty(HOSTED_SLM_DEFAULT_MODEL))
+        .unwrap_or(LOCAL_SLM_DEFAULT_MODEL)
+        .to_string();
+    let api_key = non_empty(&settings.hosted_slm_api_key)
+        .or_else(|| non_empty(HOSTED_SLM_DEFAULT_API_KEY))
+        .map(str::to_string);
+    Some(HostedSlmEndpoint {
+        base_url,
+        model,
+        api_key,
+    })
+}
+
+fn apply_slm_api_env(command: &mut Command, settings: &AppSettings) {
     if !settings.local_slm_enabled {
         return;
     }
 
+    let (base_url, model) = match hosted_slm_endpoint(settings) {
+        Some(hosted) => {
+            if let Some(api_key) = hosted.api_key {
+                command.env("TEMPORAL_PLAN_IR_ENDPOINT_API_KEY", api_key);
+            }
+            (hosted.base_url, hosted.model)
+        }
+        None => (
+            normalized_local_slm_endpoint(settings),
+            local_slm_model(settings),
+        ),
+    };
+
     command
         .env("TEMPORAL_FEATURE_PLAN_IR", "true")
-        .env(
-            "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL",
-            normalized_local_slm_endpoint(settings),
-        )
-        .env("TEMPORAL_PLAN_IR_ENDPOINT_MODEL", local_slm_model(settings))
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL", base_url)
+        .env("TEMPORAL_PLAN_IR_ENDPOINT_MODEL", model)
         .env("TEMPORAL_PLAN_IR_ENDPOINT_INSTRUCTION_PRESET", "minimal")
         .env("TEMPORAL_PLAN_IR_ENDPOINT_API", "chat")
         .env("TEMPORAL_PLAN_IR_ENDPOINT_PROMPT_FORMAT", "chat")
@@ -847,8 +918,24 @@ fn local_slm_status_for_settings(
     last_output: Option<String>,
     failure: Option<String>,
 ) -> LocalSlmStatus {
-    let endpoint_base_url = normalized_local_slm_endpoint(settings);
-    let model = local_slm_model(settings);
+    let hosted = hosted_slm_endpoint(settings);
+    let mode = if hosted.is_some() {
+        SLM_MODE_HOSTED
+    } else {
+        SLM_MODE_LOCAL
+    };
+    let api_key_configured = hosted
+        .as_ref()
+        .map(|endpoint| endpoint.api_key.is_some())
+        .unwrap_or(false);
+    let endpoint_base_url = hosted
+        .as_ref()
+        .map(|endpoint| endpoint.base_url.clone())
+        .unwrap_or_else(|| normalized_local_slm_endpoint(settings));
+    let model = hosted
+        .as_ref()
+        .map(|endpoint| endpoint.model.clone())
+        .unwrap_or_else(|| local_slm_model(settings));
     let adapter_path = local_slm_adapter_path(settings);
     let install_root_path = local_slm_install_root(app).ok();
     let install_root = install_root_path
@@ -882,6 +969,8 @@ fn local_slm_status_for_settings(
             ready,
             state: state.to_string(),
             message,
+            mode: mode.to_string(),
+            api_key_configured,
             endpoint_base_url: endpoint_base_url.clone(),
             model: model.clone(),
             adapter_path: adapter_path.clone(),
@@ -915,6 +1004,20 @@ fn local_slm_status_for_settings(
             false,
             "disabled",
             "Local SLM is disabled. Deterministic parsing remains available.".to_string(),
+            last_output,
+            false,
+            false,
+        );
+    }
+
+    if hosted.is_some() {
+        // ponytail: not probed from Rust (no HTTPS client here); the sidecar reports
+        // endpoint failures per request and falls back to deterministic parsing.
+        return build_status(
+            true,
+            true,
+            "hosted",
+            "Hosted SLM endpoint is configured. The parser sidecar sends Plan-IR requests there; Docker and local runtime files are not used.".to_string(),
             last_output,
             false,
             false,
@@ -1216,6 +1319,7 @@ fn pull_local_slm_docker_image_sync(app: &AppHandle) -> Result<LocalSlmStatus, S
 fn start_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
     let settings = load_app_settings(app)?;
     if !settings.local_slm_enabled
+        || hosted_slm_endpoint(&settings).is_some()
         || local_slm_endpoint_ready(&settings)
         || slm_state_is_starting(app)
     {
@@ -1687,7 +1791,7 @@ fn start_time_parser_service(app: &AppHandle) {
             )
             .env("TELEMETRY_HMAC_KEY_ID", "desktop-derived-v1");
     }
-    apply_local_slm_api_env(&mut command, &settings);
+    apply_slm_api_env(&mut command, &settings);
 
     if let Some(db_path) = time_parser_db_path(app) {
         command.env("DB_PATH", db_path);
@@ -1829,6 +1933,90 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings, installed_launcher: Op
         settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
     }
     settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+}
+
+#[cfg(test)]
+mod hosted_slm_endpoint_tests {
+    use super::*;
+
+    fn hosted_settings(url: &str, key: &str) -> AppSettings {
+        AppSettings {
+            local_slm_enabled: true,
+            slm_mode: SLM_MODE_HOSTED.to_string(),
+            hosted_slm_endpoint_base_url: url.to_string(),
+            hosted_slm_api_key: key.to_string(),
+            ..AppSettings::default()
+        }
+    }
+
+    fn env_of(command: &Command, name: &str) -> Option<String> {
+        command
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == name)
+            .and_then(|(_, value)| value.map(|v| v.to_string_lossy().to_string()))
+    }
+
+    #[test]
+    fn local_mode_never_resolves_a_hosted_endpoint() {
+        let settings = AppSettings {
+            hosted_slm_endpoint_base_url: "https://slm.example.com/v1".to_string(),
+            ..AppSettings::default()
+        };
+        assert_eq!(hosted_slm_endpoint(&settings), None);
+    }
+
+    #[test]
+    fn hosted_mode_without_a_url_falls_back_to_local() {
+        let settings = hosted_settings("   ", "key");
+        assert_eq!(hosted_slm_endpoint(&settings), None);
+        let mut command = Command::new("node");
+        apply_slm_api_env(&mut command, &settings);
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL").as_deref(),
+            Some(LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL)
+        );
+        assert_eq!(env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_API_KEY"), None);
+    }
+
+    #[test]
+    fn hosted_mode_refuses_plain_http_to_remote_hosts() {
+        let settings = hosted_settings("http://slm.example.com/v1", "key");
+        assert_eq!(hosted_slm_endpoint(&settings), None);
+        let local = hosted_settings("http://127.0.0.1:9000/v1", "");
+        assert!(hosted_slm_endpoint(&local).is_some());
+    }
+
+    #[test]
+    fn hosted_mode_points_the_sidecar_at_the_remote_endpoint() {
+        let settings = hosted_settings("https://slm.example.com/v1/", "secret-key");
+        let endpoint = hosted_slm_endpoint(&settings).expect("hosted endpoint");
+        assert_eq!(endpoint.base_url, "https://slm.example.com/v1");
+        assert_eq!(endpoint.model, LOCAL_SLM_DEFAULT_MODEL);
+
+        let mut command = Command::new("node");
+        apply_slm_api_env(&mut command, &settings);
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL").as_deref(),
+            Some("https://slm.example.com/v1")
+        );
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_API_KEY").as_deref(),
+            Some("secret-key")
+        );
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_API").as_deref(),
+            Some("chat")
+        );
+    }
+
+    #[test]
+    fn disabled_slm_sets_no_plan_ir_env_in_either_mode() {
+        let mut settings = hosted_settings("https://slm.example.com/v1", "key");
+        settings.local_slm_enabled = false;
+        let mut command = Command::new("node");
+        apply_slm_api_env(&mut command, &settings);
+        assert_eq!(env_of(&command, "TEMPORAL_FEATURE_PLAN_IR"), None);
+    }
 }
 
 #[cfg(test)]

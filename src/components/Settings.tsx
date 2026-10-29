@@ -22,6 +22,10 @@ interface AppSettings {
   local_slm_adapter_path: string;
   local_slm_docker_image: string;
   local_slm_startup_timeout_seconds: number;
+  slm_mode: 'local' | 'hosted';
+  hosted_slm_endpoint_base_url: string;
+  hosted_slm_model: string;
+  hosted_slm_api_key: string;
 }
 
 interface LocalSlmStatus {
@@ -30,6 +34,8 @@ interface LocalSlmStatus {
   ready: boolean;
   state: string;
   message: string;
+  mode: 'local' | 'hosted';
+  apiKeyConfigured: boolean;
   endpointBaseUrl: string;
   model: string;
   adapterPath: string;
@@ -64,6 +70,10 @@ const defaultSettings: AppSettings = {
   local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora",
   local_slm_docker_image: "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8",
   local_slm_startup_timeout_seconds: 360,
+  slm_mode: 'local',
+  hosted_slm_endpoint_base_url: "",
+  hosted_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
+  hosted_slm_api_key: "",
 };
 
 interface SettingsProps {
@@ -153,7 +163,9 @@ export function Settings({ onClose }: SettingsProps) {
         autoStart: settings.local_slm_auto_start,
         ready: false,
         state: 'unknown',
-        message: 'Could not read Local SLM status.',
+        message: 'Could not read SLM status.',
+        mode: settings.slm_mode,
+        apiKeyConfigured: false,
         endpointBaseUrl: settings.local_slm_endpoint_base_url,
         model: settings.local_slm_model,
         adapterPath: settings.local_slm_adapter_path,
@@ -236,12 +248,17 @@ export function Settings({ onClose }: SettingsProps) {
     return (
       persistedSettings.local_slm_enabled !== nextSettings.local_slm_enabled ||
       persistedSettings.local_slm_endpoint_base_url !== nextSettings.local_slm_endpoint_base_url ||
-      persistedSettings.local_slm_model !== nextSettings.local_slm_model
+      persistedSettings.local_slm_model !== nextSettings.local_slm_model ||
+      persistedSettings.slm_mode !== nextSettings.slm_mode ||
+      persistedSettings.hosted_slm_endpoint_base_url !== nextSettings.hosted_slm_endpoint_base_url ||
+      persistedSettings.hosted_slm_model !== nextSettings.hosted_slm_model ||
+      persistedSettings.hosted_slm_api_key !== nextSettings.hosted_slm_api_key
     );
   };
 
   const settingsDirty = JSON.stringify(settings) !== JSON.stringify(persistedSettings);
   const slmActionDisabled = slmBusy || settingsDirty;
+  const hostedSelected = settings.slm_mode === 'hosted';
 
   const saveSettings = async () => {
     try {
@@ -268,7 +285,7 @@ export function Settings({ onClose }: SettingsProps) {
       }
       setPersistedSettings(settings);
       const status = await refreshSlmStatus();
-      if (settings.local_slm_enabled && settings.local_slm_auto_start && status?.state !== 'ready') {
+      if (settings.local_slm_enabled && settings.local_slm_auto_start && status?.state !== 'ready' && status?.mode !== 'hosted') {
         void startLocalSlm();
       }
       
@@ -399,9 +416,9 @@ export function Settings({ onClose }: SettingsProps) {
           </div>
 
           <div className="setting-group local-slm-group">
-            <h3>Local SLM Runtime</h3>
+            <h3>SLM Parsing</h3>
             <p className="setting-help">
-              The local small language model proposes Temporal Plan-IR. HammerOverlay still validates and executes timestamps deterministically. Runtime files install into app data; the model package and Docker image are installed separately.
+              The small language model proposes Temporal Plan-IR. HammerOverlay still validates and executes timestamps deterministically. Run it on this machine through Docker, or point the parser at a hosted endpoint.
             </p>
             <label className="setting-item">
               <input
@@ -409,8 +426,62 @@ export function Settings({ onClose }: SettingsProps) {
                 checked={settings.local_slm_enabled}
                 onChange={(e) => handleSettingChange('local_slm_enabled', e.target.checked)}
               />
-              <span>Enable local SLM parsing</span>
+              <span>Enable SLM parsing</span>
             </label>
+            <div className="setting-item">
+              <label htmlFor="slm-mode">Runtime:</label>
+              <select
+                id="slm-mode"
+                value={settings.slm_mode}
+                disabled={!settings.local_slm_enabled}
+                onChange={(e) => handleSettingChange('slm_mode', e.target.value)}
+              >
+                <option value="local">Local Docker runtime</option>
+                <option value="hosted">Hosted endpoint</option>
+              </select>
+            </div>
+            {hostedSelected && (
+              <>
+                <div className="setting-item setting-item-column">
+                  <label htmlFor="hosted-slm-endpoint">Hosted endpoint:</label>
+                  <input
+                    type="text"
+                    id="hosted-slm-endpoint"
+                    value={settings.hosted_slm_endpoint_base_url}
+                    onChange={(e) => handleSettingChange('hosted_slm_endpoint_base_url', e.target.value)}
+                    className="wide-input"
+                    placeholder="https://slm.example.com/v1"
+                  />
+                  <p className="setting-help setting-help-compact">
+                    OpenAI-compatible chat completions base URL. Must be https. Leave blank to use the build default; if no default is configured, the local runtime is used instead.
+                  </p>
+                </div>
+                <div className="setting-item setting-item-column">
+                  <label htmlFor="hosted-slm-model">Hosted model:</label>
+                  <input
+                    type="text"
+                    id="hosted-slm-model"
+                    value={settings.hosted_slm_model}
+                    onChange={(e) => handleSettingChange('hosted_slm_model', e.target.value)}
+                    className="wide-input"
+                  />
+                </div>
+                <div className="setting-item setting-item-column">
+                  <label htmlFor="hosted-slm-api-key">API key:</label>
+                  <input
+                    type="password"
+                    id="hosted-slm-api-key"
+                    value={settings.hosted_slm_api_key}
+                    onChange={(e) => handleSettingChange('hosted_slm_api_key', e.target.value)}
+                    className="wide-input"
+                    autoComplete="off"
+                    placeholder="Sent as a Bearer token; leave blank to use the build default"
+                  />
+                </div>
+              </>
+            )}
+            {!hostedSelected && (
+            <>
             <label className="setting-item">
               <input
                 type="checkbox"
@@ -496,16 +567,29 @@ export function Settings({ onClose }: SettingsProps) {
                 className="number-input"
               />
             </div>
+            </>
+            )}
             <div className={`local-slm-status local-slm-status-${slmStatus?.state ?? 'unknown'}`}>
               <div>
                 <strong>Status:</strong> {slmStatus?.state ?? 'unknown'}
               </div>
               <div>{slmStatus?.message ?? 'Status has not loaded yet.'}</div>
-              {slmStatus?.installRoot && <div className="local-slm-detail">Install root: {slmStatus.installRoot}</div>}
+              {hostedSelected && slmStatus?.mode === 'local' && !settingsDirty && (
+                <div className="local-slm-detail">Hosted endpoint is not configured (or is not https), so the local runtime is in use.</div>
+              )}
+              {slmStatus?.mode === 'hosted' && <div className="local-slm-detail">Endpoint: {slmStatus.endpointBaseUrl}</div>}
+              {slmStatus?.mode === 'hosted' && <div className="local-slm-detail">Model: {slmStatus.model}</div>}
+              {slmStatus?.mode !== 'hosted' && slmStatus?.installRoot && <div className="local-slm-detail">Install root: {slmStatus.installRoot}</div>}
               {slmStatus?.launcherPath && <div className="local-slm-detail">Launcher: {slmStatus.launcherPath}</div>}
               {slmStatus?.adapterPath && <div className="local-slm-detail">Adapter: {slmStatus.adapterPath}</div>}
               {slmStatus?.dockerImage && <div className="local-slm-detail">Docker image: {slmStatus.dockerImage}</div>}
-              {slmStatus && (
+              {slmStatus?.mode === 'hosted' && (
+                <div className="local-slm-checks">
+                  <span className="local-slm-check-ok">Endpoint: configured</span>
+                  <span className={slmStatus.apiKeyConfigured ? 'local-slm-check-ok' : 'local-slm-check-missing'}>API key: {slmStatus.apiKeyConfigured ? 'configured' : 'missing'}</span>
+                </div>
+              )}
+              {slmStatus && slmStatus.mode !== 'hosted' && (
                 <div className="local-slm-checks">
                   <span className={slmStatus.runtimeInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Runtime files: {slmStatus.runtimeInstalled ? 'installed' : 'missing'}</span>
                   <span className={slmStatus.adapterInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Model: {slmStatus.adapterInstalled ? 'installed' : 'missing'}</span>
@@ -527,6 +611,8 @@ export function Settings({ onClose }: SettingsProps) {
               <button className="secondary-button" onClick={() => void refreshSlmStatus()} disabled={slmBusy}>
                 Refresh
               </button>
+              {!hostedSelected && (
+              <>
               <button className="secondary-button" onClick={installRuntimeFiles} disabled={slmActionDisabled}>
                 Install Runtime Files
               </button>
@@ -542,6 +628,8 @@ export function Settings({ onClose }: SettingsProps) {
               <button className="secondary-button" onClick={stopLocalSlm} disabled={slmBusy}>
                 Stop
               </button>
+              </>
+              )}
             </div>
           </div>
 

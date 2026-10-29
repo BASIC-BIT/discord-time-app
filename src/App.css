@@ -650,7 +650,8 @@ body {
   padding: 10px;
 }
 
-.local-slm-status-ready {
+.local-slm-status-ready,
+.local-slm-status-hosted {
   border-color: #059669;
   background: rgba(16, 185, 129, 0.12);
 }

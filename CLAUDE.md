@@ -61,6 +61,8 @@ npm run preview
 
 The frontend uses the backend API for agent-assisted parsing so OpenAI keys are not exposed in the client bundle. In Tauri, the Rust runtime generates a per-install local parser key and starts the bundled API sidecar staged by `npm run prepare:api-sidecar`; browser-only development still uses `VITE_API_BASE_URL` and `VITE_API_KEY` from `.env`.
 
+SLM Plan-IR parsing has two runtimes selected by the `slm_mode` setting: `local` (Docker runtime on the user's machine, all the `LOCAL_SLM_*` constants) and `hosted` (remote OpenAI-compatible endpoint plus bearer key, `HOSTED_SLM_*` constants). `hosted_slm_endpoint()` in `src-tauri/src/lib.rs` is the single resolver; when it returns `None` the app behaves as local, and in hosted mode no Docker check, pull, or auto-start runs. The hosting decision packet is `docs/HOSTED_SLM.md`.
+
 ## Key Features
 
 1. **Global Hotkey**: Ctrl+Shift+H activates overlay
