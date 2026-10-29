@@ -3569,11 +3569,25 @@ function ambiguousBareClockMentions(text: string): AmbiguousBareClockMention[] {
     mentions.push(trailingHour);
   }
 
+  const leadingHour = leadingBareHourMention(text);
+  if (leadingHour !== null && !mentions.some((mention) => rangesOverlap(mention.index, mention.text.length, leadingHour.index, leadingHour.text.length))) {
+    mentions.push(leadingHour);
+  }
+
   return mentions.sort((a, b) => a.index - b.index);
 }
 
 function rangesOverlap(leftIndex: number, leftLength: number, rightIndex: number, rightLength: number): boolean {
   return leftIndex < rightIndex + rightLength && rightIndex < leftIndex + leftLength;
+}
+
+function leadingBareHourMention(text: string): AmbiguousBareClockMention | null {
+  const match = /^(\s*)(0?[1-9]|1[0-2])\s+(?=(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|next|last|this|coming|upcoming)\b)/i.exec(text);
+  if (!match?.[2]) {
+    return null;
+  }
+  const hour = Number(match[2]);
+  return { text: match[2], index: match[1]!.length, hour, minute: 0, replacementBase: String(hour) };
 }
 
 function trailingBareHourMention(text: string): AmbiguousBareClockMention | null {
