@@ -1,6 +1,6 @@
 # Hosted SLM Decision Packet
 
-Status: decision packet for BASIC, 2026-10-29. Nothing in this document has been deployed. No provider resources were created, no secrets were touched, no money was spent.
+Status: decision packet for BASIC, 2026-10-29, revised 2026-10-30 after review (serverless reframed around duty cycle, warm-on-interaction added in section 7). Nothing in this document has been deployed. No provider resources were created, no secrets were touched, no money was spent.
 
 The ask: stop depending on a Docker Desktop + NVIDIA runtime on every user's machine, and have the V22 temporal model (`qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22`) always live somewhere so HammerOverlay parses out of the box.
 
@@ -32,8 +32,8 @@ Budget rule from the earlier hosted work: `$50/month` unless BASIC explicitly ap
 | Option | Monthly cost (730 h) | Cold start | Latency when warm | Auth | Risk to V22 accuracy | Verdict |
 |---|---|---|---|---|---|---|
 | **A. Always-on small GPU pod running the existing PEFT container** (RunPod Community Cloud RTX A4000 ~$0.17/h, RTX 4000 Ada ~$0.20/h; Secure Cloud ~$0.32 to $0.38/h; AWS g4dn.xlarge ~$0.53/h, g6.xlarge ~$0.80/h) | $124 to $146 (RunPod community), $234 to $277 (RunPod secure), $384 to $588 (AWS) | None after boot (model load 20 to 60 s once) | Unmeasured on these GPUs. Expect roughly 2x the 5090 numbers, so p95 around 4 to 6 s. Must be measured before enabling. | Bearer token on the server plus provider HTTPS proxy or Caddy | Lowest: same code, same bf16 PEFT path as local | **Recommended if the budget cap is raised.** Only option that reuses the proven runtime unchanged. |
-| B. Serverless GPU, scale to zero (RunPod Serverless flex, Modal) | $5 to $30 at current usage (RunPod flex A4000 $0.00016/s; Modal T4 $0.59/h billed per second) | Measured on RunPod: 34 to 124 s queue delay after idle, 55 s for a prewarm, 156 s for a cold submit. Modal snapshots untested. | Warm: median 2.7 s, p95 5.8 s (0.5B worker) | Provider API key | Medium: new worker image for V22 needed | Rejected for the inline path. Cold starts blow the SLO and a hotkey prewarm did not mask them. Keeping it warm costs the same as A. |
-| C. Managed inference with a merged model (Hugging Face Inference Endpoints, per-token LoRA services) | HF dedicated L4 $0.80/h is $584 always-on; scale-to-zero has 60 to 120 s cold starts. Per-token serverless LoRA services do not list Qwen3.5-0.8B as a base. | Same as B when scaled to zero | Unknown | Provider token | High: merged-model vLLM paths scored 20 to 22/30 versus 29/30 local on the old adapter | Rejected. Worse price than A or worse cold start than B, plus known numerics drift. |
+| B. Serverless GPU, scale to zero (RunPod Serverless flex, Modal) | Usage-driven: about $0.03 to $0.10 per cold session depending on the idle window (RunPod flex 16 GB tier $0.00016/s; Modal L4 $0.80/h billed per second) | Measured on RunPod: 34 to 124 s queue delay after idle, 55 s for a prewarm, 156 s for a cold submit, with a lazy-loading worker and a 5 s idle timeout. Baked weights, eager load and a longer idle window were not tried. Modal snapshots untested. | Warm: median 2.7 s, p95 5.8 s (0.5B worker on a MIG slice) | Provider API key or server bearer token | Medium: new worker image for V22 needed | **Viable with warm-on-interaction (section 7).** The first parse of a cold burst is deterministic and the overlay says so; cold start only sets how long the notice shows. Cheapest option below about 30 percent duty cycle. |
+| C. Managed inference with a merged model (Hugging Face Inference Endpoints, per-token LoRA services) | HF dedicated L4 $0.80/h is $584 always-on; scale-to-zero wakes in minutes (HF documents no figure; the Quick Start quotes 3 to 5 minutes to initialise and the idle floor is 15 to 60 minutes of billed time). Per-token serverless LoRA services do not list Qwen3.5-0.8B as a base. | Minutes when scaled to zero, with 502/503 until the replica is up | Unknown | Provider token | High: merged-model vLLM paths scored 20 to 22/30 versus 29/30 local on the old adapter | Rejected. Worse price than A or worse cold start than B, plus known numerics drift. |
 | D. Always-on CPU box with a merged Q8 GGUF via llama.cpp server (Hetzner / Vultr 8 vCPU class, $30 to $60) | $30 to $60 | None | Estimated 3 to 8 s for a 100-token plan at 15 to 35 tok/s. Unmeasured. | Bearer via llama.cpp `--api-key` | High: merge plus quantization is a new serving stack; needs the full 197/159 gate rerun | Fits the budget, but a benchmark spike first. Not shippable blind. |
 | E. BASIC's own always-on 5090 box exposed through Cloudflare Tunnel or Tailscale Funnel | $0 | None | Identical to today's local numbers (p95 3.1 s) plus internet RTT | Server bearer token; Cloudflare Access or rate limiting at the edge | None: it is literally the current runtime | Cheapest bridge to "works out of the box" today. Single machine, home uplink, not an SLA. |
 
@@ -41,11 +41,31 @@ Cost sources (third-party trackers and provider pages, checked 2026-10-29; confi
 
 Note on T4 (g4dn, cheapest AWS GPU): Turing has no native bf16. The current server loads bf16; on a T4 it would run fp16 or emulated and would need its own eval pass. Prefer Ada (RTX 4000 Ada, L4) or Ampere (A4000, A10G) so the served numerics stay bf16.
 
+### Dedicated versus a serverless worker pinned 24/7
+
+Monthly figures at 730 hours, 16 to 24 GB GPU class, prices as found on 2026-10-29 (confirm on the live pricing pages):
+
+| Shape | Provider and GPU | Rate | 24/7 month |
+|---|---|---|---|
+| Dedicated pod | RunPod Community, RTX A4000 | $0.17/h | $124 |
+| Dedicated pod | RunPod Community, RTX 4000 Ada | $0.20/h | $146 |
+| Dedicated pod | RunPod Secure, A4000 / 4000 Ada | $0.32 / $0.38/h | $234 / $277 |
+| Marketplace rental | Vast.ai, RTX 4000 Ada | about $0.16/h | about $120, interruptible |
+| Serverless, active worker (always-on discount) | RunPod Serverless 16 GB tier | $0.00011/s = $0.40/h | $289 |
+| Serverless, flex worker kept hot | RunPod Serverless 16 GB tier | $0.00016/s = $0.58/h | $420 |
+| Serverless, flex worker kept hot | RunPod 24 GB tier (the MIG slice tested in June) | $0.00019/s = $0.68/h | $499 |
+| Serverless, min_containers=1 | Modal T4 / L4 / A10G | $0.59 / $0.80 / $1.10/h | $431 / $584 / $803 |
+| Managed endpoint, no scale-to-zero | Hugging Face L4 | $0.80/h | $584 |
+| Cloud VM on demand | AWS g4dn.xlarge (T4) / g6.xlarge (L4) | $0.53 / $0.81/h | $384 / $588 |
+
+A serverless worker that is hot around the clock costs 2.3x to 3.4x a dedicated pod of the same GPU on the same provider, and 3x to 6x on Modal or Hugging Face. Serverless only wins on duty cycle: RunPod flex beats the community pod when the worker is alive less than about 30 percent of the month (about 7 hours a day), and beats the secure pod below about 56 percent. Scheduled "active hours" warming is therefore just a pod during those hours; once more than one product shares the endpoint, the union of active windows climbs past the line quickly.
+
 ### Recommendation
 
-1. **Approve option A at RunPod Community Cloud pricing (about $125 to $150 per month), or state that the $50 cap stands.** A is the only option that keeps the V22 runtime byte-for-byte identical and has no cold start. It needs an explicit budget decision because it is 2.5x to 3x the cap.
-2. **If the cap stands, run E as the bridge** while a CPU spike (option D) is measured. E costs nothing, needs no new eval because it is the same runtime, and gives users the out-of-box experience now. Its weakness is availability, which the deterministic fallback already masks.
-3. Do not spend more time on serverless GPU for the inline parse path. The measured cold starts are 7x to 30x the SLO.
+1. **Ship warm-on-interaction (section 7) regardless of provider.** It makes cold start a UX notice rather than a failure, which is what lets the cheapest shape be chosen on cost alone.
+2. **Pick the provider on measured duty cycle.** Pull sessions per month and session-gap distribution from the parse telemetry database first. Below about 30 percent duty cycle, RunPod Serverless flex (16 GB tier) with a 3 to 10 minute idle timeout is cheapest and likely under the $50 cap. Above it, option A, the RunPod Community pod at about $125 to $150 a month, which needs the cap raised.
+3. **If the cap stands and usage is unknown, run E as the bridge** while telemetry accumulates. E costs nothing, needs no new eval because it is the same runtime, and gives users the out-of-box experience now.
+4. Hugging Face scale-to-zero is out whatever the schedule: minutes to wake, 15 to 60 minutes of billed idle per wake, and forum reports of endpoints stuck initialising.
 
 Either way, the hosted endpoint must pass the same gate as the local runtime before it becomes the default: 197/197 required routed cases, 159/159 model-owned cases, zero wrong singular answers, warm p95 at or under about 5 s.
 
@@ -140,3 +160,26 @@ These steps create paid or public resources and touch secrets, so they are queue
 - Latency of V22 on A4000 / 4000 Ada class GPUs is unmeasured.
 - Per-install key issuance is not built; the shipped default key is shared.
 - The exposed HF token rotation from June is still pending.
+
+## 7. Warm-on-interaction (shipped in the app and sidecar, dormant until the hosted defaults are filled)
+
+Design: any desktop interaction warms the hosted worker; while it is not known to be warm, parses return the deterministic result instantly and the overlay says so; when it is warm, the overlay switches over. This makes a 30 to 120 s cold start a visible notice instead of a 15 s hang followed by a silent fallback.
+
+Sidecar (`api/`):
+
+- Enabled by `TEMPORAL_PLAN_IR_ENDPOINT_WARMUP=true`, which the Tauri runtime sets only in hosted mode. Local mode is untouched.
+- Readiness is a timestamp: the endpoint counts as `ready` for `TEMPORAL_PLAN_IR_ENDPOINT_READY_TTL_MS` (default 240000, 4 minutes) after any successful request to it, parse or warm. Transport failures (network, timeout, non-2xx) mark it cold; a model answer that fails Plan-IR parsing does not, because the worker is evidently up.
+- While not `ready`, `POST /parse` skips the endpoint, returns the deterministic result immediately with `debug.endpointWarming: true` and `debug.shortCircuitReason: "plan_ir_endpoint_warming"`, and fires one background warm request: a one-token chat completion with the bearer key, timeout `TEMPORAL_PLAN_IR_ENDPOINT_WARMUP_TIMEOUT_MS` (default 180000). Warms are deduplicated and throttled (10 s after a success, 15 s after a failure).
+- `POST /parse/warm` (same `x-api-key` auth as `/parse`) starts a warm and returns the status; `GET /health` reports it under `planIrEndpoint` as `{ configured, warmupEnabled, state: disabled | ready | warming | cold, lastReadyAt, lastError, inFlight }`.
+
+Desktop (`src-tauri/src/lib.rs`, `src/components/Overlay.tsx`):
+
+- The Rust side calls `/parse/warm` when the overlay is shown (hotkey or tray) and once when the sidecar becomes healthy at startup, throttled to one call per 10 s, only when hosted mode is in effect.
+- The overlay shows "Smart parsing is warming up, usually under a minute. Showing basic results meanwhile." whenever a result carries `debug.endpointWarming` or the health status is not `ready` with warmup enabled. It polls `/health` every 2.5 s while the notice is up. When the state turns `ready` and the current text is unchanged, idle, and nothing has been copied, it re-runs the parse once so the model result replaces the deterministic one. If something was already copied, nothing changes under the user.
+
+Provider settings that follow from this:
+
+- Set the worker idle timeout above the ready TTL (at least 5 minutes against the 4 minute default) so the sidecar never believes a worker is warm after the provider has torn it down. Shorter idle timeouts are cheaper and cause more cold notices; the telemetry session-gap distribution is the right input for choosing it.
+- Rough cost per cold session on RunPod flex 16 GB rates: idle window plus about 30 s of work, so 3 minutes is about $0.03 and 10 minutes about $0.10. At 500 cold sessions a month a 10 minute window lands at the $50 cap.
+- Bake the base model and adapter into the worker image and load eagerly at container start. The June worker loaded lazily from the Hub (20 to 32 s) and pulled a multi-gigabyte image on revival; both are avoidable.
+- `max_tokens` is capped server side (512) and the warm request asks for 1 token, so a warm is near-free on the model but still bills the worker's revival.

@@ -127,6 +127,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [deterministicPreflight, setDeterministicPreflight] = useState(false);
   const [discordReferenceRouting, setDiscordReferenceRouting] = useState(true);
   const [discordReferenceShadow, setDiscordReferenceShadow] = useState(false);
+  const [endpointWarming, setEndpointWarming] = useState(false);
   
   const [manual, setManual] = useState(false);
   const [draft, setDraft] = useState<ManualDraft | null>(null);
@@ -145,6 +146,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const copiedEpochRef = useRef<number | null>(null);
   const selectionTouchedRef = useRef(false);
   const progressTimeoutsRef = useRef<number[]>([]);
+  // Text whose result came back deterministic because the hosted endpoint was still waking.
+  const warmingTextRef = useRef<string | null>(null);
+  const latestRef = useRef({ inputText, loading, verifying });
+  latestRef.current = { inputText, loading, verifying };
 
   const clearProgressTimers = () => {
     for (const timeoutId of progressTimeoutsRef.current) {
@@ -452,6 +457,43 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     }
   }, [selectedIndex]);
 
+  // Ask once per open whether the hosted endpoint is still waking.
+  useEffect(() => {
+    let disposed = false;
+    void (async () => {
+      const status = await (await createAPIClient())?.getPlanIrEndpointStatus();
+      if (!disposed && status?.warmupEnabled && status.state !== 'ready') setEndpointWarming(true);
+    })();
+    return () => { disposed = true; };
+  }, [openToken]);
+
+  // While warming, poll; once ready, re-run the untouched, uncopied text so the model result lands.
+  useEffect(() => {
+    if (!endpointWarming) return;
+    const controller = new AbortController();
+    const poll = async () => {
+      const status = await (await createAPIClient())?.getPlanIrEndpointStatus(controller.signal);
+      if (controller.signal.aborted || !status) return;
+      if (!status.warmupEnabled || status.state === 'disabled') {
+        setEndpointWarming(false);
+        return;
+      }
+      if (status.state !== 'ready') return;
+      setEndpointWarming(false);
+      const flaggedText = warmingTextRef.current;
+      warmingTextRef.current = null;
+      const current = latestRef.current;
+      const text = current.inputText.trim();
+      if (text && text === flaggedText && !current.loading && !current.verifying
+        && copiedEpochRef.current === null && ownershipRef.current === 'text') {
+        invalidateWork();
+        setParseRequest(value => value + 1);
+      }
+    };
+    const intervalId = window.setInterval(() => void poll(), 2500);
+    return () => { controller.abort(); window.clearInterval(intervalId); };
+  }, [endpointWarming]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -529,6 +571,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           });
           if (!active()) return;
           setGenerationId(result.generationId);
+          if (result.debug?.endpointWarming === true) {
+            warmingTextRef.current = text;
+            setEndpointWarming(true);
+          }
           console.log("API Result: ", result);
         } catch (error) {
           if (!active()) return;
@@ -1023,9 +1069,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
       <div className="footer">
         <div className="footer-status-slot" aria-live="polite">
-          <div className={`verifying-tab ${showVerifyingTab ? 'visible' : ''}`}>
+          <div className={`verifying-tab ${showVerifyingTab && !endpointWarming ? 'visible' : ''}`}>
             <span className="progress-dot" />
             <span className="verifying-label">{progressText}</span>
+          </div>
+          <div className={`warming-notice ${endpointWarming ? 'visible' : ''}`}>
+            Smart parsing is warming up, usually under a minute. Showing basic results meanwhile.
           </div>
         </div>
         <span className="hint">{footerHint}</span>
