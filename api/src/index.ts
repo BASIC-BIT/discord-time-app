@@ -13,6 +13,7 @@ import { parseTemporalExpression } from './temporal';
 import { parseCalendarContext } from './temporal/deterministic';
 import { TemporalCancellationError, verifyTemporalParseResponseWithSemanticConsistencyGate } from './temporal/graph';
 import { createDeterministicTemporalToolImplementations } from './temporal/tools';
+import { PlanIrEndpointWarmth } from './temporal/endpoint-warmth';
 import type { Candidate, TemporalParseResponse, Weekday } from './temporal/types';
 
 /**
@@ -61,6 +62,8 @@ const apiRuntime = {
 const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:[zZ]|[+-]\\d{2}:\\d{2})$';
 const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
 const activeParseRequests = new Map<string, AbortController>();
+const planIrEndpointWarmth = new PlanIrEndpointWarmth(config.temporalPlanIrEndpoint, config.temporalPlanIrWarmup);
+const PLAN_IR_WARMING_WARNING = 'Plan-IR endpoint is warming up; returned the deterministic result.';
 
 const CORS_ORIGINS = ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
 
@@ -179,6 +182,13 @@ const parseResponseSchema = {
         timeZone: { type: 'string' },
         precision: { type: 'string' },
         weekday: { type: 'string' },
+      }
+    },
+    debug: {
+      type: 'object',
+      properties: {
+        endpointWarming: { type: 'boolean' },
+        shortCircuitReason: { type: 'string' },
       }
     }
   }
@@ -362,6 +372,7 @@ server.get('/health', async (_request, reply) => {
       totalRequests: usageStats.total,
       last24h: usageStats.last24h
     },
+    planIrEndpoint: planIrEndpointWarmth.status(),
     config: config.getSanitizedConfig()
   });
 });
@@ -385,6 +396,14 @@ server.post<{ Body: { requestId: string } }>('/parse/cancel', {
     cancellationDelivered: controller !== undefined,
   }, 'parse cancellation');
   return { requestId: request.body.requestId, cancelled: controller !== undefined };
+});
+
+/**
+ * Wake a scale-to-zero Plan-IR endpoint ahead of a parse. Fire-and-forget; poll /health for the outcome.
+ */
+server.post('/parse/warm', async (_request, reply) => {
+  void planIrEndpointWarmth.warm();
+  return reply.status(202).send(planIrEndpointWarmth.status());
 });
 
 /**
@@ -439,14 +458,20 @@ server.post<{ Body: ParseRequest }>('/parse', {
         ...(request.body.features?.discordReferenceShadow === undefined ? {} : { discordReferenceShadow: request.body.features.discordReferenceShadow }),
       },
     };
+    // While the endpoint is not known warm, skip every model path so the reply is immediate.
+    const endpointWarming = planIrEndpointWarmth.shouldShortCircuit();
     const planIrEndpoint = config.temporalPlanIrEndpoint;
-    if (planIrEndpoint !== undefined) {
+    if (endpointWarming) {
+      void planIrEndpointWarmth.warm();
+      parseInput.features = { ...parseInput.features, planIr: false };
+    } else if (planIrEndpoint !== undefined) {
       parseInput.planIrEndpoint = planIrEndpoint;
+      parseInput.planIrEndpointObserver = planIrEndpointWarmth.observer();
     }
     if (now !== undefined) {
       parseInput.referenceInstant = now;
     }
-    if (config.openaiApiKey !== undefined) {
+    if (config.openaiApiKey !== undefined && !endpointWarming) {
       parseInput.openaiApiKey = config.openaiApiKey;
       parseInput.openaiModel = config.openaiModel;
       parseInput.openaiReasoningEffort = config.openaiReasoningEffort;
@@ -459,6 +484,10 @@ server.post<{ Body: ParseRequest }>('/parse', {
     }
 
     const parsed = await parseTemporalExpression(parseInput);
+    if (endpointWarming) {
+      parsed.debug = { ...parsed.debug, endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' };
+      parsed.validation.warnings.push(PLAN_IR_WARMING_WARNING);
+    }
     logTemporalGeneration(text, tz, now, parsed);
     request.log.info({
       requestId,
@@ -525,6 +554,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
       confidence: parsed.confidence,
       method: parsed.method,
       canonical: parsed.canonical,
+      ...(endpointWarming ? { debug: { endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' } } : {}),
     };
 
   } catch (error) {

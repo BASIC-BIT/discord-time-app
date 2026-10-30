@@ -13,6 +13,7 @@ export async function parseTemporalExpression(params: {
   referenceInstant?: string;
   features?: TemporalFeatureFlags;
   planIrEndpoint?: TemporalPlanIrEndpointConfig;
+  planIrEndpointObserver?: TemporalGraphOptions['planIrEndpointObserver'];
   modelCost?: TemporalModelCostConfig;
   requestId?: string;
   signal?: AbortSignal;
@@ -26,6 +27,9 @@ export async function parseTemporalExpression(params: {
   }
   if (params.planIrEndpoint !== undefined) {
     options.planIrEndpoint = params.planIrEndpoint;
+  }
+  if (params.planIrEndpointObserver !== undefined) {
+    options.planIrEndpointObserver = params.planIrEndpointObserver;
   }
   if (params.modelCost !== undefined) {
     options.modelCost = params.modelCost;
