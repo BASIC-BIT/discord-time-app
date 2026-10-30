@@ -1292,6 +1292,18 @@ async function main() {
   assert.equal(ambiguousBareTime.clarificationAlternatives?.[0]?.label, '1 AM');
   assert.equal(ambiguousBareTime.clarificationAlternatives?.[1]?.label, '1 PM');
 
+  for (const leadingBareHour of ['9 wednesday', '9 wed', '12 tomorrow']) {
+    const leading = await parse(leadingBareHour);
+    assert.equal(leading.status, 'needs_clarification', `${leadingBareHour} should ask AM or PM instead of resolving to noon`);
+    assert.equal(leading.clarificationQuestion, 'Did you mean AM or PM?');
+    assert.equal(leading.clarificationAlternatives?.length, 2, leadingBareHour);
+  }
+  const leadingBareHourWednesday = await parse('9 wednesday');
+  assert.deepEqual(
+    leadingBareHourWednesday.clarificationAlternatives?.map((alternative) => alternative.canonical.zonedDateTime.slice(0, 16)),
+    ['2026-05-20T09:00', '2026-05-20T21:00'],
+  );
+
   const ambiguousBareMinuteTime = await parse('day after tomorrow 11:34');
   assert.equal(ambiguousBareMinuteTime.status, 'needs_clarification');
   assert.equal(ambiguousBareMinuteTime.clarificationQuestion, 'Did you mean AM or PM?');

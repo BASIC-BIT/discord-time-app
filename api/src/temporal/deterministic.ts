@@ -208,8 +208,8 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
     }
   }
 
-  if (hasTrailingBareNumericTimeSignal(input.text)) {
-    return { candidates: [], parserNotes: ['Input contains a trailing bare number that looks like an unresolved time signal.'] };
+  if (hasBareNumericTimeSignal(input.text)) {
+    return { candidates: [], parserNotes: ['Input contains a bare number that looks like an unresolved time signal.'] };
   }
 
   if (WEEKDAY_AFTER_NEXT_PATTERN.test(input.text)) {
@@ -394,8 +394,8 @@ export async function validateCandidate(input: ValidateCandidateInput): Promise<
     if (candidateTime.hour !== requestedTime.hour || candidateTime.minute !== requestedTime.minute) {
       errors.push(`Input mentioned ${formatRequestedTime(requestedTime)}, but candidate time is ${candidateTime.toString({ smallestUnit: 'minute' })}.`);
     }
-  } else if (hasTrailingBareNumericTimeSignal(input.originalText)) {
-    errors.push('Input contains a trailing bare number that looks like an unresolved time signal; refusing to treat it as date-only noon.');
+  } else if (hasBareNumericTimeSignal(input.originalText)) {
+    errors.push('Input contains a bare number that looks like an unresolved time signal; refusing to treat it as date-only noon.');
   }
 
   if (input.candidate.precision === 'date') {
@@ -1406,7 +1406,7 @@ function isPartialChronoParse(text: string, parsedText: string, start: chrono.Pa
     return true;
   }
 
-  if (hasTrailingBareNumericTimeSignal(text)) {
+  if (hasBareNumericTimeSignal(text)) {
     return true;
   }
 
@@ -1416,6 +1416,16 @@ function isPartialChronoParse(text: string, parsedText: string, start: chrono.Pa
     .trim();
 
   return TEMPORAL_SIGNAL_PATTERN.test(remainder);
+}
+
+const LEADING_BARE_HOUR_BEFORE_DATE_PATTERN = /^\s*(?:0?[1-9]|1[0-2])\s+(?=(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|next|last|this|coming|upcoming)\b)/i;
+
+function hasLeadingBareNumericTimeSignal(text: string): boolean {
+  return LEADING_BARE_HOUR_BEFORE_DATE_PATTERN.test(text);
+}
+
+function hasBareNumericTimeSignal(text: string): boolean {
+  return hasTrailingBareNumericTimeSignal(text) || hasLeadingBareNumericTimeSignal(text);
 }
 
 function hasTrailingBareNumericTimeSignal(text: string): boolean {
@@ -1439,7 +1449,7 @@ function hasAmbiguousBareMeridiemTimeSignal(text: string): boolean {
   const clockText = text.replace(/(?:\b(?:utc|gmt)\s*)?[+-]\d{2}:\d{2}\b/giu, ' ');
   return AMBIGUOUS_BARE_COLON_CLOCK_PATTERN.test(clockText)
     || AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN.test(clockText)
-    || hasTrailingBareNumericTimeSignal(text);
+    || hasBareNumericTimeSignal(text);
 }
 
 function parseBareTwentyFourHour(text: string, calendarContext: CalendarContext): Candidate | null {
