@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { sendNotification } from '@tauri-apps/plugin-notification';
 import { getCurrentWindow, LogicalSize, currentMonitor, PhysicalPosition } from '@tauri-apps/api/window';
 import { ManualDateTimePicker } from './ManualDateTimePicker';
 import { seedManualDraft, type ManualDraft, type InstantChoice } from '../lib/manualDateTime';
@@ -141,6 +142,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const debounceTimeoutRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const verificationAbortControllerRef = useRef<AbortController | null>(null);
+  const copiedEpochRef = useRef<number | null>(null);
   const selectionTouchedRef = useRef(false);
   const progressTimeoutsRef = useRef<number[]>([]);
 
@@ -624,10 +626,21 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
     try {
       const verification = await apiClient.verifyParse({ text, tz: timezone, ...result }, verificationController.signal);
-      if (!active()) {
+      if (verification.decision === 'uncertain' && verification.reasonCodes.includes('missing_openai_api_key')) {
         return;
       }
-      if (verification.decision === 'uncertain' && verification.reasonCodes.includes('missing_openai_api_key')) {
+      if (copiedEpochRef.current === result.epoch) {
+        // Copied before the verdict landed; the overlay is already closed, so warn out of band.
+        if (verification.decision !== 'accept') {
+          try {
+            sendNotification({ title: 'HammerOverlay', body: 'Heads up: that timestamp did not verify. Check it before sending.' });
+          } catch (notifyError) {
+            console.log('Verification toast failed:', notifyError);
+          }
+        }
+        return;
+      }
+      if (!active()) {
         return;
       }
       if (verification.decision !== 'accept') {
@@ -681,8 +694,6 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     ? '←→/Tab or 1-9/0 to choose • Enter to use • Esc to close'
     : hasClarification
       ? 'Edit the expression to clarify • Esc to close'
-    : verifying
-      ? 'Verifying before copy • Esc to close'
     : range !== null
       ? '↑↓/Tab to choose range • Enter to copy • Esc to close'
     : epoch !== null
@@ -794,7 +805,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
   const handleCopy = async (formatIndex = selectedIndex) => {
     const revision = revisionRef.current;
-    if (ownershipRef.current === 'editor' || verifying) {
+    if (ownershipRef.current === 'editor') {
       return;
     }
 
@@ -818,6 +829,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         await incrementFormatUsage(formatIndex);
         if (revisionRef.current !== revision) return;
         void recordParserOutcome('copied', formatIndex);
+        // Let an in-flight verification outlive the overlay: unmount cleanup aborts whatever this ref holds.
+        copiedEpochRef.current = epoch;
+        verificationAbortControllerRef.current = null;
         onClose();
       } catch (error) {
         console.error('Error copying:', error);

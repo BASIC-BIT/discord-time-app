@@ -34,6 +34,7 @@
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
     "log:allow-log",
+    "notification:default",
     "core:tray:allow-new",
     "core:tray:allow-set-menu",
     "core:tray:allow-set-tooltip",
