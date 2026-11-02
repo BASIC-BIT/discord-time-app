@@ -12,6 +12,16 @@ export interface ParseResponse {
   confidence: number;
   method: string;
   canonical?: ParseCanonical;
+  debug?: { endpointWarming?: boolean; shortCircuitReason?: string };
+}
+
+export interface PlanIrEndpointStatus {
+  configured: boolean;
+  warmupEnabled: boolean;
+  state: 'disabled' | 'ready' | 'warming' | 'cold';
+  lastReadyAt: string | null;
+  lastError: string | null;
+  inFlight: boolean;
 }
 
 export interface ParseCanonical {
@@ -306,6 +316,39 @@ export class TimeParserAPIClient {
       return response.ok;
     } catch {
       return false;
+    }
+  }
+
+  async getPlanIrEndpointStatus(signal?: AbortSignal): Promise<PlanIrEndpointStatus | null> {
+    try {
+      const response = await fetch(`${this.baseUrl}/health`, {
+        headers: {
+          'x-api-key': this.apiKey,
+          'x-api-version': this.apiVersion,
+        },
+        signal,
+      });
+      const body = await response.json() as { planIrEndpoint?: PlanIrEndpointStatus };
+      return body.planIrEndpoint ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async warmPlanIrEndpoint(): Promise<PlanIrEndpointStatus | null> {
+    try {
+      const response = await fetch(`${this.baseUrl}/parse/warm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'x-api-version': this.apiVersion,
+        },
+        body: '{}',
+      });
+      return response.ok ? await response.json() as PlanIrEndpointStatus : null;
+    } catch {
+      return null;
     }
   }
 

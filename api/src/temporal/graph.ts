@@ -174,6 +174,7 @@ export interface TemporalGraphOptions {
   openaiModel?: string;
   openaiReasoningEffort?: string;
   planIrEndpoint?: TemporalPlanIrEndpointConfig;
+  planIrEndpointObserver?: { onSuccess: () => void; onFailure: (error: string) => void };
   modelCost?: TemporalModelCostConfig;
   features?: TemporalFeatureFlags;
   langfuse?: {
@@ -1642,7 +1643,18 @@ async function runEndpointPlanIrPath(
 
   const prompt = formatEndpointPlanPrompt(request, endpoint.instructionPreset, endpoint.promptFormat);
   const planningStartedAt = nowMs();
-  const completion = await invokePlanIrEndpoint(endpoint, prompt, options.requestId, options.signal);
+  let completion: EndpointCompletion;
+  try {
+    completion = await invokePlanIrEndpoint(endpoint, prompt, options.requestId, options.signal);
+  } catch (error) {
+    // Cancellation says nothing about endpoint warmth; transport, timeout, and HTTP failures do.
+    if (!(error instanceof TemporalCancellationError)) {
+      options.planIrEndpointObserver?.onFailure(errorMessage(error));
+    }
+    throw error;
+  }
+  // The model answered; a Plan-IR content parse failure below still means the endpoint is warm.
+  options.planIrEndpointObserver?.onSuccess();
   const planningDurationMs = elapsedMs(planningStartedAt);
   let planResult: TemporalPlanPlannerOutput;
   try {
@@ -1810,7 +1822,7 @@ async function cancelPlanIrEndpointRequest(endpoint: TemporalPlanIrEndpointConfi
   }
 }
 
-function planIrEndpointUrl(endpoint: TemporalPlanIrEndpointConfig): string {
+export function planIrEndpointUrl(endpoint: Pick<TemporalPlanIrEndpointConfig, 'baseUrl' | 'api'>): string {
   const baseUrl = endpoint.baseUrl.replace(/\/+$/, '');
   const versionedBaseUrl = baseUrl.endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;
   return `${versionedBaseUrl}/${endpoint.api === 'chat' ? 'chat/completions' : 'completions'}`;

@@ -236,6 +236,7 @@ export interface TemporalParseResponse {
     estimatedCostUsd?: number;
     costEstimateConfigured?: boolean;
     shortCircuitReason?: string;
+    endpointWarming?: boolean;
     model?: string;
     reasoningEffort?: string;
     instructionPreset?: string;

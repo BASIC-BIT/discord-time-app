@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -612,6 +612,7 @@ fn apply_slm_api_env(command: &mut Command, settings: &AppSettings) {
             if let Some(api_key) = hosted.api_key {
                 command.env("TEMPORAL_PLAN_IR_ENDPOINT_API_KEY", api_key);
             }
+            command.env("TEMPORAL_PLAN_IR_ENDPOINT_WARMUP", "true");
             (hosted.base_url, hosted.model)
         }
         None => (
@@ -1445,6 +1446,60 @@ fn time_parser_health_check() -> bool {
     }
 }
 
+static LAST_ENDPOINT_WARM: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Fire-and-forget nudge so a scale-to-zero hosted endpoint starts waking before the
+/// user's first parse. Throttled to one call per 10 s; never fails the caller.
+fn warm_time_parser_endpoint(app: &AppHandle) {
+    let Ok(settings) = load_app_settings(app) else {
+        return;
+    };
+    if !settings.local_slm_enabled || hosted_slm_endpoint(&settings).is_none() {
+        return;
+    }
+    {
+        let Ok(mut last) = LAST_ENDPOINT_WARM.lock() else {
+            return;
+        };
+        if last.is_some_and(|at| at.elapsed() < Duration::from_secs(10)) {
+            return;
+        }
+        *last = Some(Instant::now());
+    }
+    let Ok(api_keys) = time_parser_api_key_candidates(app) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let mut result = Err("no parser API key".to_string());
+        for api_key in api_keys {
+            result = local_time_parser_request(
+                "POST",
+                "/parse/warm",
+                &api_key,
+                Some("{}"),
+                Duration::from_secs(2),
+            );
+            if !matches!(&result, Ok(response) if response.status == 401) {
+                break;
+            }
+        }
+        match result {
+            Ok(response) => log::debug!(
+                "Hosted SLM warm request returned {}: {}",
+                response.status,
+                response.body
+            ),
+            Err(e) => {
+                log::debug!("Hosted SLM warm request failed: {e}");
+                // Sidecar not up yet: let the next trigger (e.g. service-ready) retry.
+                if let Ok(mut last) = LAST_ENDPOINT_WARM.lock() {
+                    *last = None;
+                }
+            }
+        }
+    });
+}
+
 fn wait_for_time_parser_service(timeout: Duration) -> bool {
     let started = std::time::Instant::now();
     while started.elapsed() < timeout {
@@ -1810,6 +1865,7 @@ fn start_time_parser_service(app: &AppHandle) {
                     if time_parser_health_check() {
                         log::info!("Local time parser service became healthy");
                         let _ = app_handle.emit("time-parser-service-ready", ());
+                        warm_time_parser_endpoint(&app_handle);
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(250));
@@ -1976,6 +2032,7 @@ mod hosted_slm_endpoint_tests {
             Some(LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL)
         );
         assert_eq!(env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_API_KEY"), None);
+        assert_eq!(env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_WARMUP"), None);
     }
 
     #[test]
@@ -2006,6 +2063,10 @@ mod hosted_slm_endpoint_tests {
         assert_eq!(
             env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_API").as_deref(),
             Some("chat")
+        );
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_WARMUP").as_deref(),
+            Some("true")
         );
     }
 
@@ -2648,6 +2709,7 @@ fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::W
 
 fn show_main_window(app: &AppHandle) {
     maybe_trigger_local_slm_for_overlay(app);
+    warm_time_parser_endpoint(app);
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
