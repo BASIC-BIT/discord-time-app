@@ -1522,6 +1522,23 @@ fn sidecar_action(
     }
 }
 
+const HEALTH_VERSION_PROBE_ATTEMPTS: usize = 3;
+
+/// A slow or unreadable `/health` body must not silently turn into adoption, so
+/// while the port answers, keep probing until one attempt reads a version.
+/// `attempts` is lazy: nothing after the first `Some` (or after the first attempt
+/// when the port is silent) is run.
+fn resolve_probe<I: Iterator<Item = Option<String>>>(
+    mut attempts: I,
+    port_answers: bool,
+) -> Option<String> {
+    if port_answers {
+        attempts.find_map(|version| version)
+    } else {
+        attempts.next().flatten()
+    }
+}
+
 /// `None` when nothing healthy answers, `Some("")` when healthy but no `appVersion`.
 pub(crate) fn time_parser_health_app_version() -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
@@ -1930,11 +1947,19 @@ fn start_time_parser_service(app: &AppHandle) {
     log_ignored_dev_api_overrides();
 
     let app_version = env!("CARGO_PKG_VERSION");
-    let running_version = time_parser_health_app_version();
-    let port_answers = running_version.is_some() || time_parser_health_check();
+    let first_probe = time_parser_health_app_version();
+    let port_answers = first_probe.is_some() || time_parser_health_check();
+    let probes = std::iter::once(first_probe).chain(
+        std::iter::repeat_with(|| {
+            std::thread::sleep(Duration::from_millis(500));
+            time_parser_health_app_version()
+        })
+        .take(HEALTH_VERSION_PROBE_ATTEMPTS - 1),
+    );
+    let running_version = resolve_probe(probes, port_answers);
     match sidecar_action(running_version.as_deref(), port_answers, app_version) {
         SidecarAction::Adopt if running_version.is_none() => {
-            log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read; adopting it");
+            log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read after {HEALTH_VERSION_PROBE_ATTEMPTS} attempts; adopting it");
             return;
         }
         SidecarAction::Adopt => {
@@ -2267,6 +2292,37 @@ mod sidecar_adoption_tests {
         let response =
             "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"healthy\",\"appVersion\":\"0.1.7\"}";
         assert_eq!(parse_health_app_version(response), None);
+    }
+
+    #[test]
+    fn probe_returns_the_first_version_without_more_attempts() {
+        let mut attempts = vec![Some("0.1.7".to_string()), None, None].into_iter();
+        assert_eq!(
+            resolve_probe(attempts.by_ref(), true),
+            Some("0.1.7".to_string())
+        );
+        assert_eq!(attempts.len(), 2);
+    }
+
+    #[test]
+    fn probe_retries_until_a_version_is_read() {
+        let attempts = vec![None, None, Some("0.1.7".to_string())].into_iter();
+        assert_eq!(resolve_probe(attempts, true), Some("0.1.7".to_string()));
+    }
+
+    #[test]
+    fn probe_gives_up_after_three_unreadable_attempts() {
+        assert_eq!(
+            resolve_probe(vec![None, None, None].into_iter(), true),
+            None
+        );
+    }
+
+    #[test]
+    fn probe_of_a_silent_port_makes_one_attempt() {
+        let mut attempts = vec![None, Some("0.1.7".to_string())].into_iter();
+        assert_eq!(resolve_probe(attempts.by_ref(), false), None);
+        assert_eq!(attempts.len(), 1);
     }
 
     #[test]
