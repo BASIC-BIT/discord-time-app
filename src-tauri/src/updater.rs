@@ -445,17 +445,26 @@ fn stop_relaunch_watchdog(watchdog: Option<std::process::Child>) {
 /// Run by the relaunch watchdog, with the app's exe path and PID passed as the
 /// environment variables `HAMMER_RELAUNCH_EXE` and `HAMMER_RELAUNCH_PID` (data, never
 /// parsed as code). First it waits (2 s polls) for this app to exit, which happens
-/// only after the installer has been started; then, every 10 s, while an installer
-/// (`msiexec`) or a UAC prompt (`consent`) is running in a user session, it keeps
-/// waiting. Session 0 is skipped: the Windows Installer service's own msiexec
-/// lingers there for minutes after any install. Both waits
-/// share one 15-minute cap from spawn. Then, only if no installer or UAC prompt is
-/// still running in a user session, it starts the app the way autostart does; a
-/// start mid-transaction would make Windows Installer restart-manage or reboot.
-/// When the cap expires with an installer still running it exits without a
-/// relaunch. If the installer already relaunched the app, the single-instance
-/// guard makes this start a no-op.
-const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $deadline); if (-not (Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 })) { Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }";
+/// right after the plugin has asked the shell to start `msiexec`. Then it waits up
+/// to 60 s (2 s polls) for an installer (`msiexec`) or a UAC prompt (`consent`) to
+/// appear in a user session, so a slow start on a loaded machine is not mistaken
+/// for a finished install; if none appears the hand-off never started. Once one
+/// has appeared it keeps waiting, every 10 s, while one is running. Session 0 is
+/// skipped: the Windows Installer service's own msiexec lingers there for minutes
+/// after any install. All waits share one 15-minute cap from spawn. Then, only if
+/// no installer or UAC prompt is still running in a user session, it starts the
+/// app the way autostart does; a start mid-transaction would make Windows
+/// Installer restart-manage or reboot. When the cap expires with an installer
+/// still running it exits without a relaunch. If the installer already relaunched
+/// the app, the single-instance guard makes this start a no-op.
+const RELAUNCH_WATCHDOG_SCRIPT: &str = concat!(
+    "$deadline = (Get-Date).AddMinutes(15); ",
+    "while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; ",
+    "$appearBy = (Get-Date).AddSeconds(60); ",
+    "while (-not (Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $appearBy -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; ",
+    "while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }; ",
+    "if (-not (Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 })) { Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }",
+);
 
 /// Every install hand-off exits before the installer's outcome is known, so a
 /// declined UAC prompt or a failed install would otherwise leave nothing running.
@@ -694,18 +703,24 @@ mod tests {
     #[test]
     fn relaunch_watchdog_waits_for_the_app_then_msiexec_then_starts_the_exe_only_when_idle() {
         let script = RELAUNCH_WATCHDOG_SCRIPT;
+        let installer = "(Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 })";
         let pid_wait = script
             .find("Get-Process -Id $env:HAMMER_RELAUNCH_PID")
             .expect("waits on the app PID");
-        let msiexec_wait = script
-            .find("Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }")
-            .expect("waits on the user-session msiexec and UAC prompt");
-        assert!(pid_wait < msiexec_wait);
+        let appear_wait = script
+            .find(&format!("while (-not {installer}"))
+            .expect("waits for the installer or UAC prompt to appear");
+        let running_wait = script
+            .find(&format!("while ({installer}"))
+            .expect("waits while the user-session msiexec or UAC prompt runs");
+        assert!(pid_wait < appear_wait);
+        assert!(appear_wait < running_wait);
+        assert!(script.contains("AddSeconds(60)"));
         assert!(script.contains("AddMinutes(15)"));
         // The deadline only ends the wait; the relaunch never races a running installer.
-        assert!(script.ends_with(
-            "; if (-not (Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 })) { Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }"
-        ));
+        assert!(script.ends_with(&format!(
+            "; if (-not {installer}) {{ Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }}"
+        )));
         assert_eq!(script.matches("Start-Process").count(), 1);
         // The path is passed as data, never embedded in the script text.
         assert!(!script.contains(".exe"));
