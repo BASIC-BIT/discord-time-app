@@ -69,15 +69,17 @@ pub enum ReadyAction {
     OfferRestart,
 }
 
-/// Auto-install only on launch, with the overlay hidden, and never for a
+/// Auto-install only on launch, with every app window hidden, and never for a
 /// version whose install already failed once.
 pub fn next_action(
     trigger: Trigger,
-    overlay_visible: bool,
+    app_window_visible: bool,
     attempted_version: Option<&str>,
     version: &str,
 ) -> ReadyAction {
-    if matches!(trigger, Trigger::Launch) && !overlay_visible && attempted_version != Some(version)
+    if matches!(trigger, Trigger::Launch)
+        && !app_window_visible
+        && attempted_version != Some(version)
     {
         ReadyAction::Install
     } else {
@@ -245,7 +247,7 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             let attempted = read_install_attempt(app);
             match next_action(
                 trigger,
-                overlay_visible(app),
+                app_window_visible(app),
                 attempted.as_deref(),
                 &version,
             ) {
@@ -357,14 +359,16 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     })
 }
 
-fn overlay_visible(app: &AppHandle) -> bool {
+/// The busy test: any visible window (overlay, Settings, update window) means
+/// the user may be mid-task, so exiting into the installer would interrupt them.
+fn app_window_visible(app: &AppHandle) -> bool {
     #[cfg(feature = "updater-smoke")]
     if std::env::var("HAMMER_SMOKE_OVERLAY_VISIBLE").as_deref() == Ok("1") {
         return true;
     }
-    app.get_webview_window("main")
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false)
+    app.webview_windows()
+        .values()
+        .any(|w| w.is_visible().unwrap_or(false))
 }
 
 pub fn show_restart_item(app: &AppHandle, version: &str) {
@@ -497,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_with_hidden_overlay_installs() {
+    fn launch_with_all_windows_hidden_installs() {
         assert!(matches!(
             next_action(Trigger::Launch, false, None, "0.1.7"),
             ReadyAction::Install
@@ -505,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_with_visible_overlay_defers() {
+    fn launch_with_a_visible_window_defers() {
         assert!(matches!(
             next_action(Trigger::Launch, true, None, "0.1.7"),
             ReadyAction::OfferRestart

@@ -46,6 +46,7 @@ Anti-goals:
 5. "Check for Updates" in the tray stays. Its window shows the real installed version and the current updater state (checking, up to date, downloading, ready to restart, failed with the error). Its button becomes "Restart to update" once bytes are cached; otherwise it runs a check and download on demand.
 
 Builder's call recorded: "overlay window hidden" is the busy test. The overlay holds its loading and verifying state in React and hides on close, so a hidden overlay means no parse the user is waiting on. No new frontend-to-Rust busy flag.
+Amended 2026-11-04 after review: any visible app window (overlay, Settings, update window) counts as busy.
 
 ### Mechanism (Rust-owned)
 
