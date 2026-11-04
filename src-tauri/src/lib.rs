@@ -3275,7 +3275,7 @@ fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                 }
                 "restart_to_update" => {
                     log::info!("Restart to update requested from system tray");
-                    if let Err(e) = updater::install_ready_update(app) {
+                    if let Err(e) = updater::install_ready_update(app, updater::HandOff::User) {
                         log::error!("Failed to install update: {e}");
                         use tauri_plugin_notification::NotificationExt;
                         if let Err(e) = app

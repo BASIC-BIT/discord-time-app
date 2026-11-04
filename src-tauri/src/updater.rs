@@ -86,6 +86,21 @@ pub enum ReadyAction {
     OfferRestart,
 }
 
+/// Who started an install hand-off.
+#[derive(Debug, Clone, Copy)]
+pub enum HandOff {
+    /// The launch-path auto-install, which the attempt marker keeps from looping.
+    Launch,
+    /// A click on the tray item or the update window's button, which cannot loop.
+    User,
+}
+
+/// Only the launch path needs the marker: without it a failed install would be
+/// retried on every launch. A user click must not be blocked by an unwritable store.
+fn marker_failure_is_fatal(hand_off: HandOff) -> bool {
+    matches!(hand_off, HandOff::Launch)
+}
+
 /// Auto-install only on launch, with every app window hidden, and never for a
 /// version whose install already failed once.
 pub fn next_action(
@@ -155,9 +170,24 @@ pub fn status_from_phase(
     }
 }
 
+/// On a failed open, moves `updater.json` aside to `updater.json.corrupt` and
+/// retries once, so a bad marker file is replaced rather than fatal. (Plugin
+/// 2.4.3 already opens an unparseable file as an empty store, which the next
+/// save overwrites; this covers any other open failure tied to the file.)
 fn store(app: &AppHandle) -> Result<std::sync::Arc<tauri_plugin_store::Store<tauri::Wry>>, String> {
-    tauri_plugin_store::StoreBuilder::new(app, STORE_FILE)
-        .build()
+    let open = || tauri_plugin_store::StoreBuilder::new(app, STORE_FILE).build();
+    open()
+        .or_else(|e| {
+            log::warn!("Failed to open updater store, moving it aside and retrying: {e}");
+            if let Ok(path) = tauri_plugin_store::resolve_store_path(app, STORE_FILE) {
+                let aside = path.with_extension("json.corrupt");
+                let _ = std::fs::remove_file(&aside);
+                if let Err(e) = std::fs::rename(&path, &aside) {
+                    log::warn!("Failed to move {} aside: {e}", path.display());
+                }
+            }
+            open()
+        })
         .map_err(|e| {
             log::error!("Failed to build updater store: {e}");
             e.to_string()
@@ -280,7 +310,7 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             ) {
                 ReadyAction::Install => {
                     log::info!("Installing update {version} on launch");
-                    if let Err(e) = install_ready_update(app) {
+                    if let Err(e) = install_ready_update(app, HandOff::Launch) {
                         log::error!("Failed to install update {version}: {e}");
                         // The download is kept, so the tray item can retry.
                         show_restart_item(app, &version);
@@ -411,7 +441,7 @@ pub fn install_error_copy(error: &str) -> &str {
 
 /// Hands the downloaded update to the installer. On Windows a successful
 /// install exits the process, so `Ok` is only seen on other platforms.
-pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
+pub fn install_ready_update(app: &AppHandle, hand_off: HandOff) -> Result<(), String> {
     if UPDATES_DISABLED {
         return Err("Updates are disabled in debug builds".to_string());
     }
@@ -441,9 +471,12 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     // outcome is known, so each one gets the watchdog.
     let watchdog = spawn_relaunch_watchdog();
     if let Err(e) = record_install_attempt(app, &version) {
-        stop_relaunch_watchdog(watchdog);
-        restore(ready, previous_phase);
-        return Err(e);
+        if marker_failure_is_fatal(hand_off) {
+            stop_relaunch_watchdog(watchdog);
+            restore(ready, previous_phase);
+            return Err(e);
+        }
+        log::warn!("Installing {version} without the attempt marker: {e}");
     }
     if let Err(e) = ready.update.install(&ready.bytes) {
         let message = e.to_string();
@@ -610,7 +643,7 @@ pub async fn install_update_now(app: AppHandle) -> Result<(), String> {
     if !has_ready {
         run_update_cycle(&app, Trigger::Manual).await;
     }
-    install_ready_update(&app)
+    install_ready_update(&app, HandOff::User)
 }
 
 /// Current UTC time as RFC 3339, without pulling in a date crate.
@@ -778,6 +811,12 @@ mod tests {
         // The path is passed as data, never embedded in the script text.
         assert!(!script.contains(".exe"));
         assert!(!script.contains("{exe}"));
+    }
+
+    #[test]
+    fn only_the_launch_hand_off_refuses_without_the_marker() {
+        assert!(marker_failure_is_fatal(HandOff::Launch));
+        assert!(!marker_failure_is_fatal(HandOff::User));
     }
 
     #[test]
