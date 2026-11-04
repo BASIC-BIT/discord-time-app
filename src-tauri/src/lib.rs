@@ -1507,8 +1507,15 @@ enum SidecarAction {
 
 /// A healthy sidecar is only adopted when it was spawned by this exact app version;
 /// otherwise an MSI upgrade would keep talking to the previous version's node.exe.
-fn sidecar_action(health_app_version: Option<&str>, app_version: &str) -> SidecarAction {
+/// `port_answers` (a plain `/health` 200) covers a body that was too slow to read or
+/// parse: a child spawned then could not bind the port, so the listener is adopted.
+fn sidecar_action(
+    health_app_version: Option<&str>,
+    port_answers: bool,
+    app_version: &str,
+) -> SidecarAction {
     match health_app_version {
+        None if port_answers => SidecarAction::Adopt,
         None => SidecarAction::Spawn,
         Some(version) if version == app_version => SidecarAction::Adopt,
         Some(_) => SidecarAction::KillThenSpawn,
@@ -1519,7 +1526,8 @@ fn sidecar_action(health_app_version: Option<&str>, app_version: &str) -> Sideca
 pub(crate) fn time_parser_health_app_version() -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    // `/health` reads the database and nudges the endpoint, so a busy sidecar can be slow.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
 
     let request = format!(
@@ -1923,7 +1931,12 @@ fn start_time_parser_service(app: &AppHandle) {
 
     let app_version = env!("CARGO_PKG_VERSION");
     let running_version = time_parser_health_app_version();
-    match sidecar_action(running_version.as_deref(), app_version) {
+    let port_answers = running_version.is_some() || time_parser_health_check();
+    match sidecar_action(running_version.as_deref(), port_answers, app_version) {
+        SidecarAction::Adopt if running_version.is_none() => {
+            log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read; adopting it");
+            return;
+        }
         SidecarAction::Adopt => {
             log::info!("Local time parser service is already healthy");
             return;
@@ -1943,6 +1956,10 @@ fn start_time_parser_service(app: &AppHandle) {
                 running_version.unwrap_or_default()
             );
             kill_time_parser_listener();
+            if time_parser_health_check() {
+                log::error!("Local time parser service on port {TIME_PARSER_PORT} survived the kill; not spawning a child that cannot bind");
+                return;
+            }
         }
         SidecarAction::Spawn => {}
     }
@@ -2189,15 +2206,23 @@ mod sidecar_adoption_tests {
     #[test]
     fn unhealthy_port_spawns() {
         assert!(matches!(
-            sidecar_action(None, "0.1.7"),
+            sidecar_action(None, false, "0.1.7"),
             SidecarAction::Spawn
+        ));
+    }
+
+    #[test]
+    fn unreadable_health_body_on_a_live_port_is_adopted() {
+        assert!(matches!(
+            sidecar_action(None, true, "0.1.7"),
+            SidecarAction::Adopt
         ));
     }
 
     #[test]
     fn same_version_is_adopted() {
         assert!(matches!(
-            sidecar_action(Some("0.1.7"), "0.1.7"),
+            sidecar_action(Some("0.1.7"), true, "0.1.7"),
             SidecarAction::Adopt
         ));
     }
@@ -2205,7 +2230,7 @@ mod sidecar_adoption_tests {
     #[test]
     fn old_sidecar_without_version_is_killed() {
         assert!(matches!(
-            sidecar_action(Some(""), "0.1.7"),
+            sidecar_action(Some(""), true, "0.1.7"),
             SidecarAction::KillThenSpawn
         ));
     }
@@ -2247,7 +2272,7 @@ mod sidecar_adoption_tests {
     #[test]
     fn different_version_is_killed() {
         assert!(matches!(
-            sidecar_action(Some("0.1.6"), "0.1.7"),
+            sidecar_action(Some("0.1.6"), true, "0.1.7"),
             SidecarAction::KillThenSpawn
         ));
     }
