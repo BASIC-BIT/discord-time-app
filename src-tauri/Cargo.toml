@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = []
 routing-smoke = []
+updater-smoke = []
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
@@ -37,3 +38,6 @@ single-instance = "0.3"
 log = "0.4"
 getrandom = "0.3"
 tauri-plugin-notification = "2"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["tray-icon", "test"] }

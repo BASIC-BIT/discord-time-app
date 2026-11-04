@@ -18,7 +18,6 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tauri_plugin_store::StoreBuilder;
-use tauri_plugin_updater::UpdaterExt;
 
 mod updater;
 
@@ -2737,7 +2736,9 @@ fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, Strin
     }
 }
 
-pub(crate) fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn stop_time_parser_service<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<(), String> {
     let state = app.state::<TimeParserServiceState>();
     let mut child_slot = state
         .child
@@ -2907,64 +2908,6 @@ async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn check_for_updates(app: AppHandle) -> Result<bool, String> {
-    log::info!("Checking for updates");
-
-    match app.updater() {
-        Ok(updater) => match updater.check().await {
-            Ok(Some(update)) => {
-                log::info!("Update available: {}", update.version);
-                Ok(true)
-            }
-            Ok(None) => {
-                log::info!("No updates available");
-                Ok(false)
-            }
-            Err(e) => {
-                log::error!("Error checking for updates: {e}");
-                Err(format!("Failed to check for updates: {e}"))
-            }
-        },
-        Err(e) => {
-            log::error!("Updater not available: {e}");
-            Err(format!("Updater not available: {e}"))
-        }
-    }
-}
-
-#[tauri::command]
-async fn install_update(app: AppHandle) -> Result<(), String> {
-    match app.updater() {
-        Ok(updater) => match updater.check().await {
-            Ok(Some(update)) => {
-                match update
-                    .download_and_install(|_chunk_length, _content_length| {}, || {})
-                    .await
-                {
-                    Ok(_) => {
-                        log::info!("Update installed successfully");
-                        Ok(())
-                    }
-                    Err(e) => {
-                        log::error!("Error installing update: {e}");
-                        Err(format!("Failed to install update: {e}"))
-                    }
-                }
-            }
-            Ok(None) => {
-                log::info!("No update available to install");
-                Err("No update available".to_string())
-            }
-            Err(e) => {
-                log::error!("Error checking for update: {e}");
-                Err(format!("Failed to check for update: {e}"))
-            }
-        },
-        Err(e) => Err(format!("Updater not available: {e}")),
-    }
-}
-
-#[tauri::command]
 async fn toggle_autostart(app: AppHandle, enable: bool) -> Result<(), String> {
     let autostart_manager = app.autolaunch();
 
@@ -3082,7 +3025,10 @@ async fn debug_store_location(app: AppHandle) -> Result<String, String> {
     Ok(debug_info)
 }
 
-fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
+pub(crate) fn create_system_tray_menu<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    restart_version: Option<&str>,
+) -> Result<tauri::menu::Menu<R>, tauri::Error> {
     let show_item = MenuItemBuilder::with_id("show", "Show HammerOverlay")
         .enabled(true)
         .build(app)?;
@@ -3096,12 +3042,15 @@ fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::W
         .enabled(true)
         .build(app)?;
 
-    MenuBuilder::new(app)
-        .item(&show_item)
-        .item(&settings_item)
-        .item(&check_updates_item)
-        .item(&quit_item)
-        .build()
+    let mut menu = MenuBuilder::new(app).item(&show_item).item(&settings_item);
+    if let Some(version) = restart_version {
+        let restart_item =
+            MenuItemBuilder::with_id("restart_to_update", format!("Restart to update {version}"))
+                .enabled(true)
+                .build(app)?;
+        menu = menu.item(&restart_item);
+    }
+    menu.item(&check_updates_item).item(&quit_item).build()
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -3133,9 +3082,9 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
 fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Setting up system tray");
 
-    let menu = create_system_tray_menu(app)?;
+    let menu = create_system_tray_menu(app, None)?;
 
-    let _tray = TrayIconBuilder::new()
+    let _tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("HammerOverlay - Discord Timestamp Converter")
         .on_menu_event(|app, event| {
@@ -3210,6 +3159,12 @@ fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                                 log::error!("Failed to create update checker window: {e}");
                             }
                         }
+                    }
+                }
+                "restart_to_update" => {
+                    log::info!("Restart to update requested from system tray");
+                    if let Err(e) = updater::install_ready_update(app) {
+                        log::error!("Failed to install update: {e}");
                     }
                 }
                 "quit" => {
@@ -3328,8 +3283,9 @@ pub fn run() {
             increment_format_usage,
             get_settings,
             save_settings,
-            check_for_updates,
-            install_update,
+            updater::get_update_status,
+            updater::check_for_updates_now,
+            updater::install_update_now,
             toggle_autostart,
             is_autostart_enabled,
             reload_global_shortcuts,
@@ -3369,6 +3325,7 @@ pub fn run() {
             }
 
             start_time_parser_service(app.handle());
+            updater::spawn_update_loop(app.handle().clone());
 
             // Initialize auto-start based on user settings
             let app_handle = app.handle().clone();
