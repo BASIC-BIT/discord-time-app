@@ -8,7 +8,14 @@ param(
     [ValidateSet("minimal", "detailed")]
     [string]$InstructionPreset = "minimal",
 
-    [int]$EndpointTimeoutMs = 30000
+    [int]$EndpointTimeoutMs = 30000,
+
+    [string]$ApiKey = "",
+
+    [ValidateSet("local", "hosted")]
+    [string]$DeploymentMode = "local",
+
+    [int]$MonthlyRequests = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,8 +23,15 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $apiRoot = Join-Path $repoRoot "api"
 $modelsUrl = "$($EndpointBaseUrl.TrimEnd('/'))/models"
 
+# A cold load-balancing endpoint can hold the first request up to 2 minutes while a worker starts.
+$modelsTimeoutSec = if ($DeploymentMode -eq "hosted") { 130 } else { 10 }
+$modelsHeaders = @{}
+if ($ApiKey -ne "") {
+    $modelsHeaders = @{ Authorization = "Bearer $ApiKey" }
+}
+
 try {
-    $models = Invoke-RestMethod -Uri $modelsUrl -TimeoutSec 10
+    $models = Invoke-RestMethod -Uri $modelsUrl -Headers $modelsHeaders -TimeoutSec $modelsTimeoutSec
 } catch {
     throw "Temporal endpoint is not healthy at $modelsUrl. $($_.Exception.Message)"
 }
@@ -35,7 +49,17 @@ $env:TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT = "chat"
 $env:TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET = $InstructionPreset
 $env:TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS = $EndpointTimeoutMs.ToString()
 $env:TEMPORAL_EVAL_BOUNDARY = "true"
-$env:TEMPORAL_EVAL_DEPLOYMENT_MODE = "local"
+$env:TEMPORAL_EVAL_DEPLOYMENT_MODE = $DeploymentMode
+if ($ApiKey -ne "") {
+    $env:TEMPORAL_EVAL_ENDPOINT_API_KEY = $ApiKey
+} else {
+    Remove-Item Env:TEMPORAL_EVAL_ENDPOINT_API_KEY -ErrorAction SilentlyContinue
+}
+if ($MonthlyRequests -gt 0) {
+    $env:TEMPORAL_EVAL_MONTHLY_REQUESTS = $MonthlyRequests.ToString()
+} else {
+    Remove-Item Env:TEMPORAL_EVAL_MONTHLY_REQUESTS -ErrorAction SilentlyContinue
+}
 $env:TEMPORAL_EVAL_BLOCKING_RUNNERS = ""
 $env:TEMPORAL_EVAL_OUTPUT = $Output
 if ($BaselineReport.Trim() -ne "") {

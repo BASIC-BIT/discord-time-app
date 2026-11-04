@@ -1,6 +1,6 @@
 # Hosted SLM Decision Packet
 
-Status: decision packet for BASIC, 2026-10-29, revised 2026-10-30 after review (serverless reframed around duty cycle, warm-on-interaction added in section 7). Nothing in this document has been deployed. No provider resources were created, no secrets were touched, no money was spent.
+Status: decision packet for BASIC, 2026-10-29, revised 2026-10-30 (serverless reframed around duty cycle, warm-on-interaction in section 7) and 2026-11-03 (provider chosen from telemetry, RunPod load-balancing path and wizard in section 5). Nothing in this document has been deployed. No provider resources were created, no secrets were touched, no money was spent.
 
 The ask: stop depending on a Docker Desktop + NVIDIA runtime on every user's machine, and have the V22 temporal model (`qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22`) always live somewhere so HammerOverlay parses out of the box.
 
@@ -63,8 +63,8 @@ A serverless worker that is hot around the clock costs 2.3x to 3.4x a dedicated 
 ### Recommendation
 
 1. **Ship warm-on-interaction (section 7) regardless of provider.** It makes cold start a UX notice rather than a failure, which is what lets the cheapest shape be chosen on cost alone.
-2. **Pick the provider on measured duty cycle.** Pull sessions per month and session-gap distribution from the parse telemetry database first. Below about 30 percent duty cycle, RunPod Serverless flex (16 GB tier) with a 3 to 10 minute idle timeout is cheapest and likely under the $50 cap. Above it, option A, the RunPod Community pod at about $125 to $150 a month, which needs the cap raised.
-3. **If the cap stands and usage is unknown, run E as the bridge** while telemetry accumulates. E costs nothing, needs no new eval because it is the same runtime, and gives users the out-of-box experience now.
+2. **Pick the provider on measured duty cycle.** Measured on 2026-11-03 from the only telemetry that exists (BASIC's own install, 208 parses over 2026-06-03 to 2026-06-10, nothing since because the database is per-install and 30-day retained): median gap between parses 10 s, p90 825 s, 31 to 44 sessions a week depending on the gap threshold. With a 300 s worker idle timeout the worker would have been alive 4.0 hours over 6.9 days, a **2.4 percent duty cycle**, about $10 a month at the flex rate. Even 10x that usage stays under the cap. So: RunPod Serverless, load-balancing endpoint type, 16 GB tier, one worker, 300 s idle timeout. The pod (option A) only becomes right above about 30 percent duty cycle.
+3. **No bridge needed.** The serverless path is cheap enough to stand up directly; option E stays documented as a fallback if RunPod misbehaves.
 4. Hugging Face scale-to-zero is out whatever the schedule: minutes to wake, 15 to 60 minutes of billed idle per wake, and forum reports of endpoints stuck initialising.
 
 Either way, the hosted endpoint must pass the same gate as the local runtime before it becomes the default: 197/197 required routed cases, 159/159 model-owned cases, zero wrong singular answers, warm p95 at or under about 5 s.
@@ -101,7 +101,41 @@ Tests: `cargo test --lib slm` covers mode resolution, the empty-URL fallback, th
 
 These steps create paid or public resources and touch secrets, so they are queued for BASIC under the standing no-deploy, no-infra, no-money rules.
 
-### 5a. Option A: always-on GPU pod (recommended if the budget is approved)
+### 5.0 Chosen path: RunPod Serverless load-balancing endpoint, driven by the wizard
+
+Run from the repo root in Git Bash:
+
+```bash
+bash scripts/hosted-slm-wizard.sh
+```
+
+It walks nine stages and writes every captured value to the ignored file `.env.hosted-slm.local`; re-running keeps saved values. What it does and why:
+
+| Stage | What | Notes |
+|---|---|---|
+| 1 | Rotate the HF token exposed in June | hygiene; nothing in this path needs an HF token |
+| 2 | Push `ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22` | built from `docker/temporal-ir-qwen35-hosted.Dockerfile`: local runtime base plus the V22 adapter (SHA-verified from the GitHub release), the base weights prefetched, `HF_HUB_OFFLINE=1`, `/ping` health route, no server auth token. 28.9 GB because the base is the CUDA devel image; the first pull on a RunPod host is slow, later cold starts use the host cache and FlashBoot. A slimmer runtime base is a follow-up, not a blocker. |
+| 3 | Create the endpoint | type **Load balancer** (plain HTTP, so the sidecar's `TEMPORAL_PLAN_IR_ENDPOINT_*` config works unchanged), 16 GB tier, workers 0 to 1, idle timeout 300 s (above the sidecar's 240 s ready TTL), FlashBoot on, a 5 GB network volume attached, env `PORT=8770`, `PORT_HEALTH=8770` (RunPod polls `GET /ping` on `PORT_HEALTH`, which defaults to 80 independently of `PORT`), `TRITON_CACHE_DIR=/runpod-volume/triton-cache`, `TEMPORAL_IR_PREWARM=1` (see the kernel-cache finding below) |
+| 4 | Create a **restricted** RunPod API key scoped to that one endpoint | this key ships inside the desktop binary as `HOSTED_SLM_DEFAULT_API_KEY`; it must be able to do nothing else. The gateway consumes `Authorization: Bearer <key>`, which is exactly the header the sidecar already sends. |
+| 5 | Spend limit in RunPod billing | expected about $10/month; cap $50 |
+| 6 | Verify `/ping` and `/v1/models` through `https://<endpoint-id>.api.runpod.ai` | the wizard retries for 3 minutes because the gateway answers "no workers available" while scaling from zero |
+| 7 | Eval gate | `scripts/run-temporal-evaluation-boundary.ps1 -EndpointBaseUrl https://<id>.api.runpod.ai/v1 -ApiKey <key> -DeploymentMode hosted -MonthlyRequests 1000 -EndpointTimeoutMs 120000` with `TEMPORAL_MODEL_FIXED_USD_PER_CALL=0.01` so the hosted cost projection is configured (about $10/month, under the cap). Required: 197/197 routed, 159/159 model-owned. |
+| 8 | Arm the alarm | `gh secret set HOSTED_SLM_API_KEY`, `gh variable set HOSTED_SLM_BASE_URL`; `.github/workflows/hosted-slm-probe.yml` then calls `/v1/models` daily and GitHub emails the owner on failure. It wakes the worker once a day (about 3 cents) on purpose; a conventional uptime monitor would keep a scale-to-zero worker awake and defeat the point. |
+| 9 | Release flip | fill `HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL` and `HOSTED_SLM_DEFAULT_API_KEY` in `src-tauri/src/lib.rs`, set the `slm_mode` default to `SLM_MODE_HOSTED` and `local_slm_enabled` to `true`, mirror the two defaults in `src/components/Settings.tsx`, release. Existing users keep their saved mode. |
+
+**Measured on 2026-11-03 with the hosted image on the 5090, through the production routing boundary (`scripts/run-temporal-evaluation-boundary.ps1`, catalog now 202 routed / 163 model-owned cases):**
+
+| Run | Gate A | Gate B | Routed median | p95 | Verdict |
+|---|---|---|---|---|---|
+| Fresh container, first run | 202/202 | 163/163 | 5094 ms | 16126 ms | accuracy passes, latency blocker |
+| Same container, second run | 202/202 | 163/163 | about 2 s | 3741 ms | PASS |
+| Fresh container with `TEMPORAL_IR_PREWARM=1`, first run | 202/202 | 163/163 | 1423 ms | 3862 ms | PASS |
+
+Time from `docker run` to `/ping` healthy was 22 s; the first 1-token completion then took 76 s. The gap between the runs is Triton kernel JIT and autotuning in flash-linear-attention (Qwen3.5's linear-attention layers): 81 compiled kernels after run 1, none added in run 2. On a scale-to-zero worker every fresh container repeats this, so the first few dozen real requests would be 5 to 20 s and many would hit the sidecar's 15 s timeout. Two mitigations, both in this PR: the server gains an opt-in startup prewarm (`TEMPORAL_IR_PREWARM=1`) that runs seven representative generations (absolute, weekday, relative, two ranges, a Discord reference shift, a multi-line event post) through the exact chat request path before `/ping` reports healthy, and the image honours `TRITON_CACHE_DIR` so the compiled kernels can live on a RunPod network volume and survive across workers of the same GPU type. Measured with prewarm on the 5090: `docker run` to healthy `/ping` 68 s (prewarm itself 48 s, 33 s of it the first prompt), all 81 kernels compiled before traffic, first real 1-token request 59 ms, first eval run p95 3862 ms with zero additional compiles. Kernel caches are keyed by GPU architecture, so a cache built on the 5090 does not help an A4000 worker; the first worker per GPU type pays the 48 s once, later ones read the volume and should be near the 22 s load time (not yet measured on RunPod).
+
+RunPod load-balancer facts that shaped this (docs, 2026-11-03): URL `https://<ENDPOINT_ID>.api.runpod.ai/<path>`; no queue and no built-in retry, so the client retries during scale-from-zero (the sidecar's warm-up retry via health polling covers this); request timeout 2 min when no worker is available, per-request processing timeout 5.5 min; payload limit 30 MB.
+
+### 5a. Alternative: always-on GPU pod (only above about 30 percent duty cycle)
 
 1. Rotate the exposed Hugging Face token (journey doc open item). Not strictly needed for A, which uses the release zip, but it is overdue.
 2. RunPod console: create a Pod (not Serverless), Community Cloud, GPU `RTX A4000` or `RTX 4000 Ada`, template "RunPod PyTorch" or any CUDA 12.8 base, 20 GB container disk, 20 GB volume at `/workspace`. Expose HTTP port `8770`. Set a spend alert at $160/month in Billing.
@@ -141,14 +175,14 @@ These steps create paid or public resources and touch secrets, so they are queue
 7. Alarm (standing rule: unattended prod ships with an alarm that emails basic@basicbit.net). RunPod has no CloudWatch, so use an external uptime monitor (UptimeRobot or Better Stack free tier): HTTP check every 5 minutes on `https://<pod-id>-8770.proxy.runpod.net/v1/models` with header `Authorization: Bearer <token>`, alert contact basic@basicbit.net. If you choose AWS instead, create the CloudWatch alarm with the SNS email topic in the same Terraform change as the instance, per the basic-life convention.
 8. Ship it: in `src-tauri/src/lib.rs` set `HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL` to the URL, `HOSTED_SLM_DEFAULT_API_KEY` to the token, change the `slm_mode` default to `SLM_MODE_HOSTED` and `local_slm_enabled` default to `true`; mirror the two defaults in `src/components/Settings.tsx`; release. Existing users keep whatever mode they saved.
 
-### 5b. Option E: bridge on BASIC's 5090 box ($0)
+### 5b. Alternative: bridge on BASIC's 5090 box ($0, fallback if RunPod misbehaves)
 
 1. Start the local runtime as today (`scripts/start-temporal-peft-server.ps1`) but add `-AuthToken` support, or run the container launcher by hand adding `--env TEMPORAL_IR_SERVER_AUTH_TOKEN=<token>` and `--publish 127.0.0.1:8770:8770` (already loopback-only, good).
 2. Cloudflare: add a Tunnel (`cloudflared tunnel create hammer-slm`), route a hostname such as `slm.<your-domain>` to `http://127.0.0.1:8770`, and add a Rate Limiting rule (for example 60 requests per minute per IP on `/v1/*`). Alternatively `tailscale funnel 8770` for a quicker but Tailscale-domain URL.
 3. Run steps 5a.5 to 5a.8 against `https://slm.<your-domain>/v1`. The eval should match local numbers exactly; if it does not, something in the tunnel is altering requests.
 4. Uptime monitor as in 5a.7. Expect downtime whenever the machine sleeps or updates; the deterministic fallback covers users during those windows.
 
-### 5c. Option D spike (only if the cap stands and E is not acceptable)
+### 5c. Alternative: CPU spike (not needed at current usage)
 
 1. Merge the LoRA into the base (`ml/temporal-ir/merge_unsloth_lora.py` is written for the old Unsloth path; a plain PEFT `merge_and_unload()` on `Qwen/Qwen3.5-0.8B` bf16 is a 20-line script), convert with llama.cpp `convert_hf_to_gguf.py`, quantize to Q8_0.
 2. Serve with `llama-server --model merged-q8.gguf --host 0.0.0.0 --port 8770 --api-key <token> --chat-template` on an 8-vCPU VPS, and run the step 5a.6 gate. Any loss against 197/159 kills the option.
@@ -156,8 +190,11 @@ These steps create paid or public resources and touch secrets, so they are queue
 
 ## 6. Open items this packet does not close
 
-- No hosted eval of any Qwen3.5 adapter exists yet; all prior hosted numbers are for the 0.5B adapter.
-- Latency of V22 on A4000 / 4000 Ada class GPUs is unmeasured.
+- No eval of any Qwen3.5 adapter on RunPod exists yet; all prior RunPod numbers are for the 0.5B adapter. The hosted image itself has been evaluated locally (see the 2026-11-03 result below).
+- Latency of V22 on A4000 / 4000 Ada class GPUs is unmeasured; the wizard's eval run will produce it.
+- The hosted image is 28.9 GB. First pull per RunPod host is slow; a slimmer runtime-based image is the obvious follow-up if cold starts disappoint.
+- Cold start on a fresh worker is container start plus model load (about 22 s) plus prewarm (48 s on the 5090, longer on a 16 GB card; expect 2 to 3 minutes end to end on the first worker of a GPU type, less once the network volume holds the kernels). The warm-on-interaction notice covers it. The sidecar's warm-up timeout is 180 s; raise `TEMPORAL_PLAN_IR_ENDPOINT_WARMUP_TIMEOUT_MS` if RunPod measurements exceed it.
+- Network-volume persistence of the Triton cache across RunPod workers is untested; the wizard's stage 7 eval run on RunPod is where to confirm the second cold start is faster than the first.
 - Per-install key issuance is not built; the shipped default key is shared.
 - The exposed HF token rotation from June is still pending.
 

@@ -40,3 +40,4 @@ src-tauri/sidecars/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.hosted-slm.local

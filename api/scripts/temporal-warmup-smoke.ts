@@ -65,7 +65,7 @@ async function main() {
     fake.close();
   }
 
-  // (c) 503 -> cold with lastError, and a retry within 15 s sends nothing.
+  // (c) 503 -> cold with lastError, and a retry within 10 s sends nothing.
   {
     const fake = await startFakeEndpoint(() => ({ status: 503, body: 'scaling up' }));
     const warmth = new PlanIrEndpointWarmth({ ...fake.endpoint, api: 'completions' }, options);
@@ -76,10 +76,29 @@ async function main() {
     const status = warmth.status();
     assert.equal(status.state, 'cold');
     assert.match(status.lastError ?? '', /HTTP 503/);
-    clock += 14_000;
+    clock += 9_000;
     await warmth.warm();
     assert.equal(fake.seen.length, 1);
     clock += 2_000;
+    await warmth.warm();
+    assert.equal(fake.seen.length, 2);
+    fake.close();
+  }
+
+  // (c2) nudge(): retries a failed warm after the throttle; a fresh instance with no warm request stays quiet.
+  {
+    const fake = await startFakeEndpoint(() => ({ status: 503, body: 'no workers available' }));
+    const warmth = new PlanIrEndpointWarmth(fake.endpoint, options);
+    warmth.nudge();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(fake.seen.length, 0);
+    assert.equal(warmth.status().lastWarmRequestedAt, null);
+    await warmth.warm();
+    assert.equal(fake.seen.length, 1);
+    assert.equal(warmth.status().lastWarmRequestedAt, new Date(clock).toISOString());
+    clock += 11_000;
+    warmth.nudge();
+    assert.equal(warmth.status().state, 'warming');
     await warmth.warm();
     assert.equal(fake.seen.length, 2);
     fake.close();

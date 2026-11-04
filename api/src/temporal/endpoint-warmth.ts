@@ -3,7 +3,8 @@ import { planIrEndpointUrl } from './graph';
 import type { TemporalPlanIrEndpointConfig } from './types';
 
 const SUCCESS_THROTTLE_MS = 10_000;
-const FAILURE_THROTTLE_MS = 15_000;
+const FAILURE_THROTTLE_MS = 10_000;
+const NUDGE_WINDOW_MS = 180_000;
 
 export interface PlanIrEndpointWarmthStatus {
   configured: boolean;
@@ -11,6 +12,7 @@ export interface PlanIrEndpointWarmthStatus {
   state: 'disabled' | 'ready' | 'warming' | 'cold';
   lastReadyAt: string | null;
   lastError: string | null;
+  lastWarmRequestedAt: string | null;
   inFlight: boolean;
 }
 
@@ -22,6 +24,7 @@ export class PlanIrEndpointWarmth {
   private lastReadyAt: number | null = null;
   private lastFailureAt: number | null = null;
   private lastError: string | null = null;
+  private lastWarmRequestedAt: number | null = null;
   private inFlight: Promise<void> | null = null;
   private readonly now: () => number;
   private readonly fetchImpl: typeof fetch;
@@ -52,6 +55,7 @@ export class PlanIrEndpointWarmth {
       state,
       lastReadyAt: this.lastReadyAt === null ? null : new Date(this.lastReadyAt).toISOString(),
       lastError: this.lastError,
+      lastWarmRequestedAt: this.lastWarmRequestedAt === null ? null : new Date(this.lastWarmRequestedAt).toISOString(),
       inFlight: this.inFlight !== null,
     };
   }
@@ -82,6 +86,27 @@ export class PlanIrEndpointWarmth {
 
   /** Never rejects; the outcome lands in status(). */
   warm(): Promise<void> {
+    if (this.options.enabled && this.endpoint !== undefined) {
+      this.lastWarmRequestedAt = this.now();
+    }
+    return this.startWarm();
+  }
+
+  /**
+   * Retry a failed warm while someone asked for one in the last 3 minutes. /health calls this and the
+   * overlay polls /health during the warming notice, so a fast scale-from-zero failure gets retried.
+   * Goes through startWarm() so a nudge does not extend its own window.
+   */
+  nudge(): void {
+    if (this.status().state !== 'cold' || this.lastWarmRequestedAt === null) {
+      return;
+    }
+    if (this.now() - this.lastWarmRequestedAt <= NUDGE_WINDOW_MS) {
+      void this.startWarm();
+    }
+  }
+
+  private startWarm(): Promise<void> {
     if (this.inFlight !== null) {
       return this.inFlight;
     }

@@ -15,7 +15,7 @@ from typing import Any
 
 from peft_runtime import TemporalPeftGenerator
 from predict_peft import DEFAULT_ADAPTER_DIR, DEFAULT_BASE_MODEL
-from temporal_ir_prompts import PROMPT_FORMATS
+from temporal_ir_prompts import PROMPT_FORMATS, instruction_for_preset
 
 
 def main() -> None:
@@ -44,6 +44,12 @@ def main() -> None:
         action="store_true",
         help="Load the base model in bf16/fp16 instead of the known-good BitsAndBytes 4-bit path.",
     )
+    parser.add_argument(
+        "--prewarm",
+        action="store_true",
+        default=os.environ.get("TEMPORAL_IR_PREWARM", "").lower() in {"1", "true", "yes", "on"},
+        help="Run representative generations before listening so Triton JIT/autotune happens at startup, not on the first request.",
+    )
     args = parser.parse_args()
 
     generator = TemporalPeftGenerator(base_model=args.base_model, adapter=args.adapter, load_in_4bit=not args.no_load_in_4bit)
@@ -55,6 +61,9 @@ def main() -> None:
         prompt_format=args.prompt_format,
         enable_thinking=args.enable_thinking,
     )
+
+    if args.prewarm:
+        prewarm(state)
 
     handler = create_handler(state)
     server = ThreadingHTTPServer((args.host, args.port), handler)
@@ -107,11 +116,93 @@ class GenerationCancelled(Exception):
     pass
 
 
+PREWARM_REFERENCE_INSTANT = "2026-05-24T12:00:00Z"
+PREWARM_TIME_ZONE = "America/New_York"
+PREWARM_EVENT_POST = (
+    "BITRATE returns this weekend!\n"
+    "Doors open saturday at 9pm EST, DJs from 9:30 until 1am.\n"
+    "Afterparty in the lounge right after, bring friends and dress in neon.\n"
+    "See you there and check the pinned post for the world link."
+)
+# (text, max_new_tokens, discordTimestampRouting override or None for a plain no-reference input).
+PREWARM_CASES: list[tuple[str, int, dict[str, Any] | None]] = [
+    ("tomorrow at 5pm", 64, None),
+    ("next friday 7:30pm", 64, None),
+    ("in 45 minutes", 64, None),
+    ("saturday 2pm-4pm", 256, None),
+    ("3-5pm UK time on monday", 256, None),
+    (
+        "<t:1785643200:t> two hours later",
+        64,
+        {
+            "meaningfulResidue": True,
+            "reason": "semantic_residue_requires_model",
+            "references": [{
+                "contextClass": "plain", "end": 16, "epochSeconds": 1785643200, "formatCode": ":t",
+                "formatIndex": 2, "raw": "<t:1785643200:t>", "start": 0,
+            }],
+            "route": "model",
+            "signals": ["duration", "subday_duration"],
+        },
+    ),
+    (PREWARM_EVENT_POST, 256, None),
+]
+
+
+def prewarm_user_content(text: str, routing_override: dict[str, Any] | None) -> str:
+    """Mirror formatEndpointPlanPrompt (api/src/temporal/graph.ts) for the chat format with the minimal preset."""
+    length = len(text)
+    routing: dict[str, Any] = {
+        "contextClass": "plain",
+        "inputLength": length,
+        "inputLengthBucket": "0-64" if length <= 64 else "65-256",
+        "malformedCount": 0,
+        "meaningfulResidue": False,
+        "modelEligible": True,
+        "reason": "no_timestamp_reference",
+        "references": [],
+        "route": "no_reference",
+        "signals": [],
+        "version": "discord-reference-v2",
+    }
+    routing.update(routing_override or {})
+    payload = {
+        "discordTimestampRouting": routing,
+        "referenceInstant": PREWARM_REFERENCE_INSTANT,
+        "text": text,
+        "timeZone": PREWARM_TIME_ZONE,
+    }
+    return f"{instruction_for_preset('minimal')}\n\nInput:\n{json.dumps(payload, sort_keys=True)}"
+
+
+def prewarm(state: ServerState) -> None:
+    """Exercise the chat-request generate path so Triton kernels compile before the server accepts traffic."""
+    started = time.perf_counter()
+    for text, max_new_tokens, routing_override in PREWARM_CASES:
+        case_started = time.perf_counter()
+        label = text.splitlines()[0][:40]
+        try:
+            messages = [{"role": "user", "content": prewarm_user_content(text, routing_override)}]
+            prompt = prompt_from_messages(messages)
+            if state.prompt_format == "chat":
+                prompt = state.generator.format_chat_prompt(messages, enable_thinking=state.enable_thinking)
+            result = generate_locked(state, prompt, max_new_tokens=max_new_tokens, temperature=0, cancel_event=threading.Event())
+            elapsed_ms = round((time.perf_counter() - case_started) * 1000)
+            print(f"prewarm {label!r}: {elapsed_ms} ms ({result.prompt_tokens} prompt + {result.completion_tokens} completion tokens)")
+        except Exception as error:  # noqa: BLE001 - prewarm is best-effort; serving must still start.
+            print(f"prewarm {label!r} failed: {error!r}")
+    print(f"prewarm done in {round((time.perf_counter() - started) * 1000)} ms")
+
+
 def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "TemporalPeftOpenAI/0.1"
 
         def do_GET(self) -> None:
+            # RunPod load-balancer health probe, unauthenticated; main() listens only after the model loads, so 200 means loaded.
+            if self.path == "/ping":
+                self.write_json({"status": "healthy", "model": state.model_name})
+                return
             if not self.authorized():
                 return
             if self.path in {"/health", "/v1/health"}:
