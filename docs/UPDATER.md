@@ -13,8 +13,8 @@ The updater is silent and never interrupts the user mid-task.
 - The "Check for Updates" window shows the installed version and the updater state (checking, up to date, downloading, ready, failed with the error). Its button reads "Restart to update" once an update is downloaded; otherwise it checks and downloads on demand.
 - Right before handing off to the installer the app writes `install_attempted` = `{version, at}` to the Tauri store file `updater.json`. The app cannot see the installer's result, so if the next launch is still on the older version (UAC declined, no admin rights, locked file), it will not auto-install that version again: it offers the tray item, and the update window says `X.Y.Z could not be installed last time; restart to try again.` The marker is cleared once the running version reaches the attempted one.
 - Downloaded MSI bytes stay in memory only. Quitting without installing means the next launch downloads the update again (about 80 MB).
-- A pre-exit hook stops the Node parser sidecar before the installer runs. As a backstop, at startup a release build kills and respawns a healthy sidecar whose `/health` reports a different `appVersion` than the app (this covers the first hop from v0.1.5/v0.1.6, which have no hook). Debug builds adopt it with a warning instead, so `tauri dev` never kills an installed release's sidecar.
-- If a check finds no update, any downloaded-but-not-installed update is dropped, so a pulled release stops being offered.
+- A pre-exit hook stops the Node parser sidecar before the installer runs. As a backstop, at startup a release build kills and respawns a healthy sidecar whose `/health` reports a missing or different `appVersion` (this covers the first hop from v0.1.5/v0.1.6, which have no hook). Debug builds adopt it with a warning instead, so `tauri dev` never kills an installed release's sidecar.
+- Checks keep running while an update is downloaded and waiting. If the manifest still offers the same version, the held download is kept; a newer version replaces it; no update at all drops the held download and the tray item; a failed check or download keeps both. So a client that already downloaded a pulled release stops offering it at its next check: within 6 hours, or about 90 seconds after a restart (held downloads live in memory, so a restart drops them anyway). While an update is ready the update window's button is "Restart to update", so it cannot trigger an extra check.
 
 ## 2. Manifest
 
@@ -43,7 +43,7 @@ Use this to replace the key, and as the recovery path when the offline copy is m
 3. Ship one transition release with that change, still signed by CI with the old secrets. Existing installs verify it with the old key and come out trusting the new one.
 4. Only then replace both `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` with the new values. Every later release is signed with the new key.
 
-Installs that skipped the transition release cannot verify anything signed with the new key; they must download and install the MSI by hand. If the GitHub secret itself is lost, there is no transition release possible and every install must reinstall by hand.
+Installs that skipped the transition release cannot verify anything signed with the new key; they must download and install the MSI by hand. If both the GitHub secret and the offline copy are lost, there is no transition release possible and every install must reinstall by hand.
 
 ## 5. Rollback
 
