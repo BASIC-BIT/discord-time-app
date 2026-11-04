@@ -451,19 +451,22 @@ fn stop_relaunch_watchdog(watchdog: Option<std::process::Child>) {
 /// for a finished install; if none appears the hand-off never started. Once one
 /// has appeared it keeps waiting, every 10 s, while one is running. Session 0 is
 /// skipped: the Windows Installer service's own msiexec lingers there for minutes
-/// after any install. All waits share one 15-minute cap from spawn. Then, only if
-/// no installer or UAC prompt is still running in a user session, it starts the
-/// app the way autostart does; a start mid-transaction would make Windows
-/// Installer restart-manage or reboot. When the cap expires with an installer
-/// still running it exits without a relaunch. If the installer already relaunched
-/// the app, the single-instance guard makes this start a no-op.
+/// after any install. All waits share one 15-minute cap from spawn. Then, unless
+/// a process from `HAMMER_RELAUNCH_EXE` is already running (the installer
+/// relaunched it), it starts the app the way autostart does. The final check is
+/// on our own exe, never on other installers: an unrelated winget or Office
+/// install spanning the cap must not leave HammerOverlay closed. If our own
+/// install is still running past 15 minutes, this may start the previous version,
+/// and Windows Installer's Restart Manager will close it. A redundant start is a
+/// no-op through the single-instance guard.
 const RELAUNCH_WATCHDOG_SCRIPT: &str = concat!(
     "$deadline = (Get-Date).AddMinutes(15); ",
     "while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; ",
     "$appearBy = (Get-Date).AddSeconds(60); ",
     "while (-not (Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $appearBy -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; ",
     "while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }; ",
-    "if (-not (Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 })) { Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }",
+    "$appName = [IO.Path]::GetFileNameWithoutExtension($env:HAMMER_RELAUNCH_EXE); ",
+    "if (-not (Get-Process -Name $appName -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:HAMMER_RELAUNCH_EXE })) { Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }",
 );
 
 /// Every install hand-off exits before the installer's outcome is known, so a
@@ -701,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn relaunch_watchdog_waits_for_the_app_then_msiexec_then_starts_the_exe_only_when_idle() {
+    fn relaunch_watchdog_waits_for_the_app_then_msiexec_then_starts_the_exe_unless_running() {
         let script = RELAUNCH_WATCHDOG_SCRIPT;
         let installer = "(Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 })";
         let pid_wait = script
@@ -717,10 +720,20 @@ mod tests {
         assert!(appear_wait < running_wait);
         assert!(script.contains("AddSeconds(60)"));
         assert!(script.contains("AddMinutes(15)"));
-        // The deadline only ends the wait; the relaunch never races a running installer.
-        assert!(script.ends_with(&format!(
-            "; if (-not {installer}) {{ Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }}"
-        )));
+        // The final guard checks only our own exe, so an unrelated installer
+        // spanning the cap cannot leave the app closed.
+        let final_guard = script
+            .find("if (-not (Get-Process -Name $appName")
+            .expect("final guard checks the app process");
+        assert!(running_wait < final_guard);
+        assert!(script.contains(
+            "$appName = [IO.Path]::GetFileNameWithoutExtension($env:HAMMER_RELAUNCH_EXE)"
+        ));
+        assert!(script.ends_with(
+            "; if (-not (Get-Process -Name $appName -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:HAMMER_RELAUNCH_EXE })) { Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized' }"
+        ));
+        assert!(!script[final_guard..].contains("msiexec"));
+        assert!(!script.contains("hammer-overlay"));
         assert_eq!(script.matches("Start-Process").count(), 1);
         // The path is passed as data, never embedded in the script text.
         assert!(!script.contains(".exe"));
