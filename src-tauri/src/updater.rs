@@ -270,9 +270,17 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             ) {
                 ReadyAction::Install => {
                     log::info!("Installing update {version} on launch");
-                    spawn_relaunch_watchdog();
+                    let watchdog = spawn_relaunch_watchdog();
                     if let Err(e) = install_ready_update(app) {
                         log::error!("Failed to install update {version}: {e}");
+                        // The install never handed off and the app keeps running, so a
+                        // user who quits within 15 minutes must not be relaunched.
+                        if let Some(mut watchdog) = watchdog {
+                            match watchdog.kill() {
+                                Ok(()) => log::debug!("Stopped the relaunch watchdog"),
+                                Err(e) => log::debug!("Failed to stop the relaunch watchdog: {e}"),
+                            }
+                        }
                         // The download is kept, so the tray item can retry.
                         show_restart_item(app, &version);
                     }
@@ -397,16 +405,21 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
 /// environment variables `HAMMER_RELAUNCH_EXE` and `HAMMER_RELAUNCH_PID` (data, never
 /// parsed as code). First it waits (2 s polls) for this app to exit, which happens
 /// only after the installer has been started; then, every 10 s, while an installer
-/// (`msiexec`) or a UAC prompt (`consent`) is running, it keeps waiting. Both waits
+/// (`msiexec`) or a UAC prompt (`consent`) is running in a user session, it keeps
+/// waiting. Session 0 is skipped: the Windows Installer service's own msiexec
+/// lingers there for minutes after any install. Both waits
 /// share one 15-minute cap from spawn. Then it starts the app the way autostart
 /// does; if the installer already relaunched it, the single-instance guard makes
 /// this start a no-op.
-const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline); Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized'";
+const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $deadline); Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized'";
 
 /// The launch-path install exits before the installer's outcome is known, so a
 /// declined UAC prompt or a failed install would otherwise leave nothing running.
 /// Spawned detached and hidden, never waited on; a failure never blocks the install.
-fn spawn_relaunch_watchdog() {
+/// Returns the child so a hand-off that never happened can stop it.
+fn spawn_relaunch_watchdog() -> Option<std::process::Child> {
+    #[cfg(not(windows))]
+    return None;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -415,7 +428,7 @@ fn spawn_relaunch_watchdog() {
             Ok(exe) => exe,
             Err(e) => {
                 log::warn!("Not starting the relaunch watchdog: no current exe path: {e}");
-                return;
+                return None;
             }
         };
         let spawned = Command::new("powershell.exe")
@@ -437,12 +450,18 @@ fn spawn_relaunch_watchdog() {
             .creation_flags(crate::CREATE_NO_WINDOW)
             .spawn();
         match spawned {
-            Ok(child) => log::info!(
-                "Started relaunch watchdog (pid {}) for {}",
-                child.id(),
-                exe.display()
-            ),
-            Err(e) => log::warn!("Failed to start the relaunch watchdog: {e}"),
+            Ok(child) => {
+                log::info!(
+                    "Started relaunch watchdog (pid {}) for {}",
+                    child.id(),
+                    exe.display()
+                );
+                Some(child)
+            }
+            Err(e) => {
+                log::warn!("Failed to start the relaunch watchdog: {e}");
+                None
+            }
         }
     }
 }
@@ -617,8 +636,8 @@ mod tests {
             .find("Get-Process -Id $env:HAMMER_RELAUNCH_PID")
             .expect("waits on the app PID");
         let msiexec_wait = script
-            .find("Get-Process -Name msiexec")
-            .expect("waits on msiexec");
+            .find("Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }")
+            .expect("waits on the user-session msiexec and UAC prompt");
         assert!(pid_wait < msiexec_wait);
         assert!(script.contains("AddMinutes(15)"));
         assert!(script.contains(
