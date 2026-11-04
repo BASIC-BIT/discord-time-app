@@ -39,6 +39,8 @@ Legs:
 .PARAMETER AllowDirtyBuild Build the new-code MSIs in this checkout when it has uncommitted changes (its
                          Cargo.toml version is rewritten during the build); otherwise they build from a
                          temporary worktree of HEAD.
+.PARAMETER AllowStaleArtifacts Run the legs on MSIs whose new.commit stamp differs from this checkout's tree
+                         (normally refused); every leg report then records staleArtifactsAllowed and both stamps.
 .PARAMETER NoNpm         Build through node only, with npm dropped from PATH (also used when npm is absent).
 .PARAMETER NodeExe       Node runtime for -NoNpm builds. Default: node on PATH, else C:\ProgramData\nvm\v24.22.2\node.exe.
 .PARAMETER Elevated      Internal: set on the elevated re-launch.
@@ -55,6 +57,7 @@ param(
     [switch]$KeepArtifacts,
     [switch]$BuildOnly,
     [switch]$AllowDirtyBuild,
+    [switch]$AllowStaleArtifacts,
     [switch]$NoNpm,
     [string]$NodeExe = '',
     [switch]$Elevated,
@@ -253,6 +256,12 @@ function New-BuildWorktree {
     foreach ($rel in $BuildTreeLinks) { New-Item -ItemType Junction -Path (Join-Path $Tree $rel) -Target (Join-Path $repoRoot $rel) | Out-Null }
 }
 
+# The stamp written to <artifacts>\new.commit: HEAD, plus '+dirty' when the built paths have uncommitted changes.
+function Get-TreeState {
+    $dirty = git -C $repoRoot status --porcelain -- src src-tauri api shared scripts/prepare-api-sidecar.mjs package.json
+    [pscustomobject]@{ Dirty = $dirty; State = (git -C $repoRoot rev-parse HEAD) + $(if ($dirty) { '+dirty' } else { '' }) }
+}
+
 # Builds only what is missing from <WorkDir>\artifacts, so an interrupted run resumes.
 # The new-code MSIs share one throwaway key: if either is missing, both are rebuilt with a
 # fresh key. The old-code MSI is never served, so it is built unsigned against the saved
@@ -268,8 +277,9 @@ function Invoke-Builds {
     $pubPath = Join-Path $WorkDir 'smoke.pub'
     # New-code MSIs are rebuilt whenever the tree they came from differs from the current one.
     $commitPath = Join-Path $ArtifactDir 'new.commit'
-    $dirty = git -C $repoRoot status --porcelain -- src src-tauri api shared scripts/prepare-api-sidecar.mjs package.json
-    $treeState = (git -C $repoRoot rev-parse HEAD) + $(if ($dirty) { '+dirty' } else { '' })
+    $tree = Get-TreeState
+    $dirty = $tree.Dirty
+    $treeState = $tree.State
     $builtFrom = if (Test-Path $commitPath) { (Get-Content -Raw $commitPath).Trim() } else { '' }
     $missingNew = @($newNames | Where-Object { -not (Test-Path (Join-Path $ArtifactDir "$_.msi.sig")) })
     if ($builtFrom -ne $treeState) { $missingNew = $newNames }
@@ -794,8 +804,20 @@ function Invoke-KillLeg {
     Assert-True $replaced 'All of the above held together within 60 s of launch.'
 }
 
+# A -SkipBuild rerun must not pass off MSIs built from another tree as evidence for this one.
+function Get-ArtifactFreshness {
+    $builtFromPath = Join-Path $ArtifactDir 'new.commit'
+    $builtFrom = if (Test-Path $builtFromPath) { (Get-Content -Raw $builtFromPath).Trim() } else { 'unknown' }
+    $head = (Get-TreeState).State
+    if ($builtFrom -ne $head -and -not $AllowStaleArtifacts) {
+        throw "Smoke MSIs were built from $builtFrom, but HEAD is $head; rebuild (drop -SkipBuild) or pass -AllowStaleArtifacts"
+    }
+    [pscustomobject]@{ BuiltFrom = $builtFrom; Head = $head }
+}
+
 function Invoke-ElevatedLegs {
     New-Item -ItemType Directory -Force $Output | Out-Null
+    $freshness = Get-ArtifactFreshness
     $failed = 0
     $realBefore = Get-RealAppPids
     Assert-NoSmokeRunning
@@ -804,8 +826,9 @@ function Invoke-ElevatedLegs {
         $report.appRanElevated = $true
         $source = if ($ViaRunAs) { 'the RunAs child (one UAC prompt, approved by the operator)' } else { 'the already elevated shell' }
         $report.note = "The app inherited the elevated token of $source, so the user-facing UAC prompt on the app's own msiexec was not exercised."
-        $builtFromPath = Join-Path $ArtifactDir 'new.commit'
-        $report.newMsisBuiltFrom = if (Test-Path $builtFromPath) { (Get-Content -Raw $builtFromPath).Trim() } else { 'unknown' }
+        $report.newMsisBuiltFrom = $freshness.BuiltFrom
+        $report.headTreeState = $freshness.Head
+        if ($AllowStaleArtifacts) { $report.staleArtifactsAllowed = $true }
         $report.artifactSha256 = [ordered]@{}
         Get-ChildItem $ArtifactDir -Filter '*.msi' | ForEach-Object { $report.artifactSha256[$_.Name] = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
         $script:checks = New-Object System.Collections.ArrayList
@@ -877,8 +900,11 @@ foreach ($name in $Legs) { Remove-Item -LiteralPath (Join-Path $Output "updater-
 
 try {
     $childArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output `"$Output`" -WorkDir `"$WorkDir`" -Elevated -ViaRunAs"
+    # Native -File arguments cannot carry -Switch:$false, so the switch is forwarded only when set.
+    $staleArg = @(if ($AllowStaleArtifacts) { '-AllowStaleArtifacts' })
+    if ($staleArg) { $childArgs += " $staleArg" }
     if ($isAdmin) {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output $Output -WorkDir $WorkDir -Elevated
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output $Output -WorkDir $WorkDir -Elevated @staleArg
         $exitCode = $LASTEXITCODE
     } else {
         Write-Host 'Elevating for the MSI installs (approve the UAC prompt)...'
