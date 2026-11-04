@@ -238,3 +238,16 @@ Provider settings that follow from this:
 - Projected cost: $8/month at 1000 requests.
 - BASIC accepted the p95 tail above 5 s on 2026-11-04.
 - RunPod pre-caches the image on extra Idle/Initializing workers; those are not billed.
+
+## 9. Follow-up: serve an LLM result while the SLM warms (not implemented)
+
+Status 2026-11-04: while the hosted endpoint is not known warm (cold worker, gateway 502, slow first response), the sidecar already returns the deterministic result immediately, flagged `debug.endpointWarming`, and keeps warming with nudged retries and backoff (section 7). It does not call an LLM: installed builds carry no OpenAI key (it exists only in CI secrets and dev `api/.env`), so the plan-IR failure path and the post-display verifier (`/parse/verify`, PR #22, which reports `missing_openai_api_key`) are deterministic-only on user machines. BASIC accepted the cold start on 2026-11-04 with the intent that the product serves an LLM answer during warmup.
+
+Shape, pending BASIC's go-ahead because it needs new infrastructure:
+
+1. An always-on relay (Cloudflare Worker or Lambda) holding the OpenAI key, accepting only `{text, tz, now}` and the verify payload, building prompts server-side, rate-limited per install, with a spend cap and an alarm to basic@basicbit.net. An OpenAI key cannot ship in the binary the way the RunPod key does: the RunPod key can only invoke one endpoint.
+2. Sidecar: while warmth is not `ready`, call the relay instead of returning deterministic-only; keep warming the SLM.
+3. Optional: run the cheap LLM in parallel with the SLM on every parse; agreement raises confidence and disagreement becomes clarification. The verify pass from #22 is most of this, started in parallel instead of after display.
+
+Prior notes: `docs/agentic/ingest/hosted-temporal-slm-serving-2026-05-30.md` ("fallback to a strong hosted LLM when the small model is cold, invalid, or risky"); basic-life `research/2026-07-29-slm-finetuning-landscape.md` (LLM-to-SLM distillation, "keep the LLM as fallback"); basic-life `context/business-and-products.md` (Hammer Time: benchmark against the smallest suitable GPT API model). The design discussion itself happened in the hosted-SLM session thread on 2026-10-30 and 2026-11-04.
+
