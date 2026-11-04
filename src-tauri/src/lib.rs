@@ -1516,7 +1516,7 @@ fn sidecar_action(health_app_version: Option<&str>, app_version: &str) -> Sideca
 }
 
 /// `None` when nothing healthy answers, `Some("")` when healthy but no `appVersion`.
-fn time_parser_health_app_version() -> Option<String> {
+pub(crate) fn time_parser_health_app_version() -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
@@ -1552,7 +1552,7 @@ fn parse_health_app_version(response: &str) -> Option<String> {
 }
 
 /// Kills whatever process listens on the parser port and waits up to 5 s for it to go away.
-fn kill_time_parser_listener() {
+pub(crate) fn kill_time_parser_listener() {
     #[cfg(windows)]
     {
         // Listeners are matched by RemotePort 0 rather than `-State Listen`: on some

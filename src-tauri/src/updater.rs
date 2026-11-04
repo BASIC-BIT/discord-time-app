@@ -292,6 +292,13 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
             if let Err(e) = crate::stop_time_parser_service(&hook_app) {
                 log::warn!("Failed to stop the time parser service before installing: {e}");
             }
+            // An adopted sidecar (left over from a crashed or killed run) has no
+            // supervised child, so the stop above leaves its node.exe locking the
+            // install directory. Debug builds never kill, as at startup.
+            if !cfg!(debug_assertions) && crate::time_parser_health_app_version().is_some() {
+                log::info!("Killing the unsupervised time parser service before installing");
+                crate::kill_time_parser_listener();
+            }
             // Setting a hook replaces the plugin's default one, which only did this.
             hook_app.cleanup_before_exit();
         });
