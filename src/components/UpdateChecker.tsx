@@ -36,16 +36,30 @@ function statusText(status: UpdateStatus): string | null {
   }
 }
 
+// Refusals from `install_refusal` in updater.rs, mapped to user copy; null hides the toast
+function installErrorText(err: string, phase: UpdateStatus['phase'] | undefined): string | null {
+  if (err === 'Update is still downloading') return 'The update is still downloading.';
+  if (err === 'No update is ready') {
+    // The body already says the latest version is running
+    return phase === 'upToDate' ? null : 'No update is ready yet.';
+  }
+  return err;
+}
+
 export function UpdateChecker({ onClose }: UpdateCheckerProps) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [fallbackVersion, setFallbackVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshStatus = async () => {
+  const refreshStatus = async (): Promise<UpdateStatus | null> => {
     try {
-      setStatus(await invoke<UpdateStatus>('get_update_status'));
+      const next = await invoke<UpdateStatus>('get_update_status');
+      setStatus(next);
+      setError(null);
+      return next;
     } catch (err) {
       setError(String(err));
+      return null;
     }
   };
 
@@ -102,8 +116,8 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
     try {
       setStatus(await invoke<UpdateStatus>('check_for_updates_now'));
     } catch (err) {
+      await refreshStatus();
       setError(String(err));
-      refreshStatus();
     }
   };
 
@@ -114,8 +128,8 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
       // On success the app exits into the installer, so this normally never returns
       await invoke('install_update_now');
     } catch (err) {
-      setError(String(err));
-      refreshStatus();
+      const next = await refreshStatus();
+      setError(installErrorText(String(err), next?.phase));
     }
   };
 
