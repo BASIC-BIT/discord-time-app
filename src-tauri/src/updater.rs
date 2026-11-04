@@ -270,17 +270,8 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             ) {
                 ReadyAction::Install => {
                     log::info!("Installing update {version} on launch");
-                    let watchdog = spawn_relaunch_watchdog();
                     if let Err(e) = install_ready_update(app) {
                         log::error!("Failed to install update {version}: {e}");
-                        // The install never handed off and the app keeps running, so a
-                        // user who quits within 15 minutes must not be relaunched.
-                        if let Some(mut watchdog) = watchdog {
-                            match watchdog.kill() {
-                                Ok(()) => log::debug!("Stopped the relaunch watchdog"),
-                                Err(e) => log::debug!("Failed to stop the relaunch watchdog: {e}"),
-                            }
-                        }
                         // The download is kept, so the tray item can retry.
                         show_restart_item(app, &version);
                     }
@@ -386,7 +377,13 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     }
     let ready = ready.as_ref().expect("install_refusal checked has_ready");
     let version = ready.update.version.clone();
-    record_install_attempt(app, &version)?;
+    // Every hand-off (launch, tray, update window) exits before the installer's
+    // outcome is known, so each one gets the watchdog.
+    let watchdog = spawn_relaunch_watchdog();
+    if let Err(e) = record_install_attempt(app, &version) {
+        stop_relaunch_watchdog(watchdog);
+        return Err(e);
+    }
     set_phase(
         app,
         Phase::Installing {
@@ -396,9 +393,21 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     ready.update.install(&ready.bytes).map_err(|e| {
         let message = e.to_string();
         log::error!("Failed to install update {version}: {message}");
+        // The install never handed off and the app keeps running, so a user who
+        // quits within 15 minutes must not be relaunched.
+        stop_relaunch_watchdog(watchdog);
         set_phase(app, phase_after_failed_install(&version));
         message
     })
+}
+
+fn stop_relaunch_watchdog(watchdog: Option<std::process::Child>) {
+    if let Some(mut watchdog) = watchdog {
+        match watchdog.kill() {
+            Ok(()) => log::debug!("Stopped the relaunch watchdog"),
+            Err(e) => log::debug!("Failed to stop the relaunch watchdog: {e}"),
+        }
+    }
 }
 
 /// Run by the relaunch watchdog, with the app's exe path and PID passed as the
@@ -413,7 +422,7 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
 /// this start a no-op.
 const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }) -and (Get-Date) -lt $deadline); Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized'";
 
-/// The launch-path install exits before the installer's outcome is known, so a
+/// Every install hand-off exits before the installer's outcome is known, so a
 /// declined UAC prompt or a failed install would otherwise leave nothing running.
 /// Spawned detached and hidden, never waited on; a failure never blocks the install.
 /// Returns the child so a hand-off that never happened can stop it.
