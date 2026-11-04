@@ -3,8 +3,10 @@ import { planIrEndpointUrl } from './graph';
 import type { TemporalPlanIrEndpointConfig } from './types';
 
 const SUCCESS_THROTTLE_MS = 10_000;
-const FAILURE_THROTTLE_MS = 10_000;
+const FAILURE_THROTTLE_BASE_MS = 10_000;
+const FAILURE_THROTTLE_MAX_MS = 60_000;
 const NUDGE_WINDOW_MS = 180_000;
+const MAX_NUDGE_FAILURES = 5;
 
 export interface PlanIrEndpointWarmthStatus {
   configured: boolean;
@@ -14,6 +16,7 @@ export interface PlanIrEndpointWarmthStatus {
   lastError: string | null;
   lastWarmRequestedAt: string | null;
   inFlight: boolean;
+  consecutiveFailures: number;
 }
 
 /**
@@ -25,6 +28,8 @@ export class PlanIrEndpointWarmth {
   private lastFailureAt: number | null = null;
   private lastError: string | null = null;
   private lastWarmRequestedAt: number | null = null;
+  private lastWarmSettledAt: number | null = null;
+  private consecutiveFailures = 0;
   private inFlight: Promise<void> | null = null;
   private readonly now: () => number;
   private readonly fetchImpl: typeof fetch;
@@ -57,6 +62,7 @@ export class PlanIrEndpointWarmth {
       lastError: this.lastError,
       lastWarmRequestedAt: this.lastWarmRequestedAt === null ? null : new Date(this.lastWarmRequestedAt).toISOString(),
       inFlight: this.inFlight !== null,
+      consecutiveFailures: this.consecutiveFailures,
     };
   }
 
@@ -64,12 +70,14 @@ export class PlanIrEndpointWarmth {
     this.lastReadyAt = this.now();
     this.lastFailureAt = null;
     this.lastError = null;
+    this.consecutiveFailures = 0;
   }
 
   markCold(error: string): void {
     this.lastReadyAt = null;
     this.lastFailureAt = this.now();
     this.lastError = error;
+    this.consecutiveFailures += 1;
   }
 
   shouldShortCircuit(): boolean {
@@ -88,20 +96,27 @@ export class PlanIrEndpointWarmth {
   warm(): Promise<void> {
     if (this.options.enabled && this.endpoint !== undefined) {
       this.lastWarmRequestedAt = this.now();
+      // A new interaction gets a fresh set of nudged retries.
+      this.consecutiveFailures = 0;
     }
     return this.startWarm();
   }
 
   /**
-   * Retry a failed warm while someone asked for one in the last 3 minutes. /health calls this and the
-   * overlay polls /health during the warming notice, so a fast scale-from-zero failure gets retried.
-   * Goes through startWarm() so a nudge does not extend its own window.
+   * Retry a failed warm while a client asked for one recently. /health calls this and the overlay polls
+   * /health during the warming notice, so a scale-from-zero failure gets retried. The window runs from
+   * the later of the client request and the last warm settling (so a warm that times out right at the
+   * window edge still gets a retry); MAX_NUDGE_FAILURES bounds how many retries one client warm() buys.
    */
   nudge(): void {
     if (this.status().state !== 'cold' || this.lastWarmRequestedAt === null) {
       return;
     }
-    if (this.now() - this.lastWarmRequestedAt <= NUDGE_WINDOW_MS) {
+    if (this.consecutiveFailures >= MAX_NUDGE_FAILURES) {
+      return;
+    }
+    const windowStart = Math.max(this.lastWarmRequestedAt, this.lastWarmSettledAt ?? 0);
+    if (this.now() - windowStart <= NUDGE_WINDOW_MS) {
       void this.startWarm();
     }
   }
@@ -119,13 +134,20 @@ export class PlanIrEndpointWarmth {
     if (this.lastReadyAt !== null && now - this.lastReadyAt < SUCCESS_THROTTLE_MS) {
       return Promise.resolve();
     }
-    if (this.lastFailureAt !== null && now - this.lastFailureAt < FAILURE_THROTTLE_MS) {
+    if (this.lastFailureAt !== null && now - this.lastFailureAt < this.failureThrottleMs()) {
       return Promise.resolve();
     }
     this.inFlight = this.sendWarmRequest(endpoint).finally(() => {
       this.inFlight = null;
+      this.lastWarmSettledAt = this.now();
     });
     return this.inFlight;
+  }
+
+  /** 10 s, 20 s, 40 s, then 60 s. A client warm() resets the counter, so its floor is the base delay. */
+  private failureThrottleMs(): number {
+    const failures = Math.max(this.consecutiveFailures, 1);
+    return Math.min(FAILURE_THROTTLE_BASE_MS * 2 ** (failures - 1), FAILURE_THROTTLE_MAX_MS);
   }
 
   private async sendWarmRequest(endpoint: TemporalPlanIrEndpointConfig): Promise<void> {

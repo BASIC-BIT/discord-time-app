@@ -52,9 +52,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    generator = TemporalPeftGenerator(base_model=args.base_model, adapter=args.adapter, load_in_4bit=not args.no_load_in_4bit)
     state = ServerState(
-        generator=generator,
+        generator=None,
         model_name=args.model_name,
         default_max_new_tokens=args.max_new_tokens,
         auth_token=args.auth_token,
@@ -62,20 +61,27 @@ def main() -> None:
         enable_thinking=args.enable_thinking,
     )
 
-    if args.prewarm:
-        prewarm(state)
-
+    # Bind before loading so a load-balancer health probe gets 503 (not connection refused)
+    # during model load and prewarm; /ping turns 200 only once state.ready is set.
     handler = create_handler(state)
     server = ThreadingHTTPServer((args.host, args.port), handler)
-    print(f"Serving {args.model_name} on http://{args.host}:{args.port}/v1")
-    server.serve_forever()
+    server_thread = threading.Thread(target=server.serve_forever, name="http", daemon=True)
+    server_thread.start()
+    print(f"Listening on http://{args.host}:{args.port}/v1 (loading {args.model_name})", flush=True)
+
+    state.generator = TemporalPeftGenerator(base_model=args.base_model, adapter=args.adapter, load_in_4bit=not args.no_load_in_4bit)
+    if args.prewarm:
+        prewarm(state)
+    state.ready = True
+    print(f"Serving {args.model_name} on http://{args.host}:{args.port}/v1", flush=True)
+    server_thread.join()
 
 
 class ServerState:
     def __init__(
         self,
         *,
-        generator: TemporalPeftGenerator,
+        generator: TemporalPeftGenerator | None,
         model_name: str,
         default_max_new_tokens: int,
         auth_token: str | None,
@@ -83,6 +89,7 @@ class ServerState:
         enable_thinking: bool,
     ) -> None:
         self.generator = generator
+        self.ready = False
         self.model_name = model_name
         self.default_max_new_tokens = default_max_new_tokens
         self.auth_token = auth_token
@@ -199,11 +206,17 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
         server_version = "TemporalPeftOpenAI/0.1"
 
         def do_GET(self) -> None:
-            # RunPod load-balancer health probe, unauthenticated; main() listens only after the model loads, so 200 means loaded.
+            # RunPod load-balancer health probe, unauthenticated. 503 while the model loads and prewarms.
             if self.path == "/ping":
-                self.write_json({"status": "healthy", "model": state.model_name})
+                if state.ready:
+                    self.write_json({"status": "healthy", "model": state.model_name})
+                else:
+                    self.write_json({"status": "loading", "model": state.model_name}, HTTPStatus.SERVICE_UNAVAILABLE)
                 return
             if not self.authorized():
+                return
+            if not state.ready:
+                self.write_error(HTTPStatus.SERVICE_UNAVAILABLE, "model is loading")
                 return
             if self.path in {"/health", "/v1/health"}:
                 self.write_json({"status": "ok", "model": state.model_name})
@@ -219,6 +232,9 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             if not self.authorized():
+                return
+            if not state.ready:
+                self.write_error(HTTPStatus.SERVICE_UNAVAILABLE, "model is loading")
                 return
             try:
                 payload = self.read_json()

@@ -16,7 +16,7 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe hosted SLM /models
+      - name: Probe hosted SLM with a 1-token completion
         env:
           HOSTED_SLM_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
           HOSTED_SLM_BASE_URL: ${{ vars.HOSTED_SLM_BASE_URL }}
@@ -26,15 +26,18 @@ jobs:
             echo "hosted SLM probe not configured; skipping"
             exit 0
           fi
+          # A completion, not /models: a worker whose HTTP server is up but whose generation is broken
+          # (bad adapter path, OOM) must fail the probe.
+          payload=$(printf '{"model":"%s","max_tokens":1,"temperature":0,"messages":[{"role":"user","content":"probe"}]}' "$EXPECTED_MODEL")
           for attempt in 1 2 3; do
             if body=$(curl --silent --show-error --fail --max-time 150 \
-                -H "Authorization: Bearer $HOSTED_SLM_API_KEY" \
-                "${HOSTED_SLM_BASE_URL%/}/models"); then
-              if printf '%s' "$body" | grep -q "$EXPECTED_MODEL"; then
-                echo "hosted SLM serves $EXPECTED_MODEL"
+                -H "Authorization: Bearer $HOSTED_SLM_API_KEY" -H "Content-Type: application/json" \
+                -d "$payload" "${HOSTED_SLM_BASE_URL%/}/chat/completions"); then
+              if printf '%s' "$body" | grep -q '"content"'; then
+                echo "hosted SLM generated a completion from $EXPECTED_MODEL"
                 exit 0
               fi
-              echo "attempt $attempt: model $EXPECTED_MODEL not in response: ${body:0:500}"
+              echo "attempt $attempt: no completion content in response: ${body:0:500}"
             else
               echo "attempt $attempt: request failed"
             fi

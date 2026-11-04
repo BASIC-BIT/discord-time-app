@@ -258,9 +258,18 @@ say "This key ships inside the desktop binary later, so it must be able to do"
 say "nothing except call this one endpoint."
 open_url "https://console.runpod.io/user/settings"
 step "API Keys → Create API Key. Name: hammer-overlay-client"
-step "Permissions: Restricted. Grant access ONLY to the endpoint hammer-temporal-v22 (no account read/write)."
+step "Permissions: Restricted. For Serverless pick the endpoint hammer-temporal-v22 at the LOWEST level"
+step "   that still allows requests to it (invoke / read). Leave every other resource type (other"
+step "   endpoints, pods, templates, network volumes, billing, account) at None. No write anywhere."
 step "Copy the key; it is shown once."
 ask_secret RUNPOD_API_KEY "Paste the key:"
+say "Checking the key cannot manage the account (listing pods must be refused)..."
+scope_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -H "Authorization: Bearer $RUNPOD_API_KEY" "https://rest.runpod.io/v1/pods" || echo "000")
+case "$scope_code" in
+  401|403) printf '  %s✓ management call refused (HTTP %s)%s\n' "$GREEN" "$scope_code" "$RESET" ;;
+  200) warn "this key can list pods (HTTP 200). It is too powerful to ship in the binary: delete it and create one scoped to the endpoint only."; SKIPPED+=("RunPod key scope: recreate a key that cannot list pods") ;;
+  *) warn "scope check inconclusive (HTTP $scope_code). Verify in the console that the key has no account or pod access before stage 9." ;;
+esac
 write_env RUNPOD_API_KEY "$RUNPOD_API_KEY"
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
@@ -292,6 +301,8 @@ if [[ -n "$ok" ]]; then
   fi
 else
   warn "endpoint never became healthy. Check the worker logs in the RunPod console (PORT/PORT_HEALTH, image pull)."
+  warn "If workers are recycled before 'Serving ... on' appears in their log, the probe grace is shorter than"
+  warn "the prewarm: set TEMPORAL_IR_PREWARM=0 in the endpoint env (first requests will be slow) and retry."
   SKIPPED+=("endpoint verification (stage 6)")
 fi
 pause
@@ -317,8 +328,12 @@ pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Arm the daily probe (the alarm)"
-say ".github/workflows/hosted-slm-probe.yml calls /v1/models once a day and GitHub"
+say ".github/workflows/hosted-slm-probe.yml sends a 1-token completion once a day and GitHub"
 say "emails you when it fails. It wakes the worker once a day (about 3 cents)."
+warn "GitHub only emails failures to the user who last touched the workflow's cron line, and it"
+warn "disables scheduled workflows after 60 days without repository activity. After merging,"
+warn "confirm Settings → Notifications → Actions is on for your account, and if the merge was"
+warn "not yours, make one commit that touches the workflow so the schedule is attributed to you."
 if confirm "Set the GitHub secret HOSTED_SLM_API_KEY and variable HOSTED_SLM_BASE_URL now?"; then
   set_secret HOSTED_SLM_API_KEY "$RUNPOD_API_KEY"
   set_var HOSTED_SLM_BASE_URL "$HOSTED_SLM_BASE_URL"
