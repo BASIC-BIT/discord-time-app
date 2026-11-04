@@ -23,8 +23,10 @@ Legs:
   click   needs an operator: with the overlay visible the update is offered in the tray,
           the operator clicks 'Restart to update 0.0.2' within 180 s, and the app comes
           back as 0.0.2. Never part of all.
+  kill    installed 0.0.2 finds a hand-started sidecar reporting appVersion 0.0.9 on 8858
+          and must kill it and spawn its own (KillThenSpawn).
 
-.PARAMETER Leg           all (auto, tray, oldhop), or a comma-separated list of auto, tray, oldhop, click
+.PARAMETER Leg           all (auto, tray, oldhop, kill), or a comma-separated list of auto, tray, oldhop, kill, click
                          (e.g. auto,tray), run in that order. Only the listed legs' reports are replaced.
 .PARAMETER ManifestPort  Port of the local manifest server (also baked into the smoke builds).
 .PARAMETER OldCommit     Commit for the oldhop 0.0.1 build. Defaults to df68d0d, the last
@@ -33,18 +35,24 @@ Legs:
 .PARAMETER WorkDir       Scratch directory for the key, configs, old-code worktree and MSIs.
 .PARAMETER SkipBuild     Reuse the MSIs already in <WorkDir>\artifacts.
 .PARAMETER KeepArtifacts Keep <WorkDir>\artifacts after the run (for -SkipBuild reruns).
+.PARAMETER BuildOnly     Build the missing MSIs and stop (no elevation, no install).
+.PARAMETER NoNpm         Build through node only, with npm dropped from PATH (also used when npm is absent).
+.PARAMETER NodeExe       Node runtime for -NoNpm builds. Default: node on PATH, else C:\ProgramData\nvm\v24.22.2\node.exe.
 .PARAMETER Elevated      Internal: set on the elevated re-launch.
 .PARAMETER ViaRunAs      Internal: the elevated run came from the RunAs relaunch (recorded in the reports).
 #>
 [CmdletBinding()]
 param(
-    [ValidatePattern('^(all|(auto|tray|oldhop|click)(,(auto|tray|oldhop|click))*)$')][string]$Leg = 'all',
+    [ValidatePattern('^(all|(auto|tray|oldhop|kill|click)(,(auto|tray|oldhop|kill|click))*)$')][string]$Leg = 'all',
     [int]$ManifestPort = 8859,
     [string]$OldCommit = 'df68d0d',
     [string]$Output = '',
     [string]$WorkDir = (Join-Path $env:TEMP 'hammer-updater-smoke'),
     [switch]$SkipBuild,
     [switch]$KeepArtifacts,
+    [switch]$BuildOnly,
+    [switch]$NoNpm,
+    [string]$NodeExe = '',
     [switch]$Elevated,
     [switch]$ViaRunAs
 )
@@ -62,7 +70,7 @@ $RealRoot = Join-Path $env:ProgramFiles 'HammerOverlay'
 $Exe = Join-Path $InstallRoot 'hammer-overlay.exe'
 $ParserPort = 8858
 $ArtifactDir = Join-Path $WorkDir 'artifacts'
-$Legs = if ($Leg -eq 'all') { @('auto', 'tray', 'oldhop') } else { @($Leg -split ',' | Select-Object -Unique) }
+$Legs = if ($Leg -eq 'all') { @('auto', 'tray', 'oldhop', 'kill') } else { @($Leg -split ',' | Select-Object -Unique) }
 $script:checks = $null
 
 function Assert-True {
@@ -111,14 +119,58 @@ function Write-Utf8 {
 
 # ---------------------------------------------------------------- build (not elevated)
 
+# Without npm (or with -NoNpm) every build step runs through node directly and Tauri's
+# beforeBuildCommand is blanked. -NoNpm also drops npm directories from PATH, so the build
+# proves it never needs npm.
+function Initialize-BuildTools {
+    if ($NoNpm) {
+        $env:Path = (($env:Path -split ';') | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'npm.cmd')) }) -join ';'
+    }
+    $script:useNpm = [bool](Get-Command npm -ErrorAction SilentlyContinue)
+    $script:node = $NodeExe
+    if (-not $script:node) {
+        $cmd = Get-Command node -ErrorAction SilentlyContinue
+        $script:node = if ($cmd) { $cmd.Source } else { 'C:\ProgramData\nvm\v24.22.2\node.exe' }
+    }
+    Assert-True (Test-Path -LiteralPath $script:node) "Node runtime exists at $($script:node)."
+    Write-Host "Build tools: $(if ($script:useNpm) { 'npm' } else { 'node only' }), node $($script:node)"
+}
+
+function Invoke-Node {
+    param([string]$What, [string[]]$NodeArgs)
+    & $script:node @NodeArgs | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "$What failed ($LASTEXITCODE)." }
+}
+
+function Invoke-TauriCli {
+    param([string]$SourceRoot, [string[]]$CliArgs)
+    if ($script:useNpm) {
+        Push-Location $SourceRoot
+        try { & npx tauri @CliArgs | Out-Host } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { throw "tauri $($CliArgs[0]) failed ($LASTEXITCODE)." }
+    } else {
+        Push-Location $SourceRoot
+        try { Invoke-Node "tauri $($CliArgs[0])" (@((Join-Path $SourceRoot 'node_modules\@tauri-apps\cli\tauri.js')) + $CliArgs) } finally { Pop-Location }
+    }
+}
+
+# build:desktop without npm: api tsc (api/package.json "build": "tsc --strict"), sidecar staging, vite.
+# prepare-api-sidecar.mjs still runs `npm ci` itself unless its staging stamp is current.
+function Invoke-DesktopBuildWithoutNpm {
+    param([string]$SourceRoot)
+    Push-Location (Join-Path $SourceRoot 'api')
+    try { Invoke-Node 'api tsc --strict' @('node_modules\typescript\bin\tsc', '--strict') } finally { Pop-Location }
+    Push-Location $SourceRoot
+    try {
+        Invoke-Node 'prepare-api-sidecar' @('scripts\prepare-api-sidecar.mjs')
+        Invoke-Node 'vite build' @('node_modules\vite\bin\vite.js', 'build')
+    } finally { Pop-Location }
+}
+
 function New-SmokeKey {
     $keyPath = Join-Path $WorkDir 'smoke.key'
     $password = [guid]::NewGuid().ToString('N')
-    Push-Location $repoRoot
-    try {
-        & npx tauri signer generate -w $keyPath -p $password --ci -f | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "tauri signer generate failed ($LASTEXITCODE)." }
-    } finally { Pop-Location }
+    Invoke-TauriCli $repoRoot @('signer', 'generate', '-w', $keyPath, '-p', $password, '--ci', '-f')
     # Throwaway key only: the real release key is never read.
     $env:TAURI_SIGNING_PRIVATE_KEY = $keyPath
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $password
@@ -133,6 +185,7 @@ function Build-SmokeMsi {
     if ($NoUpdaterArtifacts) { $config.bundle.createUpdaterArtifacts = $false }
     $config.plugins.updater.pubkey = $PublicKey
     $config.plugins.updater.endpoints = @("http://127.0.0.1:$ManifestPort/latest.json")
+    if (-not $script:useNpm) { $config | Add-Member -NotePropertyName build -NotePropertyValue ([pscustomobject]@{ beforeBuildCommand = '' }) -Force }
     $configPath = Join-Path $WorkDir "tauri.updater-smoke.$Name.conf.json"
     Write-Utf8 $configPath ($config | ConvertTo-Json -Depth 10)
 
@@ -143,13 +196,11 @@ function Build-SmokeMsi {
     $originalLock = [IO.File]::ReadAllText($cargoLock)
     $patched = ([regex]'(?m)^version = "[^"]*"').Replace($originalToml, "version = `"$Version`"", 1)
     [IO.File]::WriteAllText($cargoToml, $patched)
-    Push-Location $SourceRoot
     try {
         Write-Host "Building $Name ($Version, features $Features) in $SourceRoot"
-        & npx tauri build --config $configPath --features $Features | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "tauri build for $Name failed ($LASTEXITCODE)." }
+        if (-not $script:useNpm) { Invoke-DesktopBuildWithoutNpm $SourceRoot }
+        Invoke-TauriCli $SourceRoot @('build', '--config', $configPath, '--features', $Features)
     } finally {
-        Pop-Location
         [IO.File]::WriteAllText($cargoToml, $originalToml)
         [IO.File]::WriteAllText($cargoLock, $originalLock)
     }
@@ -169,10 +220,18 @@ function Build-SmokeMsi {
 # public key.
 function Invoke-Builds {
     New-Item -ItemType Directory -Force $ArtifactDir | Out-Null
+    Initialize-BuildTools
     $newNames = @('new-0.0.2')
     if (@($Legs | Where-Object { $_ -in 'auto', 'tray', 'click' }).Count -gt 0) { $newNames = @('new-0.0.1', 'new-0.0.2') }
     $pubPath = Join-Path $WorkDir 'smoke.pub'
+    # New-code MSIs are rebuilt whenever the tree they came from differs from the current one.
+    $commitPath = Join-Path $ArtifactDir 'new.commit'
+    $dirty = git -C $repoRoot status --porcelain -- src src-tauri api shared scripts/prepare-api-sidecar.mjs package.json
+    $treeState = (git -C $repoRoot rev-parse HEAD) + $(if ($dirty) { '+dirty' } else { '' })
+    $builtFrom = if (Test-Path $commitPath) { (Get-Content -Raw $commitPath).Trim() } else { '' }
     $missingNew = @($newNames | Where-Object { -not (Test-Path (Join-Path $ArtifactDir "$_.msi.sig")) })
+    if ($builtFrom -ne $treeState) { $missingNew = $newNames }
+    Write-Host "New-code MSIs built from '$builtFrom'; tree is '$treeState'; building: $($missingNew -join ', ')" 
     $needOld = ($Legs -contains 'oldhop') -and -not (Test-Path (Join-Path $ArtifactDir 'old-0.0.1.msi'))
     $oldTree = Join-Path $WorkDir 'old'
     $key = $null
@@ -184,6 +243,7 @@ function Invoke-Builds {
             foreach ($name in $newNames) {
                 Build-SmokeMsi -Version $name.Substring(4) -Features 'routing-smoke,updater-smoke' -SourceRoot $repoRoot -Name $name -PublicKey $key.PublicKey
             }
+            Write-Utf8 $commitPath $treeState
         }
         if ($needOld) {
             Assert-True (Test-Path $pubPath) "Saved smoke public key $pubPath exists."
@@ -193,13 +253,15 @@ function Invoke-Builds {
                 git -C $repoRoot worktree add --detach $oldTree $OldCommit | Out-Host
                 if ($LASTEXITCODE -ne 0) { throw "git worktree add $OldCommit failed." }
             }
-            Push-Location $oldTree
-            try {
-                & npm ci | Out-Host
-                if ($LASTEXITCODE -ne 0) { throw 'npm ci (old tree) failed.' }
-                & npm --prefix api ci | Out-Host
-                if ($LASTEXITCODE -ne 0) { throw 'npm --prefix api ci (old tree) failed.' }
-            } finally { Pop-Location }
+            # Same lockfiles, so the old tree borrows this tree's node_modules through junctions.
+            foreach ($rel in 'package-lock.json', 'api\package-lock.json') {
+                Assert-True ((Get-FileHash (Join-Path $repoRoot $rel)).Hash -eq (Get-FileHash (Join-Path $oldTree $rel)).Hash) "$rel is identical in $OldCommit (node_modules can be shared)."
+            }
+            Assert-True $script:useNpm 'The old-code build needs npm: prepare-api-sidecar.mjs runs npm ci for the sidecar staging.'
+            foreach ($rel in 'node_modules', 'api\node_modules') {
+                $link = Join-Path $oldTree $rel
+                if (-not (Test-Path $link)) { New-Item -ItemType Junction -Path $link -Target (Join-Path $repoRoot $rel) | Out-Null }
+            }
             # Share the compiled dependencies; the bundle lands under this target dir.
             $env:CARGO_TARGET_DIR = Join-Path $repoRoot 'src-tauri\target'
             try {
@@ -210,7 +272,14 @@ function Invoke-Builds {
         Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
         # The private key is never kept; a later build that needs one makes a fresh key.
         if ($key) { Remove-Item -LiteralPath $key.KeyPath, "$($key.KeyPath).pub" -Force -ErrorAction SilentlyContinue }
-        if (Test-Path $oldTree) { git -C $repoRoot worktree remove --force $oldTree }
+        if (Test-Path $oldTree) {
+            # Unlink the junctions first so removing the worktree never deletes through them.
+            foreach ($rel in 'node_modules', 'api\node_modules') {
+                $link = Join-Path $oldTree $rel
+                if ((Get-Item $link -ErrorAction SilentlyContinue).LinkType -eq 'Junction') { cmd /c rmdir "$link" | Out-Null }
+            }
+            git -C $repoRoot worktree remove --force $oldTree
+        }
         Get-ChildItem $WorkDir -Filter 'tauri.updater-smoke.*.conf.json' | Remove-Item -Force
     }
 }
@@ -232,8 +301,36 @@ function Get-RealAppPids {
 
 function Get-SmokeAppProcess { Get-ProcessesUnder $InstallRoot 'hammer-overlay.exe' | Select-Object -First 1 }
 
+# The app's relaunch watchdog (updater.rs): a hidden powershell, given the exe through
+# HAMMER_RELAUNCH_EXE, that later starts it with --minimized. Only watchdogs whose parent is
+# a smoke app process this run has seen count, so the real HammerOverlay's are never touched.
+$script:smokeAppPids = @()
+function Get-WatchdogProcesses {
+    @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
+        $_.CommandLine -and $_.CommandLine.Contains('HAMMER_RELAUNCH_EXE') -and $_.CommandLine.Contains('--minimized') -and
+        [int]$_.ParentProcessId -in $script:smokeAppPids
+    })
+}
+
+function Save-Watchdogs {
+    param([System.Collections.IDictionary]$Report)
+    if (-not $Report.Contains('watchdogs')) { $Report.watchdogs = [ordered]@{} }
+    foreach ($w in Get-WatchdogProcesses) { $Report.watchdogs["$($w.ProcessId)"] = $w.CommandLine }
+}
+
+# A watchdog relaunch can briefly add a second process that exits on the single-instance guard.
+function Assert-SingleAppProcess {
+    param([System.Collections.IDictionary]$Report)
+    $settled = Wait-Until { @(Get-ProcessesUnder $InstallRoot 'hammer-overlay.exe').Count -eq 1 } 15
+    $Report.appProcessesFromInstallPath = @(Get-ProcessesUnder $InstallRoot 'hammer-overlay.exe' | ForEach-Object { [int]$_.ProcessId })
+    $script:smokeAppPids += $Report.appProcessesFromInstallPath
+    Assert-True $settled 'Exactly one app process from the install path within 15 s.'
+}
+
 function Stop-SmokeApp {
     param([switch]$KeepSidecar)
+    # A pending watchdog would start the app again later, possibly inside the next leg.
+    foreach ($w in Get-WatchdogProcesses) { Stop-Process -Id $w.ProcessId -Force -ErrorAction SilentlyContinue }
     $targets = @(Get-ProcessesUnder $InstallRoot 'hammer-overlay.exe')
     if (-not $KeepSidecar) { $targets += @(Get-ProcessesUnder $InstallRoot 'node.exe') }
     foreach ($p in $targets) {
@@ -247,7 +344,9 @@ function Start-SmokeApp {
     $saved = @{}
     foreach ($k in $ExtraEnv.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $ExtraEnv[$k]) }
     try {
-        return Start-Process -FilePath $Exe -WorkingDirectory $InstallRoot -PassThru
+        $p = Start-Process -FilePath $Exe -WorkingDirectory $InstallRoot -PassThru
+        $script:smokeAppPids += $p.Id
+        return $p
     } finally {
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
     }
@@ -430,12 +529,14 @@ function Test-AutoInstallOnLaunch {
             $m = Get-CimInstance Win32_Process -Filter "Name='msiexec.exe'" | Where-Object { $_.CommandLine -match 'AUTOLAUNCHAPP' } | Select-Object -First 1
             if ($m) { $script:installerCommand = $m.CommandLine }
         }
+        Save-Watchdogs $Report
         $now = Get-SmokeAppProcess
         $original.HasExited -and (Get-InstalledVersion) -eq '0.0.2' -and $now -and $now.ProcessId -ne $original.Id
     } 600
     $Report.elapsedSecondsLaunchToRelaunched = [math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
     $Report.appInstallerCommandLine = $script:installerCommand
     Assert-True $flipped 'Within 600 s the original process exited, 0.0.2 is installed and the app is running again.'
+    Assert-SingleAppProcess $Report
     $relaunched = Get-SmokeAppProcess
     $Report.relaunchedPid = [int]$relaunched.ProcessId
     $Report.relaunchedPath = $relaunched.ExecutablePath
@@ -578,11 +679,13 @@ function Invoke-ClickLeg {
     Assert-True $clicked "Operator clicked 'Restart to update 0.0.2' within 180 s of the prompt."
     $clickClock = [Diagnostics.Stopwatch]::StartNew()
     $flipped = Wait-Until {
+        Save-Watchdogs $Report
         $now = Get-SmokeAppProcess
         $original.HasExited -and $now -and $now.ProcessId -ne $original.Id -and (Get-InstalledVersion) -eq '0.0.2'
     } 600
     $Report.clickToRelaunchSeconds = [math]::Round($clickClock.Elapsed.TotalSeconds, 1)
     Assert-True $flipped 'Within 600 s of the click the original process exited, a process from the install path is running and 0.0.2 is installed.'
+    Assert-SingleAppProcess $Report
     $Report.clickedBy = 'operator'
     $Report.trayClickLogLine = Find-LogLine 'Restart to update requested from system tray'
     Assert-True ([bool]$Report.trayClickLogLine) "Log has 'Restart to update requested from system tray'."
@@ -602,6 +705,51 @@ function Invoke-ClickLeg {
     Assert-True $upToDate 'Relaunched 0.0.2 checks again and reports up to date (no install loop).'
 }
 
+# Deterministic KillThenSpawn: a sidecar from another app version already owns the parser port.
+# The hand-started node runs from the install dir, so Stop-SmokeApp (and the leg's cleanup) stops it too.
+function Invoke-KillLeg {
+    param([System.Collections.IDictionary]$Report)
+    Install-SmokeMsi (Join-Path $ArtifactDir 'new-0.0.2.msi')
+    $installed = Get-InstalledVersion
+    Assert-Equal $installed '0.0.2' 'Installed version.'
+    $sidecarEnv = @{
+        PORT = "$ParserPort"; STATIC_API_KEY = 'updater-smoke-kill'; NODE_ENV = 'production'; HAMMER_APP_VERSION = '0.0.9'
+        TELEMETRY_HMAC_KEY = 'updater-smoke-kill-telemetry'; TELEMETRY_HMAC_KEY_ID = 'updater-smoke'
+        DB_PATH = (Join-Path $WorkDir 'kill-sidecar.db')
+    }
+    $saved = @{}
+    foreach ($k in $sidecarEnv.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $sidecarEnv[$k]) }
+    try {
+        $stale = Start-Process -FilePath (Join-Path $InstallRoot 'api\bin\node.exe') -ArgumentList "`"$(Join-Path $InstallRoot 'api\dist\index.js')`"" `
+            -WorkingDirectory (Join-Path $InstallRoot 'api') -NoNewWindow -PassThru `
+            -RedirectStandardOutput (Join-Path $WorkDir 'kill-sidecar.out.log') -RedirectStandardError (Join-Path $WorkDir 'kill-sidecar.err.log')
+    } finally {
+        foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+    }
+    $Report.staleSidecarPid = $stale.Id
+    $up = Wait-Until { (Get-SidecarHealth).Body.appVersion -eq '0.0.9' } 60
+    Assert-True $up "Hand-started sidecar reports appVersion 0.0.9 on port $ParserPort."
+    Assert-Equal (@(Get-ListenerPids $ParserPort) -join ',') "$($stale.Id)" 'The hand-started sidecar owns the parser port.'
+
+    $null = Start-SmokeApp
+    $restartText = "reports app version `"0.0.9`", expected $installed; restarting it"
+    $replaced = Wait-Until {
+        $listeners = @(Get-ListenerPids $ParserPort)
+        [bool](Find-LogLine $restartText) -and $stale.HasExited -and $listeners.Count -eq 1 -and $listeners[0] -ne $stale.Id -and
+            (Get-SidecarHealth).Body.appVersion -eq $installed
+    } 60
+    $Report.restartLogLine = Find-LogLine $restartText
+    $Report.sidecarHealth = (Get-SidecarHealth).Body
+    $listeners = @(Get-ListenerPids $ParserPort)
+    $Report.parserListenerPids = $listeners
+    Assert-True ([bool]$Report.restartLogLine) "Log has '$restartText'."
+    Assert-True $stale.HasExited 'The stale sidecar process is gone.'
+    Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
+    Assert-True ($listeners[0] -ne $stale.Id) 'The listener is a new process, not the stale sidecar.'
+    Assert-Equal $Report.sidecarHealth.appVersion $installed 'Sidecar /health reports the installed version.'
+    Assert-True $replaced 'All of the above held together within 60 s of launch.'
+}
+
 function Invoke-ElevatedLegs {
     New-Item -ItemType Directory -Force $Output | Out-Null
     $failed = 0
@@ -612,6 +760,8 @@ function Invoke-ElevatedLegs {
         $report.appRanElevated = $true
         $source = if ($ViaRunAs) { 'the RunAs child (one UAC prompt, approved by the operator)' } else { 'the already elevated shell' }
         $report.note = "The app inherited the elevated token of $source, so the user-facing UAC prompt on the app's own msiexec was not exercised."
+        $builtFromPath = Join-Path $ArtifactDir 'new.commit'
+        $report.newMsisBuiltFrom = if (Test-Path $builtFromPath) { (Get-Content -Raw $builtFromPath).Trim() } else { 'unknown' }
         $report.artifactSha256 = [ordered]@{}
         Get-ChildItem $ArtifactDir -Filter '*.msi' | ForEach-Object { $report.artifactSha256[$_.Name] = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
         $script:checks = New-Object System.Collections.ArrayList
@@ -624,6 +774,7 @@ function Invoke-ElevatedLegs {
                 'auto' { Invoke-AutoLeg $report }
                 'tray' { Invoke-TrayLeg $report }
                 'oldhop' { Invoke-OldHopLeg $report }
+                'kill' { Invoke-KillLeg $report }
                 'click' { Invoke-ClickLeg $report }
             }
             $report.status = 'passed'
@@ -667,6 +818,10 @@ if ($isAdmin -and -not $SkipBuild) {
 
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
 if (-not $SkipBuild) { Invoke-Builds }
+if ($BuildOnly) {
+    Get-ChildItem $ArtifactDir | ForEach-Object { Write-Host ("{0,-22} {1,12:N0} bytes  {2}" -f $_.Name, $_.Length, $_.LastWriteTime) }
+    exit 0
+}
 $needed = @('new-0.0.2.msi')
 if (@($Legs | Where-Object { $_ -in 'auto', 'tray', 'click' }).Count -gt 0) { $needed += 'new-0.0.1.msi' }
 if ($Legs -contains 'oldhop') { $needed += 'old-0.0.1.msi' }
