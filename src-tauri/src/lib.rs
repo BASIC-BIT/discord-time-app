@@ -3131,7 +3131,7 @@ async fn debug_store_location(app: AppHandle) -> Result<String, String> {
 
 pub(crate) fn create_system_tray_menu(
     app: &AppHandle,
-    restart_version: Option<&str>,
+    update_item: updater::TrayUpdateItem,
 ) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     let show_item = MenuItemBuilder::with_id("show", "Show HammerOverlay")
         .enabled(true)
@@ -3147,11 +3147,19 @@ pub(crate) fn create_system_tray_menu(
         .build(app)?;
 
     let mut menu = MenuBuilder::new(app).item(&show_item).item(&settings_item);
-    if let Some(version) = restart_version {
-        let restart_item =
-            MenuItemBuilder::with_id("restart_to_update", format!("Restart to update {version}"))
-                .enabled(true)
-                .build(app)?;
+    let restart_item = match update_item {
+        updater::TrayUpdateItem::None => None,
+        updater::TrayUpdateItem::Ready(version) => {
+            Some((format!("Restart to update {version}"), true))
+        }
+        updater::TrayUpdateItem::Downloading(version) => {
+            Some((format!("Downloading {version}…"), false))
+        }
+    };
+    if let Some((text, enabled)) = restart_item {
+        let restart_item = MenuItemBuilder::with_id("restart_to_update", text)
+            .enabled(enabled)
+            .build(app)?;
         menu = menu.item(&restart_item);
     }
     menu.item(&check_updates_item).item(&quit_item).build()
@@ -3186,7 +3194,7 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
 fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Setting up system tray");
 
-    let menu = create_system_tray_menu(app, None)?;
+    let menu = create_system_tray_menu(app, updater::TrayUpdateItem::None)?;
 
     let _tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
@@ -3269,6 +3277,16 @@ fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                     log::info!("Restart to update requested from system tray");
                     if let Err(e) = updater::install_ready_update(app) {
                         log::error!("Failed to install update: {e}");
+                        use tauri_plugin_notification::NotificationExt;
+                        if let Err(e) = app
+                            .notification()
+                            .builder()
+                            .title("HammerOverlay")
+                            .body(updater::install_error_copy(&e))
+                            .show()
+                        {
+                            log::warn!("Failed to show the install error notification: {e}");
+                        }
                     }
                 }
                 "quit" => {

@@ -43,6 +43,15 @@ pub enum Phase {
     },
 }
 
+/// What the tray shows for updates: nothing, the restart item, or a disabled
+/// "Downloading" item while a newer version replaces a held one.
+#[derive(Debug, Clone, Copy)]
+pub enum TrayUpdateItem<'a> {
+    None,
+    Ready(&'a str),
+    Downloading(&'a str),
+}
+
 pub struct ReadyUpdate {
     pub update: tauri_plugin_updater::Update,
     pub bytes: Vec<u8>,
@@ -283,15 +292,19 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             log::info!("Up to date ({})", app.package_info().version);
             // A pulled release must not stay installable from the tray.
             *lock(&app.state::<UpdaterState>().ready) = None;
-            set_tray_menu(app, None);
+            set_tray_menu(app, TrayUpdateItem::None);
             set_phase(app, Phase::UpToDate);
         }
         Err(e) => {
             let message = e.to_string();
             log::error!("Update check failed: {message}");
-            // A held download stays installable, so keep reporting it as ready.
+            // A held download stays installable, so keep reporting it as ready and
+            // restore its tray item (a failed newer download had disabled it).
             match held_version(app) {
-                Some(version) => set_phase(app, Phase::Ready { version }),
+                Some(version) => {
+                    show_restart_item(app, &version);
+                    set_phase(app, Phase::Ready { version });
+                }
                 None => set_phase(app, Phase::Failed { message }),
             }
         }
@@ -332,7 +345,8 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
     // `timeout: None`); the download relies on the idle timeout plus this backstop.
     update.timeout = Some(DOWNLOAD_TIMEOUT);
     let version = update.version.clone();
-    if same_version_ready(held_version(app).as_deref(), &version) {
+    let held = held_version(app);
+    if same_version_ready(held.as_deref(), &version) {
         return Ok(Fetched::AlreadyReady(version));
     }
     set_phase(
@@ -341,6 +355,11 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
             version: version.clone(),
         },
     );
+    // A tray click would only be refused while the newer version downloads, so the
+    // held version's restart item is disabled until the download ends.
+    if held.is_some() {
+        set_tray_menu(app, TrayUpdateItem::Downloading(&version));
+    }
     let bytes = update.download(|_, _| {}, || {}).await?;
     *lock(&app.state::<UpdaterState>().ready) = Some(ReadyUpdate { update, bytes });
     set_phase(
@@ -352,14 +371,27 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
     Ok(Fetched::Downloaded(version))
 }
 
-/// Why an install cannot start now, if it cannot.
+const STILL_DOWNLOADING: &str = "Update is still downloading";
+const NOTHING_READY: &str = "No update is ready";
+
+/// Why an install cannot start now, if it cannot. `UpdateChecker.tsx` maps these
+/// strings to user copy, as `install_error_copy` does for the tray.
 fn install_refusal(phase: &Phase, has_ready: bool) -> Option<&'static str> {
     if matches!(phase, Phase::Downloading { .. }) {
-        Some("Update is still downloading")
+        Some(STILL_DOWNLOADING)
     } else if !has_ready {
-        Some("No update is ready")
+        Some(NOTHING_READY)
     } else {
         None
+    }
+}
+
+/// User copy for an `install_ready_update` error; anything but a refusal is shown verbatim.
+pub fn install_error_copy(error: &str) -> &str {
+    match error {
+        STILL_DOWNLOADING => "The update is still downloading.",
+        NOTHING_READY => "No update is ready yet.",
+        other => other,
     }
 }
 
@@ -500,12 +532,12 @@ fn app_window_visible(app: &AppHandle) -> bool {
 }
 
 pub fn show_restart_item(app: &AppHandle, version: &str) {
-    set_tray_menu(app, Some(version));
+    set_tray_menu(app, TrayUpdateItem::Ready(version));
     log::info!("Update {version} ready; restart to update");
 }
 
-fn set_tray_menu(app: &AppHandle, restart_version: Option<&str>) {
-    match crate::create_system_tray_menu(app, restart_version) {
+fn set_tray_menu(app: &AppHandle, item: TrayUpdateItem) {
+    match crate::create_system_tray_menu(app, item) {
         Ok(menu) => {
             if let Some(Err(e)) = app.tray_by_id("main").map(|t| t.set_menu(Some(menu))) {
                 log::error!("Failed to set the tray menu: {e}");
@@ -605,6 +637,24 @@ mod tests {
         assert_eq!(
             install_refusal(&downloading, true),
             Some("Update is still downloading")
+        );
+    }
+
+    #[test]
+    fn tray_install_errors_get_the_update_window_copy() {
+        let downloading = Phase::Downloading {
+            version: "0.1.7".into(),
+        };
+        let refusal = install_refusal(&downloading, true).unwrap();
+        assert_eq!(
+            install_error_copy(refusal),
+            "The update is still downloading."
+        );
+        let refusal = install_refusal(&Phase::Idle, false).unwrap();
+        assert_eq!(install_error_copy(refusal), "No update is ready yet.");
+        assert_eq!(
+            install_error_copy("Access is denied. (os error 5)"),
+            "Access is denied. (os error 5)"
         );
     }
 
