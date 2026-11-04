@@ -2017,10 +2017,10 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings, installed_launcher: Op
     if settings.settings_schema_version < 1 {
         migrate_schema_1_local_slm_defaults(settings, installed_launcher);
     }
-    // Schema 2: hosted becomes the default. Users who never turned the SLM on move to
-    // hosted; deliberate local Docker users and existing hosted users are left alone.
+    // Schema 2: hosted becomes the default and every existing install moves to it,
+    // including local Docker users (BASIC, 2026-11-04: no real users yet, keep it simple).
     // The routing smoke verifies a local runtime, matching Default.
-    if !settings.local_slm_enabled && !cfg!(feature = "routing-smoke") {
+    if !cfg!(feature = "routing-smoke") {
         settings.slm_mode = SLM_MODE_HOSTED.to_string();
         settings.local_slm_enabled = true;
     }
@@ -2448,7 +2448,8 @@ mod local_slm_default_migration_tests {
     }
 
     #[test]
-    fn deliberate_local_docker_user_is_untouched() {
+    #[cfg(not(feature = "routing-smoke"))]
+    fn local_docker_user_also_moves_to_hosted() {
         // A v0.1.5 install saved before `slm_mode` existed, with the runtime turned on.
         let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
             "settings_schema_version": 1,
@@ -2459,7 +2460,7 @@ mod local_slm_default_migration_tests {
         migrate_local_slm_defaults(&mut settings, None);
 
         assert!(settings.local_slm_enabled);
-        assert_eq!(settings.slm_mode, SLM_MODE_LOCAL);
+        assert_eq!(settings.slm_mode, SLM_MODE_HOSTED);
         assert_eq!(settings.settings_schema_version, 2);
     }
 
