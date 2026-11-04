@@ -566,6 +566,11 @@ function Invoke-ClickLeg {
     Write-Host ">>> Click the tray item 'Restart to update 0.0.2' within 180 s <<<" -ForegroundColor Yellow
     Write-Host "    (the '$ProductName' tray icon; the installer then shows a progress bar)" -ForegroundColor Yellow
     Write-Host ''
+    # Unmissable but non-blocking: beeps plus a detached message box that stays up during the wait.
+    try { 1..3 | ForEach-Object { [Console]::Beep(880, 300) } } catch { }
+    $box = 'Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show(''Click the tray icon "HammerOverlay Updater Smoke" and choose "Restart to update 0.0.2" within 3 minutes.'', ''Updater smoke: your turn'') | Out-Null'
+    $encodedBox = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($box))
+    $Report.promptBoxPid = (Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -EncodedCommand $encodedBox").Id
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     # Two waits: the click itself (operator, 180 s), then the install and relaunch (about 210-245 s here).
     $clicked = Wait-Until { $original.HasExited -or [bool](Find-LogLine 'Restart to update requested from system tray') } 180
