@@ -421,6 +421,83 @@ function Get-ListenerPids {
         Select-Object -ExpandProperty OwningProcess -Unique)
 }
 
+# Token evidence for a process: the elevated run can open other processes' tokens. Never throws.
+function Initialize-TokenInfo {
+    if ('SmokeTokenInfo' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SmokeTokenInfo {
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returned);
+    [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+    [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, TOKEN_QUERY = 0x8;
+    const int TokenElevation = 20, TokenIntegrityLevel = 25;
+
+    // -1 when the process or its token cannot be read.
+    static int Query(int pid, int infoClass) {
+        IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (process == IntPtr.Zero) return -1;
+        IntPtr token = IntPtr.Zero, info = IntPtr.Zero;
+        try {
+            if (!OpenProcessToken(process, TOKEN_QUERY, out token)) return -1;
+            int length;
+            GetTokenInformation(token, infoClass, IntPtr.Zero, 0, out length);
+            if (length <= 0) return -1;
+            info = Marshal.AllocHGlobal(length);
+            if (!GetTokenInformation(token, infoClass, info, length, out length)) return -1;
+            if (infoClass == TokenElevation) return Marshal.ReadInt32(info) != 0 ? 1 : 0;
+            // TOKEN_MANDATORY_LABEL: the label SID's last sub-authority is the integrity RID.
+            IntPtr sid = Marshal.ReadIntPtr(info);
+            int count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
+            return Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
+        } finally {
+            if (info != IntPtr.Zero) Marshal.FreeHGlobal(info);
+            if (token != IntPtr.Zero) CloseHandle(token);
+            CloseHandle(process);
+        }
+    }
+    public static int IntegrityRid(int pid) { return Query(pid, TokenIntegrityLevel); }
+    public static int Elevation(int pid) { return Query(pid, TokenElevation); }
+}
+'@
+}
+
+function Get-ProcessIntegrityLevel {
+    param([int]$Id)
+    try {
+        Initialize-TokenInfo
+        $rid = [SmokeTokenInfo]::IntegrityRid($Id)
+        switch ($rid) { -1 { 'unknown' } 0 { 'Untrusted' } 0x1000 { 'Low' } 0x2000 { 'Medium' } 0x3000 { 'High' } 0x4000 { 'System' } default { '0x{0:X}' -f $rid } }
+    } catch { 'unknown' }
+}
+
+# $true/$false from TokenElevation; $null when the token cannot be read.
+function Get-ProcessElevated {
+    param([int]$Id)
+    try {
+        Initialize-TokenInfo
+        switch ([SmokeTokenInfo]::Elevation($Id)) { 1 { $true } 0 { $false } default { $null } }
+    } catch { $null }
+}
+
+# Evidence only: the integrity of the (first) app process from the install path and of the (first) parser-port listener.
+function Save-ProcessIntegrity {
+    param([System.Collections.IDictionary]$Report, [int[]]$SidecarPids)
+    $appPids = @(Get-ProcessesUnder $InstallRoot 'hammer-overlay.exe' | ForEach-Object { [int]$_.ProcessId })
+    $first = if ($appPids.Count -gt 0) { $appPids[0] } else { 0 }
+    $Report.relaunchedIntegrityPid = $first
+    $Report.relaunchedIntegrity = if ($first) { Get-ProcessIntegrityLevel $first } else { 'unknown' }
+    $Report.elevated = if ($first) { Get-ProcessElevated $first } else { $null }
+    $sidecar = if (@($SidecarPids).Count -gt 0) { $SidecarPids[0] } else { 0 }
+    $Report.sidecarIntegrityPid = $sidecar
+    $Report.sidecarIntegrity = if ($sidecar) { Get-ProcessIntegrityLevel $sidecar } else { 'unknown' }
+    $Report.sidecarElevated = if ($sidecar) { Get-ProcessElevated $sidecar } else { $null }
+}
+
 # tauri-plugin-log truncates its file at 40 KB (KeepOne) and logs at TRACE, so a download
 # can wipe earlier lines. Every read keeps what it saw before a truncation.
 $script:logArchive = ''
@@ -603,6 +680,7 @@ function Test-AutoInstallOnLaunch {
     Assert-True $healthy 'Sidecar /health reports appVersion 0.0.2.'
     $listeners = @(Get-ListenerPids $ParserPort)
     $Report.parserListenerPids = $listeners
+    Save-ProcessIntegrity $Report $listeners
     Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
     $upToDate = Wait-Until { [bool](Find-LogLine 'Up to date (0.0.2)') } 60
     $Report.upToDateLogLine = Find-LogLine 'Up to date (0.0.2)'
@@ -688,6 +766,7 @@ function Invoke-OldHopLeg {
     Assert-True $healthy 'Sidecar /health reports appVersion 0.0.2 after the hop.'
     $listeners = @(Get-ListenerPids $ParserPort)
     $Report.parserListenerPids = $listeners
+    Save-ProcessIntegrity $Report $listeners
     Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
     Assert-True ($listeners[0] -notin $oldSidecarPids) 'The listener is not the orphaned old sidecar.'
     $nodes = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
@@ -753,6 +832,7 @@ function Invoke-ClickLeg {
     Assert-True $healthy 'Sidecar /health reports appVersion 0.0.2.'
     $listeners = @(Get-ListenerPids $ParserPort)
     $Report.parserListenerPids = $listeners
+    Save-ProcessIntegrity $Report $listeners
     Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
     $upToDate = Wait-Until { [bool](Find-LogLine 'Up to date (0.0.2)') } 60
     $Report.upToDateLogLine = Find-LogLine 'Up to date (0.0.2)'
@@ -796,6 +876,7 @@ function Invoke-KillLeg {
     $Report.sidecarHealth = (Get-SidecarHealth).Body
     $listeners = @(Get-ListenerPids $ParserPort)
     $Report.parserListenerPids = $listeners
+    Save-ProcessIntegrity $Report $listeners
     Assert-True ([bool]$Report.restartLogLine) "Log has '$restartText'."
     Assert-True $stale.HasExited 'The stale sidecar process is gone.'
     Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
