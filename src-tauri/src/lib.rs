@@ -79,7 +79,7 @@ const HOSTED_SLM_DEFAULT_API_KEY: &str = match option_env!("HOSTED_SLM_DEFAULT_A
 const HOSTED_SLM_DEFAULT_MODEL: &str = LOCAL_SLM_DEFAULT_MODEL;
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FormatStats {

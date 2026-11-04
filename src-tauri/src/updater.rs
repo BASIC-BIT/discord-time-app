@@ -262,6 +262,7 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             ) {
                 ReadyAction::Install => {
                     log::info!("Installing update {version} on launch");
+                    spawn_relaunch_watchdog();
                     if let Err(e) = install_ready_update(app) {
                         log::error!("Failed to install update {version}: {e}");
                         // The download is kept, so the tray item can retry.
@@ -379,6 +380,58 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
         set_phase(app, phase_after_failed_install(&version));
         message
     })
+}
+
+/// Run by the relaunch watchdog with `{exe}` replaced: every 10 s, while an
+/// installer (`msiexec`) or a UAC prompt (`consent`) is running, keep waiting, for
+/// at most 15 minutes; then start the app the way autostart does. If the installer
+/// already relaunched it, the single-instance guard makes this start a no-op.
+const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline); Start-Process -FilePath '{exe}' -ArgumentList '--minimized'";
+
+fn relaunch_watchdog_command(exe: &std::path::Path) -> String {
+    // Single-quoted PowerShell string: a literal quote is doubled.
+    let exe = exe.to_string_lossy().replace('\'', "''");
+    RELAUNCH_WATCHDOG_SCRIPT.replace("{exe}", &exe)
+}
+
+/// The launch-path install exits before the installer's outcome is known, so a
+/// declined UAC prompt or a failed install would otherwise leave nothing running.
+/// Spawned detached and hidden, never waited on; a failure never blocks the install.
+fn spawn_relaunch_watchdog() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                log::warn!("Not starting the relaunch watchdog: no current exe path: {e}");
+                return;
+            }
+        };
+        let spawned = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+            ])
+            .arg(relaunch_watchdog_command(&exe))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(crate::CREATE_NO_WINDOW)
+            .spawn();
+        match spawned {
+            Ok(child) => log::info!(
+                "Started relaunch watchdog (pid {}) for {}",
+                child.id(),
+                exe.display()
+            ),
+            Err(e) => log::warn!("Failed to start the relaunch watchdog: {e}"),
+        }
+    }
 }
 
 /// The bytes are still held and the attempt marker is recorded, so `Ready`
@@ -542,6 +595,17 @@ mod tests {
             status.message.as_deref(),
             Some("0.1.7 could not be installed last time; restart to try again.")
         );
+    }
+
+    #[test]
+    fn relaunch_watchdog_waits_for_msiexec_then_starts_the_exe() {
+        let command =
+            relaunch_watchdog_command(std::path::Path::new(r"C:\Program Files\O'Hammer\app.exe"));
+        assert!(command.contains(r"-FilePath 'C:\Program Files\O''Hammer\app.exe'"));
+        assert!(command.contains("Get-Process -Name msiexec"));
+        assert!(command.contains("AddMinutes(15)"));
+        assert!(command.contains("'--minimized'"));
+        assert!(!command.contains("{exe}"));
     }
 
     #[test]
