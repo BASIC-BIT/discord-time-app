@@ -246,12 +246,58 @@ pub fn spawn_update_loop(app: AppHandle) {
                 clear_install_attempt(&app);
             }
         }
-        tauri::async_runtime::block_on(run_update_cycle(&app, Trigger::Launch));
+        run_cycle_supervised(&app, Trigger::Launch);
         loop {
             std::thread::sleep(PERIODIC_INTERVAL);
-            tauri::async_runtime::block_on(run_update_cycle(&app, Trigger::Periodic));
+            run_cycle_supervised(&app, Trigger::Periodic);
         }
     });
+}
+
+/// A panicking cycle must not end the loop for the process lifetime.
+fn run_cycle_supervised(app: &AppHandle, trigger: Trigger) {
+    let cycle = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tauri::async_runtime::block_on(run_update_cycle(app, trigger))
+    }));
+    if let Err(payload) = cycle {
+        let reason = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("unknown panic");
+        log::error!("Updater {trigger:?} cycle panicked ({reason}); the loop keeps running");
+        reset_phase_after_panic(app);
+    }
+}
+
+/// A cycle that unwound can leave only its own in-flight phases stuck; `Ready`,
+/// `Installing` and the rest (and `ready`) belong to someone else and are kept.
+fn phase_after_panic(phase: &Phase) -> Option<Phase> {
+    matches!(phase, Phase::Checking | Phase::Downloading { .. }).then(|| Phase::Failed {
+        message: "updater cycle panicked".to_string(),
+    })
+}
+
+/// Takes only the `phase` lock, so it fits the `ready` then `phase` order.
+fn reset_phase_after_panic(app: &AppHandle) {
+    let state = app.state::<UpdaterState>();
+    let mut phase = lock(&state.phase);
+    if let Some(next) = phase_after_panic(&phase) {
+        *phase = next;
+    }
+}
+
+/// Resets a stuck phase when `run_update_cycle` unwinds, also covering the manual
+/// cycles that run outside `run_cycle_supervised`. Declared first in the function, so
+/// it drops after every lock guard the cycle holds.
+struct UnwindGuard<'a>(&'a AppHandle);
+
+impl Drop for UnwindGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            reset_phase_after_panic(self.0);
+        }
+    }
 }
 
 /// Only one cycle at a time; `Ready` still re-checks so a pulled or
@@ -290,6 +336,7 @@ enum Fetched {
 }
 
 pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
+    let _unwind_guard = UnwindGuard(app);
     {
         let state = app.state::<UpdaterState>();
         let mut phase = lock(&state.phase);
@@ -720,6 +767,26 @@ fn rfc3339_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_panic_resets_only_in_flight_phases() {
+        let v = || "0.1.7".to_string();
+        for stuck in [Phase::Checking, Phase::Downloading { version: v() }] {
+            assert!(matches!(
+                phase_after_panic(&stuck),
+                Some(Phase::Failed { message }) if message == "updater cycle panicked"
+            ));
+        }
+        for kept in [
+            Phase::Idle,
+            Phase::UpToDate,
+            Phase::Ready { version: v() },
+            Phase::Installing { version: v() },
+            Phase::Failed { message: v() },
+        ] {
+            assert!(phase_after_panic(&kept).is_none());
+        }
+    }
 
     #[test]
     fn only_in_flight_phases_skip_a_cycle() {
