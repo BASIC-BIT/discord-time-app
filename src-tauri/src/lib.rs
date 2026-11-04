@@ -7,7 +7,10 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{
@@ -156,6 +159,9 @@ pub struct TimeParserServiceState {
 
 pub struct LocalSlmServiceState {
     starting: Mutex<bool>,
+    /// Model downloads, runtime installs and image pulls under way; the updater
+    /// treats a non-zero count as busy.
+    in_flight: AtomicUsize,
 }
 
 impl TimeParserServiceState {
@@ -268,8 +274,36 @@ impl LocalSlmServiceState {
     fn new() -> Self {
         Self {
             starting: Mutex::new(false),
+            in_flight: AtomicUsize::new(0),
         }
     }
+}
+
+/// Counts one long-running Local SLM job for as long as it is alive.
+struct LocalSlmWork(AppHandle);
+
+impl LocalSlmWork {
+    fn start(app: &AppHandle) -> Self {
+        app.state::<LocalSlmServiceState>()
+            .in_flight
+            .fetch_add(1, Ordering::SeqCst);
+        Self(app.clone())
+    }
+}
+
+impl Drop for LocalSlmWork {
+    fn drop(&mut self) {
+        self.0
+            .state::<LocalSlmServiceState>()
+            .in_flight
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn local_slm_in_flight(app: &AppHandle) -> usize {
+    app.state::<LocalSlmServiceState>()
+        .in_flight
+        .load(Ordering::SeqCst)
 }
 
 fn explicit_time_parser_api_key() -> Option<String> {
@@ -2885,23 +2919,38 @@ async fn stop_local_slm(app: AppHandle) -> Result<LocalSlmStatus, String> {
 
 #[tauri::command]
 async fn install_local_slm_runtime_files(app: AppHandle) -> Result<LocalSlmStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || install_local_slm_runtime_files_sync(&app))
-        .await
-        .map_err(|e| format!("Failed to join Local SLM runtime install task: {e}"))?
+    // Moved into the task, so the count drops when the work ends, panics included.
+    let work = LocalSlmWork::start(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
+        install_local_slm_runtime_files_sync(&app)
+    })
+    .await
+    .map_err(|e| format!("Failed to join Local SLM runtime install task: {e}"))?
 }
 
 #[tauri::command]
 async fn download_local_slm_model(app: AppHandle) -> Result<LocalSlmStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || download_local_slm_model_sync(&app))
-        .await
-        .map_err(|e| format!("Failed to join Local SLM model download task: {e}"))?
+    // Moved into the task, so the count drops when the work ends, panics included.
+    let work = LocalSlmWork::start(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
+        download_local_slm_model_sync(&app)
+    })
+    .await
+    .map_err(|e| format!("Failed to join Local SLM model download task: {e}"))?
 }
 
 #[tauri::command]
 async fn pull_local_slm_docker_image(app: AppHandle) -> Result<LocalSlmStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || pull_local_slm_docker_image_sync(&app))
-        .await
-        .map_err(|e| format!("Failed to join Local SLM Docker image pull task: {e}"))?
+    // Moved into the task, so the count drops when the work ends, panics included.
+    let work = LocalSlmWork::start(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
+        pull_local_slm_docker_image_sync(&app)
+    })
+    .await
+    .map_err(|e| format!("Failed to join Local SLM Docker image pull task: {e}"))?
 }
 
 #[tauri::command]

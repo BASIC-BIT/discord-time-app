@@ -101,18 +101,15 @@ fn marker_failure_is_fatal(hand_off: HandOff) -> bool {
     matches!(hand_off, HandOff::Launch)
 }
 
-/// Auto-install only on launch, with every app window hidden, and never for a
-/// version whose install already failed once.
+/// Auto-install only on launch, when the app is not busy (see `app_is_busy`),
+/// and never for a version whose install already failed once.
 pub fn next_action(
     trigger: Trigger,
-    app_window_visible: bool,
+    app_is_busy: bool,
     attempted_version: Option<&str>,
     version: &str,
 ) -> ReadyAction {
-    if matches!(trigger, Trigger::Launch)
-        && !app_window_visible
-        && attempted_version != Some(version)
-    {
+    if matches!(trigger, Trigger::Launch) && !app_is_busy && attempted_version != Some(version) {
         ReadyAction::Install
     } else {
         ReadyAction::OfferRestart
@@ -302,12 +299,7 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
         }
         Ok(Fetched::Downloaded(version)) => {
             let attempted = read_install_attempt(app);
-            match next_action(
-                trigger,
-                app_window_visible(app),
-                attempted.as_deref(),
-                &version,
-            ) {
+            match next_action(trigger, app_is_busy(app), attempted.as_deref(), &version) {
                 ReadyAction::Install => {
                     log::info!("Installing update {version} on launch");
                     if let Err(e) = install_ready_update(app, HandOff::Launch) {
@@ -589,8 +581,9 @@ fn phase_after_failed_install(version: &str) -> Phase {
 }
 
 /// The busy test: any visible window (overlay, Settings, update window) means
-/// the user may be mid-task, so exiting into the installer would interrupt them.
-fn app_window_visible(app: &AppHandle) -> bool {
+/// the user may be mid-task, and a Local SLM download or install keeps running
+/// after Settings closes; exiting into the installer would interrupt either.
+fn app_is_busy(app: &AppHandle) -> bool {
     #[cfg(feature = "updater-smoke")]
     if std::env::var("HAMMER_SMOKE_OVERLAY_VISIBLE").as_deref() == Ok("1") {
         return true;
@@ -598,6 +591,7 @@ fn app_window_visible(app: &AppHandle) -> bool {
     app.webview_windows()
         .values()
         .any(|w| w.is_visible().unwrap_or(false))
+        || crate::local_slm_in_flight(app) > 0
 }
 
 pub fn show_restart_item(app: &AppHandle, version: &str) {
@@ -820,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_with_all_windows_hidden_installs() {
+    fn launch_while_not_busy_installs() {
         assert!(matches!(
             next_action(Trigger::Launch, false, None, "0.1.7"),
             ReadyAction::Install
@@ -828,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_with_a_visible_window_defers() {
+    fn launch_while_busy_defers() {
         assert!(matches!(
             next_action(Trigger::Launch, true, None, "0.1.7"),
             ReadyAction::OfferRestart
