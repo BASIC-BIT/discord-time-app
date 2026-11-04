@@ -51,7 +51,7 @@ interface LocalSlmStatus {
 }
 
 const defaultSettings: AppSettings = {
-  settings_schema_version: 1,
+  settings_schema_version: 2,
   auto_start: false,
   global_hotkey: "ctrl+shift+h",
   auto_close_on_focus_loss: false,
@@ -61,7 +61,7 @@ const defaultSettings: AppSettings = {
   discord_reference_routing: true,
   discord_reference_shadow: false,
   theme: "dark",
-  local_slm_enabled: false,
+  local_slm_enabled: true,
   local_slm_auto_start: false,
   local_slm_prewarm: true,
   local_slm_endpoint_base_url: "http://127.0.0.1:8770/v1",
@@ -70,7 +70,7 @@ const defaultSettings: AppSettings = {
   local_slm_adapter_path: "ml/temporal-ir/outputs/qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22-lora",
   local_slm_docker_image: "ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8",
   local_slm_startup_timeout_seconds: 360,
-  slm_mode: 'local',
+  slm_mode: 'hosted',
   hosted_slm_endpoint_base_url: "",
   hosted_slm_model: "qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22",
   hosted_slm_api_key: "",
@@ -453,7 +453,7 @@ export function Settings({ onClose }: SettingsProps) {
                     placeholder="https://slm.example.com/v1"
                   />
                   <p className="setting-help setting-help-compact">
-                    OpenAI-compatible chat completions base URL. Must be https. Leave blank to use the build default; if no default is configured, the local runtime is used instead.
+                    OpenAI-compatible chat completions base URL. Must be https. Leave blank to use the built-in HammerOverlay endpoint.
                   </p>
                 </div>
                 <div className="setting-item setting-item-column">
@@ -475,7 +475,7 @@ export function Settings({ onClose }: SettingsProps) {
                     onChange={(e) => handleSettingChange('hosted_slm_api_key', e.target.value)}
                     className="wide-input"
                     autoComplete="off"
-                    placeholder="Sent as a Bearer token; leave blank to use the build default"
+                    placeholder="Leave blank to use the built-in key"
                   />
                 </div>
               </>
