@@ -206,12 +206,14 @@ def create_handler(state: ServerState) -> type[BaseHTTPRequestHandler]:
         server_version = "TemporalPeftOpenAI/0.1"
 
         def do_GET(self) -> None:
-            # RunPod load-balancer health probe, unauthenticated. 503 while the model loads and prewarms.
+            # RunPod load-balancer health probe, unauthenticated. RunPod reads 200 as healthy, 204 as
+            # initializing, and anything else as unhealthy (removed from routing), so loading must be 204.
             if self.path == "/ping":
                 if state.ready:
                     self.write_json({"status": "healthy", "model": state.model_name})
                 else:
-                    self.write_json({"status": "loading", "model": state.model_name}, HTTPStatus.SERVICE_UNAVAILABLE)
+                    self.send_response(HTTPStatus.NO_CONTENT)
+                    self.end_headers()
                 return
             if not self.authorized():
                 return

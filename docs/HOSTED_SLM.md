@@ -75,14 +75,14 @@ Settings (`AppSettings` in `src-tauri/src/lib.rs`, mirrored in `src/components/S
 
 | Field | Default | Meaning |
 |---|---|---|
-| `slm_mode` | `"local"` | `"local"` runs the Docker runtime on this machine; `"hosted"` points the sidecar at a remote endpoint. |
-| `hosted_slm_endpoint_base_url` | `HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL` (empty) | OpenAI-compatible base URL. Must be `https://`, or a `http://127.0.0.1:<port>` URL for local testing. A plain `http://` remote URL is refused so the key never leaves the machine in clear text. |
+| `slm_mode` | `"hosted"` (`"local"` for settings saved before the field existed, and under the `routing-smoke` feature) | `"local"` runs the Docker runtime on this machine; `"hosted"` points the sidecar at a remote endpoint. |
+| `hosted_slm_endpoint_base_url` | empty, meaning `HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL` | OpenAI-compatible base URL. Must be `https://`, or a `http://127.0.0.1:<port>` URL for local testing. A plain `http://` remote URL is refused so the key never leaves the machine in clear text. |
 | `hosted_slm_model` | V22 model id | Model id sent in the request body. |
-| `hosted_slm_api_key` | `HOSTED_SLM_DEFAULT_API_KEY` (empty) | Sent as `Authorization: Bearer`. Stored in the Tauri settings store in app data, same place as the rest of the settings. |
+| `hosted_slm_api_key` | empty, meaning `HOSTED_SLM_DEFAULT_API_KEY` (build-time, from CI) | Sent as `Authorization: Bearer`. Stored in the Tauri settings store in app data, same place as the rest of the settings. |
 
 Behaviour:
 
-- `hosted_slm_endpoint()` resolves the hosted endpoint only when the mode is hosted and the URL is non-empty and secure. Otherwise the app behaves exactly as before (local runtime). This is the "falls back to local when configured" rule, and it also means flipping the default mode to hosted before the constants are filled is harmless.
+- `hosted_slm_endpoint()` resolves the hosted endpoint only when the mode is hosted, a URL resolves (the user's, or the built-in one when a key exists) and it is secure. When hosted is selected but cannot resolve, for example a dev build or fork without the key, SLM parsing is off and parsing is deterministic; the app never falls back to a local Docker runtime the user did not choose (updated 2026-11-04 after the Linux desktop smoke caught a keyless build pointing the sidecar at a dead `127.0.0.1:8770`). Explicit local mode still runs the Docker runtime.
 - `apply_slm_api_env()` passes the effective endpoint, model and key to the sidecar. The sidecar needed no changes: it already honoured `TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL` and `TEMPORAL_PLAN_IR_ENDPOINT_API_KEY`.
 - In hosted mode `get_local_slm_status` returns state `hosted` and never runs `docker version`, `docker image inspect`, the launcher lookup, or the adapter check. `start_local_slm` (including the boot-time auto-start) returns immediately. Install Runtime Files, Download Model, Pull Docker Image, Start and Stop are hidden in the UI.
 - Changing any hosted field restarts the sidecar on save, the same way local endpoint changes did.
@@ -121,7 +121,7 @@ It walks nine stages and writes every captured value to the ignored file `.env.h
 | 6 | Verify `/ping` and `/v1/models` through `https://<endpoint-id>.api.runpod.ai` | the wizard retries for 3 minutes because the gateway answers "no workers available" while scaling from zero |
 | 7 | Eval gate | `scripts/run-temporal-evaluation-boundary.ps1 -EndpointBaseUrl https://<id>.api.runpod.ai/v1 -ApiKey <key> -DeploymentMode hosted -MonthlyRequests 1000 -EndpointTimeoutMs 120000` with `TEMPORAL_MODEL_FIXED_USD_PER_CALL=0.01` so the hosted cost projection is configured (about $10/month, under the cap). Required: 197/197 routed, 159/159 model-owned. |
 | 8 | Arm the alarm | `gh secret set HOSTED_SLM_API_KEY`, `gh variable set HOSTED_SLM_BASE_URL`; `.github/workflows/hosted-slm-probe.yml` then sends a 1-token completion daily (so a worker that is up but cannot generate fails it) and GitHub emails on failure. Two GitHub caveats the wizard repeats: failure mail goes to the user who last modified the workflow's cron line, and schedules are disabled after 60 days without repository activity, so confirm Actions notifications after the merge. It wakes the worker once a day (about 3 cents) on purpose; a conventional uptime monitor would keep a scale-to-zero worker awake and defeat the point. |
-| 9 | Release flip | fill `HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL` and `HOSTED_SLM_DEFAULT_API_KEY` in `src-tauri/src/lib.rs`, set the `slm_mode` default to `SLM_MODE_HOSTED` and `local_slm_enabled` to `true`, mirror the two defaults in `src/components/Settings.tsx`, release. Existing users keep their saved mode. |
+| 9 | Release flip | `HOSTED_SLM_DEFAULT_ENDPOINT_BASE_URL` is a source constant; `HOSTED_SLM_DEFAULT_API_KEY` is injected at build time from the `HOSTED_SLM_API_KEY` CI secret, never committed. Defaults are `slm_mode = hosted` and `local_slm_enabled = true`, mirrored in `src/components/Settings.tsx`. The schema-2 settings migration moves every existing install to hosted with the SLM enabled, local Docker users included (BASIC, 2026-11-04: no real users yet, keep it simple); routing-smoke builds stay local. See section 8. |
 
 **Measured on 2026-11-03 with the hosted image on the 5090, through the production routing boundary (`scripts/run-temporal-evaluation-boundary.ps1`, catalog now 202 routed / 163 model-owned cases):**
 
@@ -131,7 +131,7 @@ It walks nine stages and writes every captured value to the ignored file `.env.h
 | Same container, second run | 202/202 | 163/163 | about 2 s | 3741 ms | PASS |
 | Fresh container with `TEMPORAL_IR_PREWARM=1`, first run | 202/202 | 163/163 | 1423 ms | 3862 ms | PASS |
 
-Time from `docker run` to `/ping` healthy was 22 s; the first 1-token completion then took 76 s. The gap between the runs is Triton kernel JIT and autotuning in flash-linear-attention (Qwen3.5's linear-attention layers): 81 compiled kernels after run 1, none added in run 2. On a scale-to-zero worker every fresh container repeats this, so the first few dozen real requests would be 5 to 20 s and many would hit the sidecar's 15 s timeout. The server binds its socket before loading, so `/ping` answers 503 (not connection refused) during load and prewarm and the load balancer sees a starting worker rather than a dead one; if RunPod recycles workers faster than the prewarm completes, the fallback is `TEMPORAL_IR_PREWARM=0`. Two mitigations, both in this PR: the server gains an opt-in startup prewarm (`TEMPORAL_IR_PREWARM=1`) that runs seven representative generations (absolute, weekday, relative, two ranges, a Discord reference shift, a multi-line event post) through the exact chat request path before `/ping` reports healthy, and the image honours `TRITON_CACHE_DIR` so the compiled kernels can live on a RunPod network volume and survive across workers of the same GPU type. Measured with prewarm on the 5090: `docker run` to healthy `/ping` 68 s (prewarm itself 48 s, 33 s of it the first prompt), all 81 kernels compiled before traffic, first real 1-token request 59 ms, first eval run p95 3862 ms with zero additional compiles. Kernel caches are keyed by GPU architecture, so a cache built on the 5090 does not help an A4000 worker; the first worker per GPU type pays the 48 s once, later ones read the volume and should be near the 22 s load time (not yet measured on RunPod).
+Time from `docker run` to `/ping` healthy was 22 s; the first 1-token completion then took 76 s. The gap between the runs is Triton kernel JIT and autotuning in flash-linear-attention (Qwen3.5's linear-attention layers): 81 compiled kernels after run 1, none added in run 2. On a scale-to-zero worker every fresh container repeats this, so the first few dozen real requests would be 5 to 20 s and many would hit the sidecar's 15 s timeout. The server binds its socket before loading, so `/ping` answers 204 (not connection refused) during load and prewarm and the load balancer sees a starting worker rather than a dead one (RunPod reads 200 as healthy, 204 as initializing, anything else as unhealthy; an earlier 503 here made RunPod drop the starting worker from routing and fail the request held through the cold start with a 502); if RunPod recycles workers faster than the prewarm completes, the fallback is `TEMPORAL_IR_PREWARM=0`. Two mitigations, both in this PR: the server gains an opt-in startup prewarm (`TEMPORAL_IR_PREWARM=1`) that runs seven representative generations (absolute, weekday, relative, two ranges, a Discord reference shift, a multi-line event post) through the exact chat request path before `/ping` reports healthy, and the image honours `TRITON_CACHE_DIR` so the compiled kernels can live on a RunPod network volume and survive across workers of the same GPU type. Measured with prewarm on the 5090: `docker run` to healthy `/ping` 68 s (prewarm itself 48 s, 33 s of it the first prompt), all 81 kernels compiled before traffic, first real 1-token request 59 ms, first eval run p95 3862 ms with zero additional compiles. Kernel caches are keyed by GPU architecture, so a cache built on the 5090 does not help an A4000 worker; the first worker per GPU type pays the 48 s once, later ones read the volume and should be near the 22 s load time (not yet measured on RunPod).
 
 RunPod load-balancer facts that shaped this (docs, 2026-11-03): URL `https://<ENDPOINT_ID>.api.runpod.ai/<path>`; no queue and no built-in retry, so the client retries during scale-from-zero (the sidecar's warm-up retry via health polling covers this); request timeout 2 min when no worker is available, per-request processing timeout 5.5 min; payload limit 30 MB.
 
@@ -220,3 +220,34 @@ Provider settings that follow from this:
 - Rough cost per cold session on RunPod flex 16 GB rates: idle window plus about 30 s of work, so 3 minutes is about $0.03 and 10 minutes about $0.10. At 500 cold sessions a month a 10 minute window lands at the $50 cap.
 - Bake the base model and adapter into the worker image and load eagerly at container start. The June worker loaded lazily from the Hub (20 to 32 s) and pulled a multi-gigabyte image on revival; both are avoidable.
 - `max_tokens` is capped server side (512) and the warm request asks for 1 token, so a warm is near-free on the model but still bills the worker's revival.
+
+## 8. Live endpoint (2026-11-04)
+
+- Endpoint `hammer-temporal-v22`, id `lvddpcgo2rizu8`, type load balancer, base URL `https://lvddpcgo2rizu8.api.runpod.ai/v1`.
+- RTX 4090 pool (ADA_24) pinned to US-TX-3, US-NC-1, US-CA-2, CA-MTL-3; workers 0 to 1; idle timeout 300 s; FlashBoot on.
+- Gateway auth is enforced: a request without the key gets 401. The restricted key is refused by the management API (401).
+- Key handling: the release build reads the key from the `HOSTED_SLM_API_KEY` repository secret (`HOSTED_SLM_DEFAULT_API_KEY` env in the "Build Tauri application" step, read by `option_env!` in `src-tauri/src/lib.rs`). It is never in source. Saved settings keep the URL and key empty unless the user overrides them, so a rotated key in a later release reaches everyone else. Builds without the secret behave as local. The daily probe uses the same secret plus the `HOSTED_SLM_BASE_URL` variable.
+
+| GPU and region | Gate A | Gate B | Routed median | p95 | Notes |
+|---|---|---|---|---|---|
+| A4500, EU-RO-1 | 202/202 | 163/163 | 2957 ms | 7511 ms | |
+| RTX 4090, US-NC-1 | 202/202 | 163/163 | 2357 ms | 5994 ms | one case over the 15 s sidecar timeout: `weekday-short-ambiguous-clock-suffix-six-way`, 16.3 s |
+
+- First cold start on a fresh 4090 host: 288 s, including the 28.9 GB image pull.
+- Warm 1-token round trip: 0.21 to 0.31 s.
+- Projected cost: $8/month at 1000 requests.
+- BASIC accepted the p95 tail above 5 s on 2026-11-04.
+- RunPod pre-caches the image on extra Idle/Initializing workers; those are not billed.
+
+## 9. Follow-up: serve an LLM result while the SLM warms (not implemented)
+
+Status 2026-11-04: while the hosted endpoint is not known warm (cold worker, gateway 502, slow first response), the sidecar already returns the deterministic result immediately, flagged `debug.endpointWarming`, and keeps warming with nudged retries and backoff (section 7). It does not call an LLM: installed builds carry no OpenAI key (it exists only in CI secrets and dev `api/.env`), so the plan-IR failure path and the post-display verifier (`/parse/verify`, PR #22, which reports `missing_openai_api_key`) are deterministic-only on user machines. BASIC accepted the cold start on 2026-11-04 with the intent that the product serves an LLM answer during warmup.
+
+Shape, pending BASIC's go-ahead because it needs new infrastructure:
+
+1. An always-on relay (Cloudflare Worker or Lambda) holding the OpenAI key, accepting only `{text, tz, now}` and the verify payload, building prompts server-side, rate-limited per install, with a spend cap and an alarm to basic@basicbit.net. An OpenAI key cannot ship in the binary the way the RunPod key does: the RunPod key can only invoke one endpoint.
+2. Sidecar: while warmth is not `ready`, call the relay instead of returning deterministic-only; keep warming the SLM.
+3. Optional: run the cheap LLM in parallel with the SLM on every parse; agreement raises confidence and disagreement becomes clarification. The verify pass from #22 is most of this, started in parallel instead of after display.
+
+Prior notes: `docs/agentic/ingest/hosted-temporal-slm-serving-2026-05-30.md` ("fallback to a strong hosted LLM when the small model is cold, invalid, or risky"); basic-life `research/2026-07-29-slm-finetuning-landscape.md` (LLM-to-SLM distillation, "keep the LLM as fallback"); basic-life `context/business-and-products.md` (Hammer Time: benchmark against the smallest suitable GPT API model). The design discussion itself happened in the hosted-SLM session thread on 2026-10-30 and 2026-11-04.
+

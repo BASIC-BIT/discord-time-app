@@ -117,11 +117,23 @@ jobs:
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2));
           "
 
+      - name: Require the hosted SLM key for tagged releases
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
+        shell: bash
+        run: |
+          if [ -z "$HOSTED_SLM_DEFAULT_API_KEY" ]; then
+            echo "::error::HOSTED_SLM_API_KEY secret is empty; a release built now would ship with SLM parsing off."
+            exit 1
+          fi
+
       - name: Build Tauri application
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
         run: |
           npm run tauri build
 
