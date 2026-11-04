@@ -393,17 +393,15 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     })
 }
 
-/// Run by the relaunch watchdog with `{exe}` replaced: every 10 s, while an
-/// installer (`msiexec`) or a UAC prompt (`consent`) is running, keep waiting, for
-/// at most 15 minutes; then start the app the way autostart does. If the installer
-/// already relaunched it, the single-instance guard makes this start a no-op.
-const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline); Start-Process -FilePath '{exe}' -ArgumentList '--minimized'";
-
-fn relaunch_watchdog_command(exe: &std::path::Path) -> String {
-    // Single-quoted PowerShell string: a literal quote is doubled.
-    let exe = exe.to_string_lossy().replace('\'', "''");
-    RELAUNCH_WATCHDOG_SCRIPT.replace("{exe}", &exe)
-}
+/// Run by the relaunch watchdog, with the app's exe path and PID passed as the
+/// environment variables `HAMMER_RELAUNCH_EXE` and `HAMMER_RELAUNCH_PID` (data, never
+/// parsed as code). First it waits (2 s polls) for this app to exit, which happens
+/// only after the installer has been started; then, every 10 s, while an installer
+/// (`msiexec`) or a UAC prompt (`consent`) is running, it keeps waiting. Both waits
+/// share one 15-minute cap from spawn. Then it starts the app the way autostart
+/// does; if the installer already relaunched it, the single-instance guard makes
+/// this start a no-op.
+const RELAUNCH_WATCHDOG_SCRIPT: &str = "$deadline = (Get-Date).AddMinutes(15); while ((Get-Process -Id $env:HAMMER_RELAUNCH_PID -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }; do { Start-Sleep -Seconds 10 } while ((Get-Process -Name msiexec, consent -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline); Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized'";
 
 /// The launch-path install exits before the installer's outcome is known, so a
 /// declined UAC prompt or a failed install would otherwise leave nothing running.
@@ -428,7 +426,11 @@ fn spawn_relaunch_watchdog() {
                 "Hidden",
                 "-Command",
             ])
-            .arg(relaunch_watchdog_command(&exe))
+            .arg(RELAUNCH_WATCHDOG_SCRIPT)
+            .env("HAMMER_RELAUNCH_EXE", &exe)
+            .env("HAMMER_RELAUNCH_PID", std::process::id().to_string())
+            // Never hold the install folder open.
+            .current_dir(std::env::temp_dir())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -609,14 +611,22 @@ mod tests {
     }
 
     #[test]
-    fn relaunch_watchdog_waits_for_msiexec_then_starts_the_exe() {
-        let command =
-            relaunch_watchdog_command(std::path::Path::new(r"C:\Program Files\O'Hammer\app.exe"));
-        assert!(command.contains(r"-FilePath 'C:\Program Files\O''Hammer\app.exe'"));
-        assert!(command.contains("Get-Process -Name msiexec"));
-        assert!(command.contains("AddMinutes(15)"));
-        assert!(command.contains("'--minimized'"));
-        assert!(!command.contains("{exe}"));
+    fn relaunch_watchdog_waits_for_the_app_then_msiexec_then_starts_the_exe() {
+        let script = RELAUNCH_WATCHDOG_SCRIPT;
+        let pid_wait = script
+            .find("Get-Process -Id $env:HAMMER_RELAUNCH_PID")
+            .expect("waits on the app PID");
+        let msiexec_wait = script
+            .find("Get-Process -Name msiexec")
+            .expect("waits on msiexec");
+        assert!(pid_wait < msiexec_wait);
+        assert!(script.contains("AddMinutes(15)"));
+        assert!(script.contains(
+            "Start-Process -FilePath $env:HAMMER_RELAUNCH_EXE -ArgumentList '--minimized'"
+        ));
+        // The path is passed as data, never embedded in the script text.
+        assert!(!script.contains(".exe"));
+        assert!(!script.contains("{exe}"));
     }
 
     #[test]
