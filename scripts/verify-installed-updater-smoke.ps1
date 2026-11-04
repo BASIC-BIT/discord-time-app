@@ -567,12 +567,17 @@ function Invoke-ClickLeg {
     Write-Host "    (the '$ProductName' tray icon; the installer then shows a progress bar)" -ForegroundColor Yellow
     Write-Host ''
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    # Two waits: the click itself (operator, 180 s), then the install and relaunch (about 210-245 s here).
+    $clicked = Wait-Until { $original.HasExited -or [bool](Find-LogLine 'Restart to update requested from system tray') } 180
+    $Report.secondsPromptToClick = [math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
+    Assert-True $clicked "Operator clicked 'Restart to update 0.0.2' within 180 s of the prompt."
+    $clickClock = [Diagnostics.Stopwatch]::StartNew()
     $flipped = Wait-Until {
         $now = Get-SmokeAppProcess
         $original.HasExited -and $now -and $now.ProcessId -ne $original.Id -and (Get-InstalledVersion) -eq '0.0.2'
-    } 180
-    $Report.secondsPromptToRelaunched = [math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
-    Assert-True $flipped 'Within 180 s of the prompt the original process exited, a process from the install path is running and 0.0.2 is installed.'
+    } 600
+    $Report.clickToRelaunchSeconds = [math]::Round($clickClock.Elapsed.TotalSeconds, 1)
+    Assert-True $flipped 'Within 600 s of the click the original process exited, a process from the install path is running and 0.0.2 is installed.'
     $Report.clickedBy = 'operator'
     $Report.trayClickLogLine = Find-LogLine 'Restart to update requested from system tray'
     Assert-True ([bool]$Report.trayClickLogLine) "Log has 'Restart to update requested from system tray'."
