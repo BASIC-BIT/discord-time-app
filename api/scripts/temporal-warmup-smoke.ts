@@ -7,13 +7,15 @@ import type { TemporalPlanIrEndpointConfig } from '../src/temporal/types';
 
 type Seen = { url: string | undefined; headers: IncomingMessage['headers']; body: Record<string, unknown> };
 
-async function startFakeEndpoint(respond: () => { status: number; body: string }) {
+async function startFakeEndpoint(respond: () => { status: number; body: string } | null) {
   const seen: Seen[] = [];
   const server = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
     seen.push({ url: request.url, headers: request.headers, body: JSON.parse(raw) as Record<string, unknown> });
-    const { status, body } = respond();
+    const reply = respond();
+    if (reply === null) return; // never answer: lets the client time out
+    const { status, body } = reply;
     response.writeHead(status, { 'content-type': 'application/json' });
     response.end(body);
   });
@@ -31,7 +33,7 @@ async function startFakeEndpoint(respond: () => { status: number; body: string }
     maxTokens: 64,
     timeoutMs: 5_000,
   };
-  return { seen, endpoint, close: () => server.close() };
+  return { seen, endpoint, close: () => { server.closeAllConnections(); server.close(); } };
 }
 
 async function main() {
@@ -65,7 +67,7 @@ async function main() {
     fake.close();
   }
 
-  // (c) 503 -> cold with lastError, and a retry within 15 s sends nothing.
+  // (c) 503 -> cold with lastError, and a retry within 10 s sends nothing.
   {
     const fake = await startFakeEndpoint(() => ({ status: 503, body: 'scaling up' }));
     const warmth = new PlanIrEndpointWarmth({ ...fake.endpoint, api: 'completions' }, options);
@@ -76,12 +78,90 @@ async function main() {
     const status = warmth.status();
     assert.equal(status.state, 'cold');
     assert.match(status.lastError ?? '', /HTTP 503/);
-    clock += 14_000;
+    clock += 9_000;
     await warmth.warm();
     assert.equal(fake.seen.length, 1);
     clock += 2_000;
     await warmth.warm();
     assert.equal(fake.seen.length, 2);
+    fake.close();
+  }
+
+  // (c2) nudge(): retries a failed warm after the throttle; a fresh instance with no warm request stays quiet.
+  {
+    const fake = await startFakeEndpoint(() => ({ status: 503, body: 'no workers available' }));
+    const warmth = new PlanIrEndpointWarmth(fake.endpoint, options);
+    warmth.nudge();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(fake.seen.length, 0);
+    assert.equal(warmth.status().lastWarmRequestedAt, null);
+    await warmth.warm();
+    assert.equal(fake.seen.length, 1);
+    assert.equal(warmth.status().lastWarmRequestedAt, new Date(clock).toISOString());
+    clock += 11_000;
+    warmth.nudge();
+    assert.equal(warmth.status().state, 'warming');
+    await warmth.warm();
+    assert.equal(fake.seen.length, 2);
+    fake.close();
+  }
+
+  // (c3) a warm that times out at the window edge still gets a nudged retry (window runs from settle).
+  {
+    let calls = 0;
+    const fake = await startFakeEndpoint(() => (calls++ === 0 ? null : { status: 503, body: 'still cold' }));
+    const warmth = new PlanIrEndpointWarmth(fake.endpoint, { ...options, timeoutMs: 2_000 });
+    const pending = warmth.warm();
+    clock += 179_000; // the slow cold start eats almost the whole window before the timeout lands
+    await pending;
+    assert.equal(fake.seen.length, 1);
+    assert.match(warmth.status().lastError ?? '', /timed out after 2000ms/);
+    clock += 11_000; // 190 s after the client request, 11 s after the warm settled
+    warmth.nudge();
+    await warmth.warm(); // joins the nudged in-flight warm
+    assert.equal(fake.seen.length, 2);
+    fake.close();
+  }
+
+  // (c4) backoff, failure cap, fresh client warm, and window expiry.
+  {
+    const fake = await startFakeEndpoint(() => ({ status: 503, body: 'bad image' }));
+    const warmth = new PlanIrEndpointWarmth(fake.endpoint, options);
+    const nudgeAndSettle = async () => {
+      warmth.nudge();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    };
+    await warmth.warm();
+    assert.equal(warmth.status().consecutiveFailures, 1);
+    clock += 11_000;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 2);
+    assert.equal(warmth.status().consecutiveFailures, 2);
+    // (e) 2 failures -> 20 s throttle.
+    clock += 11_000;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 2);
+    clock += 10_000;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 3);
+    clock += 41_000;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 4);
+    clock += 61_000;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 5);
+    assert.equal(warmth.status().consecutiveFailures, 5);
+    // (d) capped: no more nudged retries inside the window, a client warm() sends again.
+    clock += 61_000;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 5);
+    await warmth.warm();
+    assert.equal(fake.seen.length, 6);
+    assert.equal(warmth.status().consecutiveFailures, 1);
+    // (f) past the window from the last request/settle: quiet.
+    clock += 180_001;
+    await nudgeAndSettle();
+    assert.equal(fake.seen.length, 6);
     fake.close();
   }
 

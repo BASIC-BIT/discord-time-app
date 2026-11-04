@@ -357,6 +357,7 @@ server.addHook('preHandler', async (request, reply) => {
  * Health check endpoint
  */
 server.get('/health', async (_request, reply) => {
+  planIrEndpointWarmth.nudge();
   const dbInfo = db.getInfo();
   const usageStats = db.getUsageStats();
   

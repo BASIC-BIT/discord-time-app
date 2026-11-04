@@ -1,0 +1,46 @@
+name: Hosted SLM probe
+
+# Daily synthetic probe of the hosted temporal model so an unattended endpoint has an alarm:
+# GitHub emails the repo owner when a scheduled run fails.
+# Each probe deliberately wakes the scale-to-zero worker once a day (about 3 cents).
+
+on:
+  schedule:
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe hosted SLM with a 1-token completion
+        env:
+          HOSTED_SLM_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
+          HOSTED_SLM_BASE_URL: ${{ vars.HOSTED_SLM_BASE_URL }}
+          EXPECTED_MODEL: qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22
+        run: |
+          if [ -z "$HOSTED_SLM_API_KEY" ] || [ -z "$HOSTED_SLM_BASE_URL" ]; then
+            echo "hosted SLM probe not configured; skipping"
+            exit 0
+          fi
+          # A completion, not /models: a worker whose HTTP server is up but whose generation is broken
+          # (bad adapter path, OOM) must fail the probe.
+          payload=$(printf '{"model":"%s","max_tokens":1,"temperature":0,"messages":[{"role":"user","content":"probe"}]}' "$EXPECTED_MODEL")
+          for attempt in 1 2 3; do
+            if body=$(curl --silent --show-error --fail --max-time 150 \
+                -H "Authorization: Bearer $HOSTED_SLM_API_KEY" -H "Content-Type: application/json" \
+                -d "$payload" "${HOSTED_SLM_BASE_URL%/}/chat/completions"); then
+              if printf '%s' "$body" | grep -q '"content"'; then
+                echo "hosted SLM generated a completion from $EXPECTED_MODEL"
+                exit 0
+              fi
+              echo "attempt $attempt: no completion content in response: ${body:0:500}"
+            else
+              echo "attempt $attempt: request failed"
+            fi
+            [ "$attempt" -lt 3 ] && sleep 20
+          done
+          exit 1
