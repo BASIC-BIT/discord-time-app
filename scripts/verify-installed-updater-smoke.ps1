@@ -20,9 +20,12 @@ Legs:
           the next plain launch installs it.
   oldhop  0.0.1 built from -OldCommit (old updater) hops to 0.0.2 with its sidecar
           orphaned; the new app must replace the stale sidecar.
+  click   needs an operator: with the overlay visible the update is offered in the tray,
+          the operator clicks 'Restart to update 0.0.2' within 180 s, and the app comes
+          back as 0.0.2. Never part of all.
 
-.PARAMETER Leg           all, or a comma-separated list of auto, tray, oldhop (e.g. auto,tray), run in that
-                         order. Only the listed legs' reports are replaced.
+.PARAMETER Leg           all (auto, tray, oldhop), or a comma-separated list of auto, tray, oldhop, click
+                         (e.g. auto,tray), run in that order. Only the listed legs' reports are replaced.
 .PARAMETER ManifestPort  Port of the local manifest server (also baked into the smoke builds).
 .PARAMETER OldCommit     Commit for the oldhop 0.0.1 build. Defaults to df68d0d, the last
                          main before the auto-updater; do not point it at code that has it.
@@ -35,7 +38,7 @@ Legs:
 #>
 [CmdletBinding()]
 param(
-    [ValidatePattern('^(all|(auto|tray|oldhop)(,(auto|tray|oldhop))*)$')][string]$Leg = 'all',
+    [ValidatePattern('^(all|(auto|tray|oldhop|click)(,(auto|tray|oldhop|click))*)$')][string]$Leg = 'all',
     [int]$ManifestPort = 8859,
     [string]$OldCommit = 'df68d0d',
     [string]$Output = '',
@@ -167,7 +170,7 @@ function Build-SmokeMsi {
 function Invoke-Builds {
     New-Item -ItemType Directory -Force $ArtifactDir | Out-Null
     $newNames = @('new-0.0.2')
-    if (($Legs -contains 'auto') -or ($Legs -contains 'tray')) { $newNames = @('new-0.0.1', 'new-0.0.2') }
+    if (@($Legs | Where-Object { $_ -in 'auto', 'tray', 'click' }).Count -gt 0) { $newNames = @('new-0.0.1', 'new-0.0.2') }
     $pubPath = Join-Path $WorkDir 'smoke.pub'
     $missingNew = @($newNames | Where-Object { -not (Test-Path (Join-Path $ArtifactDir "$_.msi.sig")) })
     $needOld = ($Legs -contains 'oldhop') -and -not (Test-Path (Join-Path $ArtifactDir 'old-0.0.1.msi'))
@@ -547,6 +550,48 @@ function Invoke-OldHopLeg {
     }
 }
 
+# Operator-driven: the tray item click is the only path not driven by the script.
+function Invoke-ClickLeg {
+    param([System.Collections.IDictionary]$Report)
+    Install-SmokeMsi (Join-Path $ArtifactDir 'new-0.0.1.msi')
+    Assert-Equal (Get-InstalledVersion) '0.0.1' 'Installed version before the update.'
+    Start-ManifestServer (Join-Path $ArtifactDir 'new-0.0.2.msi') (Join-Path $ArtifactDir 'new-0.0.2.msi.sig') '0.0.2'
+    $original = Start-SmokeApp -ExtraEnv @{ HAMMER_SMOKE_OVERLAY_VISIBLE = '1' }
+    $ready = Wait-Until { [bool](Find-LogLine 'Update 0.0.2 ready; restart to update') } 120
+    $Report.readyLogLine = Find-LogLine 'Update 0.0.2 ready; restart to update'
+    Assert-True $ready "Log has 'Update 0.0.2 ready; restart to update' within 120 s."
+    Assert-Equal (Get-InstalledVersion) '0.0.1' 'Installed version stays 0.0.1 until the click.'
+
+    Write-Host ''
+    Write-Host ">>> Click the tray item 'Restart to update 0.0.2' within 180 s <<<" -ForegroundColor Yellow
+    Write-Host "    (the '$ProductName' tray icon; the installer then shows a progress bar)" -ForegroundColor Yellow
+    Write-Host ''
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $flipped = Wait-Until {
+        $now = Get-SmokeAppProcess
+        $original.HasExited -and $now -and $now.ProcessId -ne $original.Id -and (Get-InstalledVersion) -eq '0.0.2'
+    } 180
+    $Report.secondsPromptToRelaunched = [math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
+    Assert-True $flipped 'Within 180 s of the prompt the original process exited, a process from the install path is running and 0.0.2 is installed.'
+    $Report.clickedBy = 'operator'
+    $Report.trayClickLogLine = Find-LogLine 'Restart to update requested from system tray'
+    Assert-True ([bool]$Report.trayClickLogLine) "Log has 'Restart to update requested from system tray'."
+
+    $relaunched = Get-SmokeAppProcess
+    $Report.relaunchedPid = [int]$relaunched.ProcessId
+    $Report.relaunchedPath = $relaunched.ExecutablePath
+    Assert-Equal $relaunched.ExecutablePath $Exe 'Relaunched process runs from the install path.'
+    $healthy = Wait-Until { (Get-SidecarHealth).Body.appVersion -eq '0.0.2' } 60
+    $Report.sidecarHealth = (Get-SidecarHealth).Body
+    Assert-True $healthy 'Sidecar /health reports appVersion 0.0.2.'
+    $listeners = @(Get-ListenerPids $ParserPort)
+    $Report.parserListenerPids = $listeners
+    Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
+    $upToDate = Wait-Until { [bool](Find-LogLine 'Up to date (0.0.2)') } 60
+    $Report.upToDateLogLine = Find-LogLine 'Up to date (0.0.2)'
+    Assert-True $upToDate 'Relaunched 0.0.2 checks again and reports up to date (no install loop).'
+}
+
 function Invoke-ElevatedLegs {
     New-Item -ItemType Directory -Force $Output | Out-Null
     $failed = 0
@@ -554,7 +599,9 @@ function Invoke-ElevatedLegs {
     Assert-NoSmokeRunning
     foreach ($name in $Legs) {
         $report = [ordered]@{ leg = $name; status = 'failed'; startedAt = (Get-Date).ToString('o'); elevatedRun = $true; manifestPort = $ManifestPort }
-        $report.uacPrompt = if ($ViaRunAs) { 'one, for the RunAs relaunch (approved by the operator); none expected inside the run' } else { 'none: started from an already elevated shell' }
+        $report.appRanElevated = $true
+        $source = if ($ViaRunAs) { 'the RunAs child (one UAC prompt, approved by the operator)' } else { 'the already elevated shell' }
+        $report.note = "The app inherited the elevated token of $source, so the user-facing UAC prompt on the app's own msiexec was not exercised."
         $report.artifactSha256 = [ordered]@{}
         Get-ChildItem $ArtifactDir -Filter '*.msi' | ForEach-Object { $report.artifactSha256[$_.Name] = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
         $script:checks = New-Object System.Collections.ArrayList
@@ -567,6 +614,7 @@ function Invoke-ElevatedLegs {
                 'auto' { Invoke-AutoLeg $report }
                 'tray' { Invoke-TrayLeg $report }
                 'oldhop' { Invoke-OldHopLeg $report }
+                'click' { Invoke-ClickLeg $report }
             }
             $report.status = 'passed'
         } catch {
@@ -610,7 +658,7 @@ if ($isAdmin -and -not $SkipBuild) {
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
 if (-not $SkipBuild) { Invoke-Builds }
 $needed = @('new-0.0.2.msi')
-if (($Legs -contains 'auto') -or ($Legs -contains 'tray')) { $needed += 'new-0.0.1.msi' }
+if (@($Legs | Where-Object { $_ -in 'auto', 'tray', 'click' }).Count -gt 0) { $needed += 'new-0.0.1.msi' }
 if ($Legs -contains 'oldhop') { $needed += 'old-0.0.1.msi' }
 foreach ($n in $needed) { Assert-True (Test-Path (Join-Path $ArtifactDir $n)) "Artifact $n exists in $ArtifactDir." }
 foreach ($name in $Legs) { Remove-Item -LiteralPath (Join-Path $Output "updater-smoke-$name.json") -Force -ErrorAction SilentlyContinue }
@@ -622,7 +670,9 @@ try {
         $exitCode = $LASTEXITCODE
     } else {
         Write-Host 'Elevating for the MSI installs (approve the UAC prompt)...'
-        $child = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Minimized -ArgumentList $childArgs
+        # The click leg prompts the operator in the elevated window, so keep it visible then.
+        $windowStyle = if ($Legs -contains 'click') { 'Normal' } else { 'Minimized' }
+        $child = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle $windowStyle -ArgumentList $childArgs
         $exitCode = $child.ExitCode
     }
 } finally {
