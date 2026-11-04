@@ -76,6 +76,8 @@ SLM Plan-IR parsing has two runtimes selected by the `slm_mode` setting: `local`
 
 Currently no test framework is implemented. No linting commands are configured in package.json.
 
+`scripts/verify-installed-updater-smoke.ps1` proves the auto-updater on real installed MSIs; run it for any updater, installer or sidecar lifecycle change.
+
 ## Windows Process Management
 
 To kill the app on Windows, use PowerShell:
@@ -177,6 +179,7 @@ useLayoutEffect(() => {
 
 - `docs/PROGRESS.md`: Development history and current status
 - `docs/PRODUCTION_DEPLOYMENT.md`: Production checklist
+- `docs/UPDATER.md`: Auto-updater behaviour, signing key custody, rotation and rollback
 - `scripts/create-test-certificate.ps1`: Test certificate generation
 - `scripts/check-store-simple.ps1`: Debug script to locate Tauri store files
 

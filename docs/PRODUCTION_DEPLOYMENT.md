@@ -23,14 +23,7 @@
   - Error handling and user feedback
 
 ### 3. Auto-Updater System
-- **Status**: ✅ **COMPLETE**
-- **Features**:
-  - Silent background update checking
-  - Update manifest support (JSON format)
-  - User-friendly update UI with progress feedback
-  - Automatic restart after installation
-  - Configurable update endpoints
-  - Error handling for network/server issues
+Auto-updater: see `docs/UPDATER.md`.
 
 ### 4. Auto-Start Functionality
 - **Status**: ✅ **COMPLETE**
@@ -121,9 +114,7 @@ npm run tauri build
    - Create Git tag: `git tag v1.0.0`
 
 2. **Update Manifest**
-   - Update `updater/latest.json` with new version
-   - Generate signature for MSI file
-   - Upload manifest to GitHub Releases
+   - CI (`release.yml`) signs the MSI, writes `latest.json` and uploads both; see `docs/UPDATER.md`
 
 3. **Distribution**
    - Upload signed MSI to GitHub Releases
@@ -154,7 +145,7 @@ src-tauri/
     └── default.json    # Security permissions
 
 updater/
-└── latest.json         # Update manifest (host on GitHub)
+└── latest.json         # Placeholder; release.yml overwrites it at build time
 
 .env                    # Environment variables (local only)
 ```
@@ -211,7 +202,7 @@ HammerOverlay now includes all essential production features:
 - **Professional User Experience**: System tray, settings UI, auto-updater
 - **Enterprise Ready**: Single instance, auto-start, comprehensive logging
 - **Security Focused**: No exposed API keys, local data storage, minimal permissions
-- **Update Capable**: Silent background updates with user control
+- **Update Capable**: Auto-updater: see `docs/UPDATER.md`.
 - **Configurable**: All major features user-controllable through settings
 
 The application is **production-ready** pending only code signing and CI/CD setup for professional distribution.

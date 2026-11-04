@@ -245,11 +245,7 @@ Building a Windows desktop application that converts natural language time expre
       - Exit
     - Left-click to show overlay (alternative to hotkey)
 
-17. **Auto-Updater System**: Automatic update checking and installation
-    - Check for updates on startup (configurable)
-    - Download and install updates silently
-    - Update notification in system tray
-    - GitHub releases integration
+17. Auto-updater: see `docs/UPDATER.md`.
 
 18. **Digital Code Signing**: Sign the executable for Windows trust
     - Code signing certificate for installer and executable
@@ -394,11 +390,7 @@ npm run dev
 - **Error Handling**: Graceful failure recovery and user notification
 
 #### **Auto-Updater System** ✅
-- **Silent Updates**: Background checking with user notification
-- **Update Manifest**: JSON-based versioning with GitHub Releases integration
-- **User Control**: Update UI with manual check and install options
-- **Security**: Signature verification and secure download process
-- **Restart Handling**: Automatic application restart after update installation
+Auto-updater: see `docs/UPDATER.md`.
 
 #### **Auto-Start Functionality** ✅
 - **Windows Integration**: Registry-based startup configuration
