@@ -32,6 +32,7 @@
       "csp": null
     },
     "trayIcon": {
+      "id": "hammer-overlay-tray",
       "iconPath": "icons/icon.ico",
       "tooltip": "HammerOverlay - Discord Timestamp Converter"
     }
@@ -66,11 +67,12 @@
       "preload": ["sqlite:hammer_overlay.db"]
     },
     "updater": {
-      "active": true,
       "endpoints": [
         "https://github.com/BASIC-BIT/discord-time-app/releases/latest/download/latest.json"
       ],
-      "dialog": false,
+      "windows": {
+        "installMode": "passive"
+      },
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY1QjY0OTJBQjJCMEI3NTYKUldSV3Q3Q3lLa20yWlNjajhEbkdtSC9Ncjc0bWRialQxTW1WMUZESEF1UjNBeUg4WnllMTBORHkK"
     }
   }

@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = []
 routing-smoke = []
+updater-smoke = []
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
