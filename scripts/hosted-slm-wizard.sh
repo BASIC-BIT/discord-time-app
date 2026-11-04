@@ -238,7 +238,9 @@ open_url "https://console.runpod.io/serverless"
 step "New Endpoint → Import from Docker Registry."
 step "Container image: $IMAGE   (public, no registry credentials)"
 step "Endpoint type: Load balancer (NOT queue). Name: hammer-temporal-v22"
-step "GPU: the 16 GB tier (RTX A4000 / RTX 4000 Ada class). bf16 needs Ampere or newer; avoid T4."
+step "GPU: the 24 GB Ada pool (RTX 4090). Data centers: US-TX-3, US-NC-1, US-CA-2, CA-MTL-3."
+step "   This is the measured, accepted shape (p95 about 6 s). The 16 GB tier is cheaper per second"
+step "   but measured p95 7.5 s and had capacity only in Europe. bf16 needs Ampere or newer; avoid T4."
 step "Workers: Active 0, Max 2 (a second host for failover; only one runs at low traffic).  Idle timeout: 300 seconds (must stay above the app's 240 s ready window)."
 step "FlashBoot: on.  Container disk: 30 GB."
 step "Storage → attach a Network Volume (create one first: Storage → New, 5 GB, same region/datacenter as the endpoint)."
@@ -284,10 +286,14 @@ pause "Done? Press Enter."
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
 stage "Verify the endpoint through the gateway"
-say "First call wakes a worker: expect 30 to 120 s. The gateway returns"
-say "'no workers available' until it is up, so this retries every 10 s for 3 minutes."
+say "A new endpoint starts on a fresh host that must pull the 28.9 GB image first:"
+say "one host took 288 s; several hosts pulling at once took about 13 minutes. Later"
+say "cold starts on a cached host take about 80 s. This waits up to 15 minutes."
 ok=""
-for i in $(seq 1 18); do
+deadline=$(( $(date +%s) + 900 ))
+i=0
+while (( $(date +%s) < deadline )); do
+  i=$((i + 1))
   if out=$(curl -sS --max-time 20 -H "Authorization: Bearer $RUNPOD_API_KEY" "https://${HOSTED_SLM_ENDPOINT_ID}.api.runpod.ai/ping" 2>&1) && [[ "$out" == *healthy* ]]; then
     ok=1; break
   fi
@@ -303,17 +309,19 @@ if [[ -n "$ok" ]]; then
     warn "unexpected /v1/models body: ${models:0:300}"
   fi
 else
-  warn "endpoint never became healthy. Check the worker logs in the RunPod console (PORT/PORT_HEALTH, image pull)."
-  warn "If workers are recycled before 'Serving ... on' appears in their log, the probe grace is shorter than"
-  warn "the prewarm: set TEMPORAL_IR_PREWARM=0 in the endpoint env (first requests will be slow) and retry."
+  warn "endpoint did not become healthy within 15 minutes. Check the Workers tab and worker logs in the console."
+  warn "Still Initializing: the image pull is slow; wait and re-run this stage. Throttled: the host is busy;"
+  warn "max workers 2 lets RunPod try another host. Check PORT/PORT_HEALTH if logs show the server listening."
+  warn "Only if a worker's log shows it being recycled before 'Serving ... on' appears, set TEMPORAL_IR_PREWARM=0"
+  warn "as a last resort: first requests then pay kernel compilation and many will hit the 15 s sidecar timeout."
   SKIPPED+=("endpoint verification (stage 6)")
 fi
 pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Eval gate against the hosted endpoint"
-say "Runs the production routing boundary: 197/197 required routed cases and"
-say "159/159 model-owned cases must pass. Takes 10 to 20 minutes and a few cents."
+say "Runs the production routing boundary: every required case must pass (202/202 routed and"
+say "163/163 model-owned as of 2026-11-04). Takes 10 to 20 minutes and a few cents."
 say "Cost projection uses \$0.01 per call at 1000 requests/month (= \$10, under the \$50 cap)."
 if confirm "Run the eval gate now?"; then
   mkdir -p reports/temporal-ml
