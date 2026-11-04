@@ -224,7 +224,8 @@ Provider settings that follow from this:
 ## 8. Live endpoint (2026-11-04)
 
 - Endpoint `hammer-temporal-v22`, id `lvddpcgo2rizu8`, type load balancer, base URL `https://lvddpcgo2rizu8.api.runpod.ai/v1`.
-- RTX 4090 pool (ADA_24) pinned to US-TX-3, US-NC-1, US-CA-2, CA-MTL-3; workers 0 to 1; idle timeout 300 s; FlashBoot on.
+- Image `ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22-ping204` (since 2026-11-04 07:04 UTC; `/ping` answers 204 while loading).
+- RTX 4090 pool (ADA_24) pinned to US-TX-3, US-NC-1, US-CA-2, CA-MTL-3; workers 0 to 2 (raised from 1 for host failover, see below); idle timeout 300 s; FlashBoot on.
 - Gateway auth is enforced: a request without the key gets 401. The restricted key is refused by the management API (401).
 - Key handling: the release build reads the key from the `HOSTED_SLM_API_KEY` repository secret (`HOSTED_SLM_DEFAULT_API_KEY` env in the "Build Tauri application" step, read by `option_env!` in `src-tauri/src/lib.rs`). It is never in source. Saved settings keep the URL and key empty unless the user overrides them, so a rotated key in a later release reaches everyone else. Builds without the secret behave as local. The daily probe uses the same secret plus the `HOSTED_SLM_BASE_URL` variable.
 
@@ -232,12 +233,25 @@ Provider settings that follow from this:
 |---|---|---|---|---|---|
 | A4500, EU-RO-1 | 202/202 | 163/163 | 2957 ms | 7511 ms | |
 | RTX 4090, US-NC-1 | 202/202 | 163/163 | 2357 ms | 5994 ms | one case over the 15 s sidecar timeout: `weekday-short-ambiguous-clock-suffix-six-way`, 16.3 s |
+| RTX 4090, US-NC-1, `v22-ping204` | 202/202 | 163/163 | 2458 ms | 6228 ms | same tail case at 18.6 s |
 
 - First cold start on a fresh 4090 host: 288 s, including the 28.9 GB image pull.
 - Warm 1-token round trip: 0.21 to 0.31 s.
 - Projected cost: $8/month at 1000 requests.
 - BASIC accepted the p95 tail above 5 s on 2026-11-04.
 - RunPod pre-caches the image on extra Idle/Initializing workers; those are not billed.
+
+Cold-start findings (2026-11-04):
+
+| After 8 min idle | Image `v22` (503 while loading) | Image `v22-ping204` (204 while loading) |
+|---|---|---|
+| First request | HTTP 502 after 112 s | HTTP 200 in 83 s, held through the worker start |
+| Next request | 200 in 5.4 s | 200 in 0.32 s |
+
+- RunPod's load balancer reads `/ping` 200 as healthy, 204 as initializing and anything else as unhealthy. With 503 it dropped the starting worker from routing, so the request held through the cold start failed with 502.
+- With max workers 1, RunPod binds the endpoint's one worker to one host. When that host's GPUs were busy the worker stayed Throttled and every request timed out (07:09 to 07:15 UTC). Max workers 2 lets RunPod place a second worker on another host; at this traffic only one runs (request-count scaling starts a second above 4 in-flight requests), and Idle, Initializing and Throttled workers are not billed, so cost is unchanged.
+- Fresh hosts pay the full 28.9 GB image pull: after the swap and the max-workers change, requests timed out for about 13 minutes while four new hosts pulled the image. Hosts that already hold it (Idle workers) restart in about 80 s. The image size is now the main cold-start risk; a slim runtime image (no CUDA devel toolchain, no uv cache) is the follow-up.
+- Spend control: RunPod offers no monthly spend limit, only a read-only $80/hr "Spend rate limit". With auto-pay disabled the prepaid balance is the hard cap; keep auto-pay off.
 
 ## 9. Follow-up: serve an LLM result while the SLM warms (not implemented)
 

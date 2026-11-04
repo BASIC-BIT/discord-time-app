@@ -189,7 +189,7 @@ TOTAL_STAGES=9
 # All values land in an ignored env file at the repo root; nothing is committed.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ENV_FILE=".env.hosted-slm.local"
-IMAGE="ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22"
+IMAGE="ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22-ping204"
 MODEL_ID="qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22"
 
 banner "Hosted SLM: RunPod Serverless load-balancing endpoint for V22"
@@ -239,7 +239,7 @@ step "New Endpoint → Import from Docker Registry."
 step "Container image: $IMAGE   (public, no registry credentials)"
 step "Endpoint type: Load balancer (NOT queue). Name: hammer-temporal-v22"
 step "GPU: the 16 GB tier (RTX A4000 / RTX 4000 Ada class). bf16 needs Ampere or newer; avoid T4."
-step "Workers: Active 0, Max 1.  Idle timeout: 300 seconds (must stay above the app's 240 s ready window)."
+step "Workers: Active 0, Max 2 (a second host for failover; only one runs at low traffic).  Idle timeout: 300 seconds (must stay above the app's 240 s ready window)."
 step "FlashBoot: on.  Container disk: 30 GB."
 step "Storage → attach a Network Volume (create one first: Storage → New, 5 GB, same region/datacenter as the endpoint)."
 step "   It persists compiled GPU kernels across workers; without it every fresh worker re-compiles for ~3 minutes."
