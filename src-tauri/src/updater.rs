@@ -266,6 +266,9 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
                         log::error!("Failed to install update {version}: {e}");
                         // The download is kept, so the tray item can retry.
                         show_restart_item(app, &version);
+                        // The attempt marker is already recorded, so `Ready` shows
+                        // "could not be installed last time; restart to try again."
+                        set_phase(app, Phase::Ready { version });
                     }
                 }
                 ReadyAction::OfferRestart => show_restart_item(app, &version),

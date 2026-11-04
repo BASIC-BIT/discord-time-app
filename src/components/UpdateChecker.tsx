@@ -57,10 +57,10 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
   const phase = status?.phase;
   const busy = phase === 'checking' || phase === 'downloading';
 
-  // Poll while a check or download is running
+  // Poll so a background check that finishes while the window is open shows up;
+  // faster while a check or download is running
   useEffect(() => {
-    if (!busy) return;
-    const id = setInterval(refreshStatus, 2000);
+    const id = setInterval(refreshStatus, busy ? 2000 : 10000);
     return () => clearInterval(id);
   }, [busy]);
 
@@ -164,7 +164,7 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
             <button
               className="save-button"
               onClick={checkForUpdates}
-              disabled={!status || busy || installing}
+              disabled={busy || installing}
             >
               Check for Updates
             </button>
