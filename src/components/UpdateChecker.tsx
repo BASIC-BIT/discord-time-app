@@ -18,6 +18,7 @@ interface UpdateStatus {
 function statusText(status: UpdateStatus): string | null {
   switch (status.phase) {
     case 'idle':
+      return 'Not checked yet.';
     case 'upToDate':
       return 'You are running the latest version.';
     case 'checking':
