@@ -266,9 +266,6 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
                         log::error!("Failed to install update {version}: {e}");
                         // The download is kept, so the tray item can retry.
                         show_restart_item(app, &version);
-                        // The attempt marker is already recorded, so `Ready` shows
-                        // "could not be installed last time; restart to try again."
-                        set_phase(app, Phase::Ready { version });
                     }
                 }
                 ReadyAction::OfferRestart => show_restart_item(app, &version),
@@ -370,18 +367,27 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     let ready = ready.as_ref().expect("install_refusal checked has_ready");
     let version = ready.update.version.clone();
     record_install_attempt(app, &version)?;
-    set_phase(app, Phase::Installing { version });
+    set_phase(
+        app,
+        Phase::Installing {
+            version: version.clone(),
+        },
+    );
     ready.update.install(&ready.bytes).map_err(|e| {
         let message = e.to_string();
-        log::error!("Failed to install update: {message}");
-        set_phase(
-            app,
-            Phase::Failed {
-                message: message.clone(),
-            },
-        );
+        log::error!("Failed to install update {version}: {message}");
+        set_phase(app, phase_after_failed_install(&version));
         message
     })
+}
+
+/// The bytes are still held and the attempt marker is recorded, so `Ready`
+/// offers the restart with "could not be installed last time" instead of a
+/// raw error.
+fn phase_after_failed_install(version: &str) -> Phase {
+    Phase::Ready {
+        version: version.to_string(),
+    }
 }
 
 /// The busy test: any visible window (overlay, Settings, update window) means
@@ -523,6 +529,19 @@ mod tests {
             message: "boom".into(),
         };
         assert_eq!(install_refusal(&failed, true), None);
+    }
+
+    #[test]
+    fn failed_install_returns_to_ready_with_prior_failure_copy() {
+        let phase = phase_after_failed_install("0.1.7");
+        assert!(matches!(&phase, Phase::Ready { version } if version == "0.1.7"));
+        // Retrying is allowed, and the marker makes the window explain the failure.
+        assert_eq!(install_refusal(&phase, true), None);
+        let status = status_from_phase(&phase, "0.1.6", true);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("0.1.7 could not be installed last time; restart to try again.")
+        );
     }
 
     #[test]
