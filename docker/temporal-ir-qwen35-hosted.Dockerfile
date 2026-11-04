@@ -1,8 +1,8 @@
 # Self-contained serving image for the V22 Temporal Plan-IR adapter (RunPod Serverless load balancing).
 # No auth token is set: the RunPod gateway authenticates requests.
 #
-#   docker build -f docker/temporal-ir-qwen35-hosted.Dockerfile -t ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22 .
-#   docker run --rm --gpus all -p 127.0.0.1:8772:8770 ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22
+#   docker build -f docker/temporal-ir-qwen35-hosted.Dockerfile -t ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22-ping204 .
+#   docker run --rm --gpus all -p 127.0.0.1:8772:8770 ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22-ping204
 #   curl http://127.0.0.1:8772/ping
 ARG BASE_IMAGE=ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35:cuda12.8
 FROM ${BASE_IMAGE}

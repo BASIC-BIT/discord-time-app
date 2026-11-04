@@ -189,7 +189,7 @@ TOTAL_STAGES=9
 # All values land in an ignored env file at the repo root; nothing is committed.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ENV_FILE=".env.hosted-slm.local"
-IMAGE="ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22"
+IMAGE="ghcr.io/basic-bit/discord-time-app-temporal-ir-qwen35-hosted:v22-ping204"
 MODEL_ID="qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22"
 
 banner "Hosted SLM: RunPod Serverless load-balancing endpoint for V22"
@@ -238,8 +238,10 @@ open_url "https://console.runpod.io/serverless"
 step "New Endpoint → Import from Docker Registry."
 step "Container image: $IMAGE   (public, no registry credentials)"
 step "Endpoint type: Load balancer (NOT queue). Name: hammer-temporal-v22"
-step "GPU: the 16 GB tier (RTX A4000 / RTX 4000 Ada class). bf16 needs Ampere or newer; avoid T4."
-step "Workers: Active 0, Max 1.  Idle timeout: 300 seconds (must stay above the app's 240 s ready window)."
+step "GPU: the 24 GB Ada pool (RTX 4090). Data centers: US-TX-3, US-NC-1, US-CA-2, CA-MTL-3."
+step "   This is the measured, accepted shape (p95 about 6 s). The 16 GB tier is cheaper per second"
+step "   but measured p95 7.5 s and had capacity only in Europe. bf16 needs Ampere or newer; avoid T4."
+step "Workers: Active 0, Max 2 (a second host for failover; only one runs at low traffic).  Idle timeout: 300 seconds (must stay above the app's 240 s ready window)."
 step "FlashBoot: on.  Container disk: 30 GB."
 step "Storage → attach a Network Volume (create one first: Storage → New, 5 GB, same region/datacenter as the endpoint)."
 step "   It persists compiled GPU kernels across workers; without it every fresh worker re-compiles for ~3 minutes."
@@ -273,18 +275,25 @@ esac
 write_env RUNPOD_API_KEY "$RUNPOD_API_KEY"
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "RunPod: spend limit"
+stage "RunPod: cost control"
 open_url "https://console.runpod.io/user/billing"
-step "Set a spending limit or low-balance alert. Expected: about \$10/month at June usage;"
-step "\$50/month is the product cap. One worker at the flex rate pinned 24/7 would be about \$420."
+say "RunPod has no settable monthly spend limit; the 'Spend rate limit' shown is read-only (\$80/hr)."
+say "The real cap is the prepaid balance, because the shipped key can be extracted from the binary."
+step "Auto-Pay: keep it DISABLED, so an abuse burst stops when the balance runs out."
+step "Keep the balance small (about \$25 to \$50) and set a low-balance alert if offered."
+step "Expected spend: about \$10/month at June usage; \$50/month is the product cap."
 pause "Done? Press Enter."
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
 stage "Verify the endpoint through the gateway"
-say "First call wakes a worker: expect 30 to 120 s. The gateway returns"
-say "'no workers available' until it is up, so this retries every 10 s for 3 minutes."
+say "A new endpoint starts on a fresh host that must pull the 28.9 GB image first:"
+say "one host took 288 s; several hosts pulling at once took about 13 minutes. Later"
+say "cold starts on a cached host take about 80 s. This waits up to 15 minutes."
 ok=""
-for i in $(seq 1 18); do
+deadline=$(( $(date +%s) + 900 ))
+i=0
+while (( $(date +%s) < deadline )); do
+  i=$((i + 1))
   if out=$(curl -sS --max-time 20 -H "Authorization: Bearer $RUNPOD_API_KEY" "https://${HOSTED_SLM_ENDPOINT_ID}.api.runpod.ai/ping" 2>&1) && [[ "$out" == *healthy* ]]; then
     ok=1; break
   fi
@@ -300,17 +309,19 @@ if [[ -n "$ok" ]]; then
     warn "unexpected /v1/models body: ${models:0:300}"
   fi
 else
-  warn "endpoint never became healthy. Check the worker logs in the RunPod console (PORT/PORT_HEALTH, image pull)."
-  warn "If workers are recycled before 'Serving ... on' appears in their log, the probe grace is shorter than"
-  warn "the prewarm: set TEMPORAL_IR_PREWARM=0 in the endpoint env (first requests will be slow) and retry."
+  warn "endpoint did not become healthy within 15 minutes. Check the Workers tab and worker logs in the console."
+  warn "Still Initializing: the image pull is slow; wait and re-run this stage. Throttled: the host is busy;"
+  warn "max workers 2 lets RunPod try another host. Check PORT/PORT_HEALTH if logs show the server listening."
+  warn "Only if a worker's log shows it being recycled before 'Serving ... on' appears, set TEMPORAL_IR_PREWARM=0"
+  warn "as a last resort: first requests then pay kernel compilation and many will hit the 15 s sidecar timeout."
   SKIPPED+=("endpoint verification (stage 6)")
 fi
 pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Eval gate against the hosted endpoint"
-say "Runs the production routing boundary: 197/197 required routed cases and"
-say "159/159 model-owned cases must pass. Takes 10 to 20 minutes and a few cents."
+say "Runs the production routing boundary: every required case must pass (202/202 routed and"
+say "163/163 model-owned as of 2026-11-04). Takes 10 to 20 minutes and a few cents."
 say "Cost projection uses \$0.01 per call at 1000 requests/month (= \$10, under the \$50 cap)."
 if confirm "Run the eval gate now?"; then
   mkdir -p reports/temporal-ml
