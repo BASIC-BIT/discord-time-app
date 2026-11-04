@@ -7,7 +7,7 @@ HammerOverlay updates itself from GitHub Releases with the Tauri 2 updater plugi
 The updater is silent and never interrupts the user mid-task.
 
 - 90 seconds after launch (`LAUNCH_DELAY`; 5 seconds in builds with the `updater-smoke` feature) the app checks the manifest, then checks again every 6 hours (`PERIODIC_INTERVAL`) while it runs in the tray.
-- When a newer version exists it downloads the MSI and verifies its signature against `plugins.updater.pubkey`, without telling the user.
+- When a newer version exists it downloads the MSI and verifies its signature against `plugins.updater.pubkey`, without telling the user. The manifest check times out after 60 seconds. The download fails only if it cannot connect within 30 seconds, receives nothing for 120 seconds, or runs past 2 hours (about 11 KB/s for 80 MB); a failed download starts again from zero on the next check.
 - Launch check only: if every app window (overlay, Settings, update window) is hidden and no earlier install attempt of that version is recorded, it installs right away. The app exits, the MSI runs in passive mode (progress bar, one UAC prompt), and the installer relaunches the app. Autostart at login counts as a launch.
 - Otherwise (any app window visible, or the update was found by a periodic check or by "Check for Updates") the tray gains "Restart to update X.Y.Z". Periodic and manual checks never install on their own.
 - The "Check for Updates" window shows the installed version and the updater state (checking, up to date, downloading, ready, failed with the error). Its button reads "Restart to update" once an update is downloaded; otherwise it checks and downloads on demand.
