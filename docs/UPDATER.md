@@ -14,6 +14,8 @@ The updater is silent and never interrupts the user mid-task.
 - Right before handing off to the installer the app writes `install_attempted` = `{version, at}` to the Tauri store file `updater.json`. The app cannot see the installer's result, so if the next launch is still on the older version (UAC declined, no admin rights, locked file), it will not auto-install that version again: it offers the tray item, and the update window says `X.Y.Z could not be installed last time; restart to try again.` The marker is cleared once the running version reaches the attempted one.
 - Downloaded MSI bytes stay in memory only. Quitting without installing means the next launch downloads the update again (about 80 MB).
 - A pre-exit hook stops the Node parser sidecar before the installer runs. As a backstop, at startup a release build kills and respawns a healthy sidecar whose `/health` reports a missing or different `appVersion` (this covers the first hop from v0.1.5/v0.1.6, which have no hook). Debug builds adopt it with a warning instead, so `tauri dev` never kills an installed release's sidecar.
+- In release builds, a process on the parser port that answers `/health` as healthy without an `appVersion` (for example a developer's hand-run `api` dev server) is killed and respawned at startup.
+- v0.1.5 and v0.1.6 have no background check: an install on either must open "Check for Updates" and press "Install Update" once. Every later version updates itself.
 - Checks keep running while an update is downloaded and waiting. If the manifest still offers the same version, the held download is kept; a newer version replaces it; no update at all drops the held download and the tray item; a failed check or download keeps both. So a client that already downloaded a pulled release stops offering it at its next check: within 6 hours, or about 90 seconds after a restart (held downloads live in memory, so a restart drops them anyway). While an update is ready the update window's button is "Restart to update", so it cannot trigger an extra check.
 
 ## 2. Manifest
@@ -55,10 +57,10 @@ Tag the last good commit with a version higher than the bad one and release it (
 
 ## 7. Smoke test
 
-`scripts/verify-installed-updater-smoke.ps1` proves the updater on real installed MSIs. It builds two smoke MSIs (0.0.1 and 0.0.2) with a throwaway signing key and its own product name, serves `latest.json` from `127.0.0.1`, and runs three legs: `auto` (launch with the overlay hidden installs and relaunches as 0.0.2 with a fresh sidecar), `tray` (overlay open, the tray item path), and `oldhop` (a 0.0.1 built from the pre-updater code updates to the new build, and the new build replaces the old sidecar instead of adopting it). Run it from an elevated PowerShell:
+`scripts/verify-installed-updater-smoke.ps1` proves the updater on real installed MSIs. It builds two smoke MSIs (0.0.1 and 0.0.2) with a throwaway signing key and its own product name, serves `latest.json` from `127.0.0.1`, and runs three legs: `auto` (launch with the overlay hidden installs and relaunches as 0.0.2 with a fresh sidecar), `tray` (overlay open, the tray item path), and `oldhop` (a 0.0.1 built from the pre-updater code updates to the new build, and the new build replaces the old sidecar instead of adopting it). A fourth leg, `click`, needs an operator to click "Restart to update 0.0.2" in the tray within 180 seconds; `-Leg all` never includes it, so run it as `-Leg click`. Run the script from a normal (non-elevated) PowerShell: it builds the MSIs unelevated, then relaunches itself elevated for the installs with exactly one UAC prompt. It refuses an elevated shell unless `-SkipBuild` is given. Because the app inherits that elevated token, the reports record `appRanElevated`: the UAC prompt a user sees on the app's own installer is not exercised.
 
 ```powershell
-.\scripts\verify-installed-updater-smoke.ps1 -Leg all
+powershell -ExecutionPolicy Bypass -File scripts\verify-installed-updater-smoke.ps1 -Leg all
 ```
 
 `AGENTS.md` requires installed-MSI smoke evidence for updater, installer and runtime changes and for every Windows release; for the updater, this script's output is that evidence. Record it in the PR.

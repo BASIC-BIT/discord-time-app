@@ -117,7 +117,7 @@ npm run tauri build
    - CI (`release.yml`) signs the MSI, writes `latest.json` and uploads both; see `docs/UPDATER.md`
 
 3. **Distribution**
-   - Upload signed MSI to GitHub Releases
+   - CI uploads the signed MSI to GitHub Releases with the update manifest (step 2); nothing is uploaded by hand
    - Update download links in documentation
    - Announce release to users
 
@@ -202,7 +202,7 @@ HammerOverlay now includes all essential production features:
 - **Professional User Experience**: System tray, settings UI, auto-updater
 - **Enterprise Ready**: Single instance, auto-start, comprehensive logging
 - **Security Focused**: No exposed API keys, local data storage, minimal permissions
-- **Update Capable**: Auto-updater: see `docs/UPDATER.md`.
+- **Update Capable**: see `docs/UPDATER.md`.
 - **Configurable**: All major features user-controllable through settings
 
 The application is **production-ready** pending only code signing and CI/CD setup for professional distribution.
