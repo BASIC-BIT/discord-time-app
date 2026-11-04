@@ -266,6 +266,12 @@ fn should_skip_cycle(phase: &Phase) -> bool {
     )
 }
 
+/// A cycle that finishes while an install hand-off is under way leaves `ready`,
+/// the tray and the phase to that hand-off. Read under the `ready` then `phase` locks.
+fn install_under_way(phase: &Phase) -> bool {
+    matches!(phase, Phase::Installing { .. })
+}
+
 fn same_version_ready(held_version: Option<&str>, candidate: &str) -> bool {
     held_version == Some(candidate)
 }
@@ -315,22 +321,46 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
         Ok(Fetched::InstallUnderWay) => {}
         Ok(Fetched::UpToDate) => {
             log::info!("Up to date ({})", app.package_info().version);
-            // A pulled release must not stay installable from the tray.
-            *lock(&app.state::<UpdaterState>().ready) = None;
+            {
+                // A click during `Checking` may be handing the held update to the
+                // installer; that hand-off owns `ready`, the tray and the phase.
+                let state = app.state::<UpdaterState>();
+                let mut ready = lock(&state.ready);
+                let mut phase = lock(&state.phase);
+                if install_under_way(&phase) {
+                    log::debug!("Up to date, but an install is under way; leaving it alone");
+                    return;
+                }
+                // A pulled release must not stay installable from the tray.
+                *ready = None;
+                *phase = Phase::UpToDate;
+            }
             let _ = set_tray_menu(app, TrayUpdateItem::None);
-            set_phase(app, Phase::UpToDate);
         }
         Err(e) => {
             let message = e.to_string();
             log::error!("Update check failed: {message}");
+            let held = {
+                let state = app.state::<UpdaterState>();
+                let ready = lock(&state.ready);
+                let mut phase = lock(&state.phase);
+                if install_under_way(&phase) {
+                    log::debug!("Update check failed during an install hand-off; leaving it alone");
+                    return;
+                }
+                let held = ready.as_ref().map(|r| r.update.version.clone());
+                *phase = match &held {
+                    Some(version) => Phase::Ready {
+                        version: version.clone(),
+                    },
+                    None => Phase::Failed { message },
+                };
+                held
+            };
             // A held download stays installable, so keep reporting it as ready and
             // restore its tray item (a failed newer download had disabled it).
-            match held_version(app) {
-                Some(version) => {
-                    show_restart_item(app, &version);
-                    set_phase(app, Phase::Ready { version });
-                }
-                None => set_phase(app, Phase::Failed { message }),
+            if let Some(version) = held {
+                show_restart_item(app, &version);
             }
         }
     }
@@ -379,7 +409,7 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
         // it; checked and set under one lock so the cycle never overwrites that.
         let state = app.state::<UpdaterState>();
         let mut phase = lock(&state.phase);
-        if matches!(*phase, Phase::Installing { .. }) {
+        if install_under_way(&phase) {
             log::debug!("Not downloading {version}: an install is under way");
             return Ok(Fetched::InstallUnderWay);
         }
@@ -701,6 +731,15 @@ mod tests {
         assert!(!should_skip_cycle(&Phase::Idle));
         assert!(!should_skip_cycle(&Phase::UpToDate));
         assert!(!should_skip_cycle(&Phase::Failed { message: v() }));
+    }
+
+    #[test]
+    fn only_installing_counts_as_a_hand_off_under_way() {
+        let v = || "0.1.7".to_string();
+        assert!(install_under_way(&Phase::Installing { version: v() }));
+        assert!(!install_under_way(&Phase::Checking));
+        assert!(!install_under_way(&Phase::Ready { version: v() }));
+        assert!(!install_under_way(&Phase::Downloading { version: v() }));
     }
 
     #[test]
