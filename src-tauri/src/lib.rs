@@ -1498,6 +1498,85 @@ fn time_parser_health_check() -> bool {
     }
 }
 
+enum SidecarAction {
+    Spawn,
+    Adopt,
+    KillThenSpawn,
+}
+
+/// A healthy sidecar is only adopted when it was spawned by this exact app version;
+/// otherwise an MSI upgrade would keep talking to the previous version's node.exe.
+fn sidecar_action(health_app_version: Option<&str>, app_version: &str) -> SidecarAction {
+    match health_app_version {
+        None => SidecarAction::Spawn,
+        Some(version) if version == app_version => SidecarAction::Adopt,
+        Some(_) => SidecarAction::KillThenSpawn,
+    }
+}
+
+/// `None` when nothing healthy answers, `Some("")` when healthy but no `appVersion`.
+fn time_parser_health_app_version() -> Option<String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+
+    let request = format!(
+        "GET /health HTTP/1.1\r\nHost: localhost:{TIME_PARSER_PORT}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).ok()?;
+    let response = String::from_utf8(response).ok()?;
+    if !(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")) {
+        return None;
+    }
+
+    let body = response.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+    let version = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|json| json.get("appVersion")?.as_str().map(str::to_string))
+        .unwrap_or_default();
+    Some(version)
+}
+
+/// Kills whatever process listens on the parser port and waits up to 5 s for it to go away.
+fn kill_time_parser_listener() {
+    #[cfg(windows)]
+    {
+        // Listeners are matched by RemotePort 0 rather than `-State Listen`: on some
+        // Windows 11 builds listening sockets report State 0, so `-State Listen` matches nothing.
+        let script = format!(
+            "Get-NetTCPConnection -LocalPort {TIME_PARSER_PORT} -ErrorAction SilentlyContinue | Where-Object {{ $_.RemotePort -eq 0 -and $_.OwningProcess -ne 0 }} | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}"
+        );
+        let mut command = Command::new("powershell.exe");
+        command
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
+        if let Err(e) = command.status() {
+            log::warn!("Failed to stop the stale local time parser service: {e}");
+        }
+
+        for _ in 0..20 {
+            if !time_parser_health_check() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        log::warn!("Stale local time parser service still answers after kill attempt");
+    }
+
+    #[cfg(not(windows))]
+    log::warn!("Killing a stale local time parser service is only supported on Windows");
+}
+
 static LAST_ENDPOINT_WARM: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Fire-and-forget nudge so a scale-to-zero hosted endpoint starts waking before the
@@ -1832,9 +1911,21 @@ fn start_time_parser_service(app: &AppHandle) {
 
     log_ignored_dev_api_overrides();
 
-    if time_parser_health_check() {
-        log::info!("Local time parser service is already healthy");
-        return;
+    let app_version = env!("CARGO_PKG_VERSION");
+    let running_version = time_parser_health_app_version();
+    match sidecar_action(running_version.as_deref(), app_version) {
+        SidecarAction::Adopt => {
+            log::info!("Local time parser service is already healthy");
+            return;
+        }
+        SidecarAction::KillThenSpawn => {
+            log::warn!(
+                "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; restarting it",
+                running_version.unwrap_or_default()
+            );
+            kill_time_parser_listener();
+        }
+        SidecarAction::Spawn => {}
     }
 
     let Some(entrypoint) = find_time_parser_entrypoint(app) else {
@@ -1881,6 +1972,7 @@ fn start_time_parser_service(app: &AppHandle) {
         .env("PORT", TIME_PARSER_PORT.to_string())
         .env("STATIC_API_KEY", &api_key)
         .env("NODE_ENV", "production")
+        .env("HAMMER_APP_VERSION", env!("CARGO_PKG_VERSION"))
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr);
@@ -2068,6 +2160,43 @@ fn migrate_schema_1_local_slm_defaults(
     if is_packaged_pair && uses_packaged_runtime {
         settings.local_slm_model = LOCAL_SLM_DEFAULT_MODEL.to_string();
         settings.local_slm_adapter_path = LOCAL_SLM_DEFAULT_ADAPTER_PATH.to_string();
+    }
+}
+
+#[cfg(test)]
+mod sidecar_adoption_tests {
+    use super::*;
+
+    #[test]
+    fn unhealthy_port_spawns() {
+        assert!(matches!(
+            sidecar_action(None, "0.1.7"),
+            SidecarAction::Spawn
+        ));
+    }
+
+    #[test]
+    fn same_version_is_adopted() {
+        assert!(matches!(
+            sidecar_action(Some("0.1.7"), "0.1.7"),
+            SidecarAction::Adopt
+        ));
+    }
+
+    #[test]
+    fn old_sidecar_without_version_is_killed() {
+        assert!(matches!(
+            sidecar_action(Some(""), "0.1.7"),
+            SidecarAction::KillThenSpawn
+        ));
+    }
+
+    #[test]
+    fn different_version_is_killed() {
+        assert!(matches!(
+            sidecar_action(Some("0.1.6"), "0.1.7"),
+            SidecarAction::KillThenSpawn
+        ));
     }
 }
 
@@ -2553,7 +2682,7 @@ fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, Strin
     }
 }
 
-fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<TimeParserServiceState>();
     let mut child_slot = state
         .child
