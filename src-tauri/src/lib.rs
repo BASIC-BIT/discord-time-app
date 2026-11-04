@@ -191,6 +191,9 @@ pub struct AppSettings {
     pub discord_reference_routing: bool,
     pub discord_reference_shadow: bool,
     pub theme: String, // "dark", "light", "system"
+    /// A settings file from before this field existed reads as off (the old default),
+    /// so the schema-2 migration can move it to hosted.
+    #[serde(default)]
     pub local_slm_enabled: bool,
     pub local_slm_auto_start: bool,
     pub local_slm_prewarm: bool,
@@ -216,6 +219,12 @@ pub struct AppSettings {
 
 fn legacy_slm_mode() -> String {
     SLM_MODE_LOCAL.to_string()
+}
+
+/// True when the user runs the local Docker runtime. Hosted mode never touches Docker,
+/// even when the hosted endpoint cannot resolve in this build.
+fn local_runtime_selected(settings: &AppSettings) -> bool {
+    settings.local_slm_enabled && settings.slm_mode.trim() != SLM_MODE_HOSTED
 }
 
 impl Default for AppSettings {
@@ -642,6 +651,10 @@ fn apply_slm_api_env(command: &mut Command, settings: &AppSettings) {
             command.env("TEMPORAL_PLAN_IR_ENDPOINT_WARMUP", "true");
             (hosted.base_url, hosted.model)
         }
+        // Hosted selected but unavailable in this build (no URL/key): keep parsing
+        // deterministic rather than pointing the sidecar at a local runtime the user
+        // never set up.
+        None if !local_runtime_selected(settings) => return,
         None => (
             normalized_local_slm_endpoint(settings),
             local_slm_model(settings),
@@ -1038,6 +1051,18 @@ fn local_slm_status_for_settings(
         );
     }
 
+    if hosted.is_none() && !local_runtime_selected(settings) {
+        return build_status(
+            true,
+            false,
+            "hosted_unavailable",
+            "Hosted SLM endpoint is not available in this build, so parsing is deterministic. Switch the runtime to Local to use Docker instead.".to_string(),
+            last_output,
+            false,
+            false,
+        );
+    }
+
     if hosted.is_some() {
         // ponytail: not probed from Rust (no HTTPS client here); the sidecar reports
         // endpoint failures per request and falls back to deterministic parsing.
@@ -1346,7 +1371,7 @@ fn pull_local_slm_docker_image_sync(app: &AppHandle) -> Result<LocalSlmStatus, S
 
 fn start_local_slm_sync(app: &AppHandle) -> Result<LocalSlmStatus, String> {
     let settings = load_app_settings(app)?;
-    if !settings.local_slm_enabled
+    if !local_runtime_selected(&settings)
         || hosted_slm_endpoint(&settings).is_some()
         || local_slm_endpoint_ready(&settings)
         || slm_state_is_starting(app)
@@ -1994,7 +2019,8 @@ fn migrate_local_slm_defaults(settings: &mut AppSettings, installed_launcher: Op
     }
     // Schema 2: hosted becomes the default. Users who never turned the SLM on move to
     // hosted; deliberate local Docker users and existing hosted users are left alone.
-    if !settings.local_slm_enabled {
+    // The routing smoke verifies a local runtime, matching Default.
+    if !settings.local_slm_enabled && !cfg!(feature = "routing-smoke") {
         settings.slm_mode = SLM_MODE_HOSTED.to_string();
         settings.local_slm_enabled = true;
     }
@@ -2078,18 +2104,16 @@ mod hosted_slm_endpoint_tests {
     }
 
     #[test]
-    fn empty_url_without_any_key_falls_back_to_local() {
+    fn unavailable_hosted_endpoint_keeps_parsing_deterministic() {
         let settings = hosted_settings("   ", "");
         let endpoint = hosted_slm_endpoint(&settings);
         if HOSTED_SLM_DEFAULT_API_KEY.is_empty() {
             assert_eq!(endpoint, None);
+            assert!(!local_runtime_selected(&settings));
             let mut command = Command::new("node");
             apply_slm_api_env(&mut command, &settings);
-            assert_eq!(
-                env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL").as_deref(),
-                Some(LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL)
-            );
-            assert_eq!(env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_API_KEY"), None);
+            assert_eq!(env_of(&command, "TEMPORAL_FEATURE_PLAN_IR"), None);
+            assert_eq!(env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL"), None);
             assert_eq!(env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_WARMUP"), None);
         } else {
             let endpoint = endpoint.expect("build key resolves the default endpoint");
@@ -2099,6 +2123,22 @@ mod hosted_slm_endpoint_tests {
                 Some(HOSTED_SLM_DEFAULT_API_KEY)
             );
         }
+    }
+
+    #[test]
+    fn explicit_local_mode_still_uses_the_local_runtime() {
+        let settings = AppSettings {
+            local_slm_enabled: true,
+            slm_mode: SLM_MODE_LOCAL.to_string(),
+            ..AppSettings::default()
+        };
+        assert!(local_runtime_selected(&settings));
+        let mut command = Command::new("node");
+        apply_slm_api_env(&mut command, &settings);
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL").as_deref(),
+            Some(LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL)
+        );
     }
 
     #[test]
@@ -2354,6 +2394,24 @@ mod local_slm_default_migration_tests {
     }
 
     #[test]
+    #[cfg(feature = "routing-smoke")]
+    fn routing_smoke_migration_keeps_the_local_runtime() {
+        let mut settings = AppSettings {
+            settings_schema_version: 1,
+            local_slm_enabled: false,
+            slm_mode: SLM_MODE_LOCAL.to_string(),
+            ..AppSettings::default()
+        };
+
+        migrate_local_slm_defaults(&mut settings, None);
+
+        assert_eq!(settings.slm_mode, SLM_MODE_LOCAL);
+        assert!(!settings.local_slm_enabled);
+        assert_eq!(settings.settings_schema_version, 2);
+    }
+
+    #[test]
+    #[cfg(not(feature = "routing-smoke"))]
     fn never_enabled_user_moves_to_hosted() {
         let mut settings = AppSettings {
             settings_schema_version: 1,
@@ -2372,12 +2430,16 @@ mod local_slm_default_migration_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "routing-smoke"))]
     fn pre_hosted_settings_without_a_mode_move_to_hosted_when_never_enabled() {
         let mut settings: AppSettings =
             serde_json::from_value(serde_json::json!({ "settings_schema_version": 1 }))
                 .expect("settings should deserialize");
         assert_eq!(settings.slm_mode, SLM_MODE_LOCAL);
-        settings.local_slm_enabled = false;
+        assert!(
+            !settings.local_slm_enabled,
+            "missing field must read as off"
+        );
 
         migrate_local_slm_defaults(&mut settings, None);
 
@@ -2874,7 +2936,7 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
     let Ok(settings) = load_app_settings(app) else {
         return;
     };
-    if !settings.local_slm_enabled || !settings.local_slm_prewarm {
+    if !local_runtime_selected(&settings) || !settings.local_slm_prewarm {
         return;
     }
     if slm_state_is_starting(app) {
@@ -3115,7 +3177,7 @@ pub fn run() {
             }
 
             if let Ok(settings) = load_app_settings(app.handle()) {
-                if settings.local_slm_enabled && settings.local_slm_auto_start {
+                if local_runtime_selected(&settings) && settings.local_slm_auto_start {
                     trigger_local_slm_start(app.handle());
                 }
             }

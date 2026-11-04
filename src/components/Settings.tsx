@@ -575,7 +575,7 @@ export function Settings({ onClose }: SettingsProps) {
               </div>
               <div>{slmStatus?.message ?? 'Status has not loaded yet.'}</div>
               {hostedSelected && slmStatus?.mode === 'local' && !settingsDirty && (
-                <div className="local-slm-detail">Hosted endpoint is not configured (or is not https), so the local runtime is in use.</div>
+                <div className="local-slm-detail">Hosted endpoint is not available (no URL and key in this build, or not https), so SLM parsing is off.</div>
               )}
               {slmStatus?.mode === 'hosted' && <div className="local-slm-detail">Endpoint: {slmStatus.endpointBaseUrl}</div>}
               {slmStatus?.mode === 'hosted' && <div className="local-slm-detail">Model: {slmStatus.model}</div>}
@@ -589,7 +589,7 @@ export function Settings({ onClose }: SettingsProps) {
                   <span className={slmStatus.apiKeyConfigured ? 'local-slm-check-ok' : 'local-slm-check-missing'}>API key: {slmStatus.apiKeyConfigured ? 'configured' : 'missing'}</span>
                 </div>
               )}
-              {slmStatus && slmStatus.mode !== 'hosted' && (
+              {slmStatus && slmStatus.mode !== 'hosted' && !hostedSelected && (
                 <div className="local-slm-checks">
                   <span className={slmStatus.runtimeInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Runtime files: {slmStatus.runtimeInstalled ? 'installed' : 'missing'}</span>
                   <span className={slmStatus.adapterInstalled ? 'local-slm-check-ok' : 'local-slm-check-missing'}>Model: {slmStatus.adapterInstalled ? 'installed' : 'missing'}</span>
