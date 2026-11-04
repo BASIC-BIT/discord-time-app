@@ -20,6 +20,8 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tauri_plugin_store::StoreBuilder;
 use tauri_plugin_updater::UpdaterExt;
 
+mod updater;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -2285,6 +2287,7 @@ mod hosted_slm_endpoint_tests {
     }
 
     #[test]
+    #[allow(clippy::const_is_empty)]
     fn unavailable_hosted_endpoint_keeps_parsing_deterministic() {
         let settings = hosted_settings("   ", "");
         let endpoint = hosted_slm_endpoint(&settings);
@@ -3307,6 +3310,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(TimeParserServiceState::new())
         .manage(LocalSlmServiceState::new())
+        .manage(updater::UpdaterState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
