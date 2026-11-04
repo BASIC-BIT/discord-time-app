@@ -1513,7 +1513,15 @@ fn time_parser_health_check() -> bool {
 /// this long; the version probe and its "port answers" check share this deadline.
 const HEALTH_PROBE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// True when `/health` returns a 200 status line within `read_timeout`.
+/// Whole-response bound on the version probe's read: a peer that trickles bytes
+/// cannot hold `setup()` or the parse path past this.
+const HEALTH_PROBE_TOTAL_DEADLINE: Duration = Duration::from_secs(3);
+/// `/health` answers with a few hundred bytes; anything past this is not our sidecar.
+const HEALTH_PROBE_MAX_RESPONSE: usize = 64 * 1024;
+
+/// True when `/health` returns a 200 status line within `read_timeout`. It makes
+/// exactly one `read`, so the read itself never outlasts `read_timeout` (at most
+/// 250 ms connect + 500 ms write + `read_timeout` in all).
 fn time_parser_health_check_within(read_timeout: Duration) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(250)) else {
@@ -1587,10 +1595,12 @@ fn resolve_probe<I: Iterator<Item = Option<String>>>(
 }
 
 /// `None` when nothing healthy answers, `Some("")` when healthy but no `appVersion`.
+/// Bounded in total: 250 ms connect, 500 ms write, then the whole response must
+/// arrive within `HEALTH_PROBE_TOTAL_DEADLINE` and `HEALTH_PROBE_MAX_RESPONSE`
+/// bytes, or the probe returns `None`.
 pub(crate) fn time_parser_health_app_version() -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).ok()?;
-    let _ = stream.set_read_timeout(Some(HEALTH_PROBE_READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
 
     let request = format!(
@@ -1598,9 +1608,42 @@ pub(crate) fn time_parser_health_app_version() -> Option<String> {
     );
     stream.write_all(request.as_bytes()).ok()?;
 
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).ok()?;
+    let deadline = Instant::now() + HEALTH_PROBE_TOTAL_DEADLINE;
+    let response = read_bounded(
+        &mut stream,
+        deadline,
+        HEALTH_PROBE_MAX_RESPONSE,
+        |stream, wait| stream.set_read_timeout(Some(wait)).is_ok(),
+    )?;
     parse_health_app_version(&String::from_utf8(response).ok()?)
+}
+
+/// Reads to EOF, or `None` once `deadline` passes or more than `cap` bytes arrive.
+/// Before each read, `set_timeout` caps that read at the per-read timeout or the
+/// time left, whichever is shorter, so no single read can overrun the deadline.
+fn read_bounded<R: Read>(
+    reader: &mut R,
+    deadline: Instant,
+    cap: usize,
+    mut set_timeout: impl FnMut(&mut R, Duration) -> bool,
+) -> Option<Vec<u8>> {
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let left = deadline.checked_duration_since(Instant::now())?;
+        if left.is_zero() || !set_timeout(reader, left.min(HEALTH_PROBE_READ_TIMEOUT)) {
+            return None;
+        }
+        match reader.read(&mut buffer).ok()? {
+            0 => return Some(response),
+            n => {
+                response.extend_from_slice(&buffer[..n]);
+                if response.len() > cap {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// Only a 200 whose JSON body says `status: "healthy"` counts as our sidecar, so an
@@ -2341,6 +2384,94 @@ mod sidecar_adoption_tests {
         let response =
             "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"healthy\",\"appVersion\":\"0.1.7\"}";
         assert_eq!(parse_health_app_version(response), None);
+    }
+
+    /// Yields `chunk` bytes per read after `delay`, until `left` (if any) runs out.
+    struct Trickle {
+        left: Option<usize>,
+        chunk: usize,
+        delay: Duration,
+    }
+
+    impl Read for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(self.delay);
+            let n = self
+                .chunk
+                .min(buf.len())
+                .min(self.left.unwrap_or(usize::MAX));
+            if let Some(left) = &mut self.left {
+                *left -= n;
+            }
+            buf[..n].fill(b'x');
+            Ok(n)
+        }
+    }
+
+    fn read_trickle(trickle: &mut Trickle, deadline: Duration, cap: usize) -> Option<Vec<u8>> {
+        read_bounded(trickle, Instant::now() + deadline, cap, |_, _| true)
+    }
+
+    #[test]
+    fn bounded_read_returns_a_short_response() {
+        let mut ok = Trickle {
+            left: Some(300),
+            chunk: 100,
+            delay: Duration::ZERO,
+        };
+        assert_eq!(
+            read_trickle(&mut ok, Duration::from_secs(3), 1024).map(|r| r.len()),
+            Some(300)
+        );
+    }
+
+    #[test]
+    fn bounded_read_gives_up_on_a_trickling_peer_at_the_deadline() {
+        let mut slow = Trickle {
+            left: None,
+            chunk: 1,
+            delay: Duration::from_millis(10),
+        };
+        let started = Instant::now();
+        assert_eq!(
+            read_trickle(&mut slow, Duration::from_millis(100), 1024),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn bounded_read_gives_up_past_the_size_cap() {
+        let mut flood = Trickle {
+            left: None,
+            chunk: 4096,
+            delay: Duration::ZERO,
+        };
+        assert_eq!(
+            read_trickle(
+                &mut flood,
+                Duration::from_secs(3),
+                HEALTH_PROBE_MAX_RESPONSE
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn bounded_read_caps_each_read_at_the_time_left() {
+        let mut eof = Trickle {
+            left: Some(0),
+            chunk: 1,
+            delay: Duration::ZERO,
+        };
+        let mut waits = Vec::new();
+        let deadline = Instant::now() + Duration::from_millis(500);
+        read_bounded(&mut eof, deadline, 1024, |_, wait| {
+            waits.push(wait);
+            true
+        });
+        assert_eq!(waits.len(), 1);
+        assert!(waits[0] <= Duration::from_millis(500));
     }
 
     #[test]
