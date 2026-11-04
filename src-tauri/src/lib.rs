@@ -1528,17 +1528,26 @@ fn time_parser_health_app_version() -> Option<String> {
 
     let mut response = Vec::new();
     stream.read_to_end(&mut response).ok()?;
-    let response = String::from_utf8(response).ok()?;
+    parse_health_app_version(&String::from_utf8(response).ok()?)
+}
+
+/// Only a 200 whose JSON body says `status: "healthy"` counts as our sidecar, so an
+/// unrelated process that owns the port is never treated as one (and never killed).
+fn parse_health_app_version(response: &str) -> Option<String> {
     if !(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")) {
         return None;
     }
-
-    let body = response.split_once("\r\n\r\n").map_or("", |(_, body)| body);
-    let version = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|json| json.get("appVersion")?.as_str().map(str::to_string))
-        .unwrap_or_default();
-    Some(version)
+    let (_, body) = response.split_once("\r\n\r\n")?;
+    let json = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    if json.get("status")?.as_str()? != "healthy" {
+        return None;
+    }
+    Some(
+        json.get("appVersion")
+            .and_then(|version| version.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    )
 }
 
 /// Kills whatever process listens on the parser port and waits up to 5 s for it to go away.
@@ -1918,6 +1927,15 @@ fn start_time_parser_service(app: &AppHandle) {
             log::info!("Local time parser service is already healthy");
             return;
         }
+        // Debug builds never kill: `tauri dev` would otherwise take out an installed
+        // release's sidecar on the same port.
+        SidecarAction::KillThenSpawn if cfg!(debug_assertions) => {
+            log::warn!(
+                "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; debug build adopts it instead of restarting",
+                running_version.unwrap_or_default()
+            );
+            return;
+        }
         SidecarAction::KillThenSpawn => {
             log::warn!(
                 "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; restarting it",
@@ -2189,6 +2207,40 @@ mod sidecar_adoption_tests {
             sidecar_action(Some(""), "0.1.7"),
             SidecarAction::KillThenSpawn
         ));
+    }
+
+    const OK: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn healthy_body_with_app_version_parses() {
+        let response = format!("{OK}{{\"status\":\"healthy\",\"appVersion\":\"0.1.7\"}}");
+        assert_eq!(
+            parse_health_app_version(&response),
+            Some("0.1.7".to_string())
+        );
+    }
+
+    #[test]
+    fn healthy_body_without_app_version_is_empty() {
+        let response = format!("{OK}{{\"status\":\"healthy\",\"version\":\"1\"}}");
+        assert_eq!(parse_health_app_version(&response), Some(String::new()));
+    }
+
+    #[test]
+    fn non_sidecar_200_is_not_a_sidecar() {
+        assert_eq!(
+            parse_health_app_version(&format!("{OK}{{\"ok\":true}}")),
+            None
+        );
+        assert_eq!(parse_health_app_version(&format!("{OK}hello")), None);
+    }
+
+    #[test]
+    fn non_200_is_not_a_sidecar() {
+        let response =
+            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"healthy\",\"appVersion\":\"0.1.7\"}";
+        assert_eq!(parse_health_app_version(response), None);
     }
 
     #[test]
