@@ -680,7 +680,8 @@ body {
 .local-slm-status-starting,
 .local-slm-status-not_running,
 .local-slm-status-model_missing,
-.local-slm-status-image_missing {
+.local-slm-status-image_missing,
+.local-slm-status-hosted_unavailable {
   border-color: #d97706;
   background: rgba(217, 119, 6, 0.12);
 }
