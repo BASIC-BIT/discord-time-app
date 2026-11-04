@@ -32,6 +32,7 @@
       "csp": null
     },
     "trayIcon": {
+      "id": "hammer-overlay-tray",
       "iconPath": "icons/icon.ico",
       "tooltip": "HammerOverlay - Discord Timestamp Converter"
     }

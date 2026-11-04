@@ -15,7 +15,6 @@ use std::{
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
     AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
@@ -3371,8 +3370,9 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
     trigger_local_slm_start(app);
 }
 
-/// Not "main": Tauri gives the tray it builds from `tauri.conf.json`'s `app.trayIcon`
-/// that id, before `setup` runs, and `tray_by_id` would return that menu-less icon.
+/// Must equal `app.trayIcon.id` in `tauri.conf.json`: Tauri builds that single tray
+/// icon (icon + tooltip) before `setup` runs, and `setup_system_tray` attaches the
+/// menu to it rather than building a second icon.
 pub(crate) const TRAY_ID: &str = "hammer-overlay-tray";
 
 fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -3380,109 +3380,109 @@ fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> 
 
     let menu = create_system_tray_menu(app, updater::TrayUpdateItem::None)?;
 
-    let _tray = TrayIconBuilder::with_id(TRAY_ID)
-        .menu(&menu)
-        .tooltip("HammerOverlay - Discord Timestamp Converter")
-        .on_menu_event(|app, event| {
-            log::debug!("System tray menu event: {}", event.id.as_ref());
+    let tray = app.tray_by_id(TRAY_ID).ok_or_else(|| {
+        format!("No tray icon with id {TRAY_ID}; check app.trayIcon.id in tauri.conf.json")
+    })?;
+    tray.set_menu(Some(menu))?;
+    tray.on_menu_event(|app, event| {
+        log::debug!("System tray menu event: {}", event.id.as_ref());
 
-            match event.id.as_ref() {
-                "show" => {
-                    log::info!("Show window requested from system tray");
-                    show_main_window(app);
-                }
-                "settings" => {
-                    log::info!("Settings requested from system tray");
+        match event.id.as_ref() {
+            "show" => {
+                log::info!("Show window requested from system tray");
+                show_main_window(app);
+            }
+            "settings" => {
+                log::info!("Settings requested from system tray");
 
-                    // Check if settings window already exists
-                    if let Some(settings_window) = app.get_webview_window("settings") {
-                        // If it exists, just show and focus it
-                        let _ = settings_window.show();
-                        let _ = settings_window.set_focus();
-                    } else {
-                        // Create a new settings window
-                        match tauri::WebviewWindowBuilder::new(
-                            app,
-                            "settings",
-                            tauri::WebviewUrl::App("index.html".into()),
-                        )
-                        .title("HammerOverlay Settings")
-                        .inner_size(500.0, 400.0) // Start with reasonable height
-                        .resizable(false)
-                        .decorations(false) // No title bar
-                        .always_on_top(true) // Keep on top like main window
-                        .center()
-                        .build()
-                        {
-                            Ok(window) => {
-                                // Emit event to the new window to show settings
-                                let _ = window.emit("show-settings-view", ());
-                            }
-                            Err(e) => {
-                                log::error!("Failed to create settings window: {e}");
-                            }
+                // Check if settings window already exists
+                if let Some(settings_window) = app.get_webview_window("settings") {
+                    // If it exists, just show and focus it
+                    let _ = settings_window.show();
+                    let _ = settings_window.set_focus();
+                } else {
+                    // Create a new settings window
+                    match tauri::WebviewWindowBuilder::new(
+                        app,
+                        "settings",
+                        tauri::WebviewUrl::App("index.html".into()),
+                    )
+                    .title("HammerOverlay Settings")
+                    .inner_size(500.0, 400.0) // Start with reasonable height
+                    .resizable(false)
+                    .decorations(false) // No title bar
+                    .always_on_top(true) // Keep on top like main window
+                    .center()
+                    .build()
+                    {
+                        Ok(window) => {
+                            // Emit event to the new window to show settings
+                            let _ = window.emit("show-settings-view", ());
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create settings window: {e}");
                         }
                     }
-                }
-                "check_updates" => {
-                    log::info!("Update check requested from system tray");
-
-                    // Check if update checker window already exists
-                    if let Some(update_window) = app.get_webview_window("updater") {
-                        // If it exists, just show and focus it
-                        let _ = update_window.show();
-                        let _ = update_window.set_focus();
-                    } else {
-                        // Create a new update checker window
-                        match tauri::WebviewWindowBuilder::new(
-                            app,
-                            "updater",
-                            tauri::WebviewUrl::App("index.html".into()),
-                        )
-                        .title("Check for Updates")
-                        .inner_size(400.0, 300.0) // Smaller window for update checker
-                        .resizable(false)
-                        .decorations(false) // No title bar
-                        .always_on_top(true)
-                        .center()
-                        .build()
-                        {
-                            Ok(window) => {
-                                // Emit event to the new window to show update checker
-                                let _ = window.emit("show-update-checker-view", ());
-                            }
-                            Err(e) => {
-                                log::error!("Failed to create update checker window: {e}");
-                            }
-                        }
-                    }
-                }
-                "restart_to_update" => {
-                    log::info!("Restart to update requested from system tray");
-                    if let Err(e) = updater::install_ready_update(app, updater::HandOff::User) {
-                        log::error!("Failed to install update: {e}");
-                        use tauri_plugin_notification::NotificationExt;
-                        if let Err(e) = app
-                            .notification()
-                            .builder()
-                            .title("HammerOverlay")
-                            .body(updater::install_error_copy(&e))
-                            .show()
-                        {
-                            log::warn!("Failed to show the install error notification: {e}");
-                        }
-                    }
-                }
-                "quit" => {
-                    log::info!("Application exit requested from system tray");
-                    app.exit(0);
-                }
-                _ => {
-                    log::warn!("Unknown system tray menu event: {}", event.id.as_ref());
                 }
             }
-        })
-        .build(app)?;
+            "check_updates" => {
+                log::info!("Update check requested from system tray");
+
+                // Check if update checker window already exists
+                if let Some(update_window) = app.get_webview_window("updater") {
+                    // If it exists, just show and focus it
+                    let _ = update_window.show();
+                    let _ = update_window.set_focus();
+                } else {
+                    // Create a new update checker window
+                    match tauri::WebviewWindowBuilder::new(
+                        app,
+                        "updater",
+                        tauri::WebviewUrl::App("index.html".into()),
+                    )
+                    .title("Check for Updates")
+                    .inner_size(400.0, 300.0) // Smaller window for update checker
+                    .resizable(false)
+                    .decorations(false) // No title bar
+                    .always_on_top(true)
+                    .center()
+                    .build()
+                    {
+                        Ok(window) => {
+                            // Emit event to the new window to show update checker
+                            let _ = window.emit("show-update-checker-view", ());
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create update checker window: {e}");
+                        }
+                    }
+                }
+            }
+            "restart_to_update" => {
+                log::info!("Restart to update requested from system tray");
+                if let Err(e) = updater::install_ready_update(app, updater::HandOff::User) {
+                    log::error!("Failed to install update: {e}");
+                    use tauri_plugin_notification::NotificationExt;
+                    if let Err(e) = app
+                        .notification()
+                        .builder()
+                        .title("HammerOverlay")
+                        .body(updater::install_error_copy(&e))
+                        .show()
+                    {
+                        log::warn!("Failed to show the install error notification: {e}");
+                    }
+                }
+            }
+            "quit" => {
+                log::info!("Application exit requested from system tray");
+                app.exit(0);
+            }
+            _ => {
+                log::warn!("Unknown system tray menu event: {}", event.id.as_ref());
+            }
+        }
+    });
 
     log::info!("System tray setup completed");
     Ok(())
