@@ -273,10 +273,13 @@ esac
 write_env RUNPOD_API_KEY "$RUNPOD_API_KEY"
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "RunPod: spend limit"
+stage "RunPod: cost control"
 open_url "https://console.runpod.io/user/billing"
-step "Set a spending limit or low-balance alert. Expected: about \$10/month at June usage;"
-step "\$50/month is the product cap. One worker at the flex rate pinned 24/7 would be about \$420."
+say "RunPod has no settable monthly spend limit; the 'Spend rate limit' shown is read-only (\$80/hr)."
+say "The real cap is the prepaid balance, because the shipped key can be extracted from the binary."
+step "Auto-Pay: keep it DISABLED, so an abuse burst stops when the balance runs out."
+step "Keep the balance small (about \$25 to \$50) and set a low-balance alert if offered."
+step "Expected spend: about \$10/month at June usage; \$50/month is the product cap."
 pause "Done? Press Enter."
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
