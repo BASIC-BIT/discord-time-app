@@ -253,6 +253,7 @@ enum Fetched {
     UpToDate,
     AlreadyReady(String),
     Downloaded(String),
+    InstallUnderWay,
 }
 
 pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
@@ -288,6 +289,8 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
                 ReadyAction::OfferRestart => show_restart_item(app, &version),
             }
         }
+        // The install owns the phase now.
+        Ok(Fetched::InstallUnderWay) => {}
         Ok(Fetched::UpToDate) => {
             log::info!("Up to date ({})", app.package_info().version);
             // A pulled release must not stay installable from the tray.
@@ -349,12 +352,19 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
     if same_version_ready(held.as_deref(), &version) {
         return Ok(Fetched::AlreadyReady(version));
     }
-    set_phase(
-        app,
-        Phase::Downloading {
+    {
+        // A click during `Checking` may have taken the held update out to install
+        // it; checked and set under one lock so the cycle never overwrites that.
+        let state = app.state::<UpdaterState>();
+        let mut phase = lock(&state.phase);
+        if matches!(*phase, Phase::Installing { .. }) {
+            log::debug!("Not downloading {version}: an install is under way");
+            return Ok(Fetched::InstallUnderWay);
+        }
+        *phase = Phase::Downloading {
             version: version.clone(),
-        },
-    );
+        };
+    }
     // A tray click would only be refused while the newer version downloads, so the
     // held version's restart item is disabled until the download ends.
     if held.is_some() {
