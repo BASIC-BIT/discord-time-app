@@ -39,6 +39,7 @@ function statusText(status: UpdateStatus): string | null {
 // Refusals from `install_refusal` in updater.rs, mapped to user copy; null hides the toast
 function installErrorText(err: string, phase: UpdateStatus['phase'] | undefined): string | null {
   if (err === 'Update is still downloading') return 'The update is still downloading.';
+  if (err === 'The update is already installing') return 'The update is already installing.';
   if (err === 'No update is ready') {
     // The body already says the latest version is running
     return phase === 'upToDate' ? null : 'No update is ready yet.';

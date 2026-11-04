@@ -373,11 +373,14 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
 
 const STILL_DOWNLOADING: &str = "Update is still downloading";
 const NOTHING_READY: &str = "No update is ready";
+const ALREADY_INSTALLING: &str = "The update is already installing";
 
 /// Why an install cannot start now, if it cannot. `UpdateChecker.tsx` maps these
 /// strings to user copy, as `install_error_copy` does for the tray.
 fn install_refusal(phase: &Phase, has_ready: bool) -> Option<&'static str> {
-    if matches!(phase, Phase::Downloading { .. }) {
+    if matches!(phase, Phase::Installing { .. }) {
+        Some(ALREADY_INSTALLING)
+    } else if matches!(phase, Phase::Downloading { .. }) {
         Some(STILL_DOWNLOADING)
     } else if !has_ready {
         Some(NOTHING_READY)
@@ -391,6 +394,7 @@ pub fn install_error_copy(error: &str) -> &str {
     match error {
         STILL_DOWNLOADING => "The update is still downloading.",
         NOTHING_READY => "No update is ready yet.",
+        ALREADY_INSTALLING => "The update is already installing.",
         other => other,
     }
 }
@@ -402,35 +406,45 @@ pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
         return Err("Updates are disabled in debug builds".to_string());
     }
     let state = app.state::<UpdaterState>();
-    let ready = lock(&state.ready);
-    let phase = lock(&state.phase).clone();
-    if let Some(refusal) = install_refusal(&phase, ready.is_some()) {
-        return Err(refusal.to_string());
-    }
-    let ready = ready.as_ref().expect("install_refusal checked has_ready");
+    // The update is taken out and both locks released before the hand-off (which
+    // runs the pre-exit hook), so a concurrent click is refused as `Installing`
+    // instead of blocking on the lock. Lock order: ready, then phase.
+    let (ready, previous_phase) = {
+        let mut ready = lock(&state.ready);
+        let mut phase = lock(&state.phase);
+        if let Some(refusal) = install_refusal(&phase, ready.is_some()) {
+            return Err(refusal.to_string());
+        }
+        let ready = ready.take().expect("install_refusal checked has_ready");
+        let installing = Phase::Installing {
+            version: ready.update.version.clone(),
+        };
+        (ready, std::mem::replace(&mut *phase, installing))
+    };
     let version = ready.update.version.clone();
+    // Put back on any failure, so the tray item can retry.
+    let restore = |ready: ReadyUpdate, phase: Phase| {
+        *lock(&state.ready) = Some(ready);
+        set_phase(app, phase);
+    };
     // Every hand-off (launch, tray, update window) exits before the installer's
     // outcome is known, so each one gets the watchdog.
     let watchdog = spawn_relaunch_watchdog();
     if let Err(e) = record_install_attempt(app, &version) {
         stop_relaunch_watchdog(watchdog);
+        restore(ready, previous_phase);
         return Err(e);
     }
-    set_phase(
-        app,
-        Phase::Installing {
-            version: version.clone(),
-        },
-    );
-    ready.update.install(&ready.bytes).map_err(|e| {
+    if let Err(e) = ready.update.install(&ready.bytes) {
         let message = e.to_string();
         log::error!("Failed to install update {version}: {message}");
         // The install never handed off and the app keeps running, so a user who
         // quits within 15 minutes must not be relaunched.
         stop_relaunch_watchdog(watchdog);
-        set_phase(app, phase_after_failed_install(&version));
-        message
-    })
+        restore(ready, phase_after_failed_install(&version));
+        return Err(message);
+    }
+    Ok(())
 }
 
 fn stop_relaunch_watchdog(watchdog: Option<std::process::Child>) {
@@ -668,6 +682,22 @@ mod tests {
             install_error_copy("Access is denied. (os error 5)"),
             "Access is denied. (os error 5)"
         );
+    }
+
+    #[test]
+    fn second_install_while_installing_is_refused() {
+        let installing = Phase::Installing {
+            version: "0.1.7".into(),
+        };
+        // The update has been taken out of `ready` by then, and is refused either way.
+        for has_ready in [false, true] {
+            let refusal = install_refusal(&installing, has_ready);
+            assert_eq!(refusal, Some("The update is already installing"));
+            assert_eq!(
+                install_error_copy(refusal.unwrap()),
+                "The update is already installing."
+            );
+        }
     }
 
     #[test]
