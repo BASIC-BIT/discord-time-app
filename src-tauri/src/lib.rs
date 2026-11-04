@@ -2736,9 +2736,7 @@ fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, Strin
     }
 }
 
-pub(crate) fn stop_time_parser_service<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-) -> Result<(), String> {
+pub(crate) fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<TimeParserServiceState>();
     let mut child_slot = state
         .child
@@ -3025,10 +3023,10 @@ async fn debug_store_location(app: AppHandle) -> Result<String, String> {
     Ok(debug_info)
 }
 
-pub(crate) fn create_system_tray_menu<R: tauri::Runtime>(
-    app: &AppHandle<R>,
+pub(crate) fn create_system_tray_menu(
+    app: &AppHandle,
     restart_version: Option<&str>,
-) -> Result<tauri::menu::Menu<R>, tauri::Error> {
+) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     let show_item = MenuItemBuilder::with_id("show", "Show HammerOverlay")
         .enabled(true)
         .build(app)?;

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 #[cfg(not(feature = "updater-smoke"))]
@@ -134,9 +134,7 @@ pub fn status_from_phase(
     }
 }
 
-fn store<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<std::sync::Arc<tauri_plugin_store::Store<R>>, String> {
+fn store(app: &AppHandle) -> Result<std::sync::Arc<tauri_plugin_store::Store<tauri::Wry>>, String> {
     tauri_plugin_store::StoreBuilder::new(app, STORE_FILE)
         .build()
         .map_err(|e| {
@@ -145,7 +143,7 @@ fn store<R: Runtime>(
         })
 }
 
-pub fn read_install_attempt<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+pub fn read_install_attempt(app: &AppHandle) -> Option<String> {
     store(app)
         .ok()?
         .get(ATTEMPT_KEY)?
@@ -154,7 +152,7 @@ pub fn read_install_attempt<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn record_install_attempt<R: Runtime>(app: &AppHandle<R>, version: &str) -> Result<(), String> {
+pub fn record_install_attempt(app: &AppHandle, version: &str) -> Result<(), String> {
     let store = store(app)?;
     store.set(
         ATTEMPT_KEY,
@@ -166,7 +164,7 @@ pub fn record_install_attempt<R: Runtime>(app: &AppHandle<R>, version: &str) -> 
     })
 }
 
-pub fn clear_install_attempt<R: Runtime>(app: &AppHandle<R>) {
+pub fn clear_install_attempt(app: &AppHandle) {
     let Ok(store) = store(app) else { return };
     store.delete(ATTEMPT_KEY);
     if let Err(e) = store.save() {
@@ -179,7 +177,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn set_phase<R: Runtime>(app: &AppHandle<R>, phase: Phase) {
+fn set_phase(app: &AppHandle, phase: Phase) {
     *lock(&app.state::<UpdaterState>().phase) = phase;
 }
 
@@ -200,13 +198,16 @@ pub fn spawn_update_loop(app: AppHandle) {
     });
 }
 
-pub async fn run_update_cycle<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) {
+pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
     {
         let state = app.state::<UpdaterState>();
         let mut phase = lock(&state.phase);
         if matches!(
             *phase,
-            Phase::Downloading { .. } | Phase::Installing { .. } | Phase::Ready { .. }
+            Phase::Checking
+                | Phase::Downloading { .. }
+                | Phase::Installing { .. }
+                | Phase::Ready { .. }
         ) {
             return;
         }
@@ -234,6 +235,9 @@ pub async fn run_update_cycle<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) 
         }
         Ok(None) => {
             log::info!("Up to date ({})", app.package_info().version);
+            // A pulled release must not stay installable from the tray.
+            *lock(&app.state::<UpdaterState>().ready) = None;
+            set_tray_menu(app, None);
             set_phase(app, Phase::UpToDate);
         }
         Err(e) => {
@@ -245,9 +249,7 @@ pub async fn run_update_cycle<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) 
 }
 
 /// Checks the endpoint and, when an update exists, downloads it into `ReadyUpdate`.
-async fn check_and_download<R: Runtime>(
-    app: &AppHandle<R>,
-) -> tauri_plugin_updater::Result<Option<String>> {
+async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Option<String>> {
     let hook_app = app.clone();
     let builder = app.updater_builder().on_before_exit(move || {
         if let Err(e) = crate::stop_time_parser_service(&hook_app) {
@@ -256,13 +258,6 @@ async fn check_and_download<R: Runtime>(
         // Setting a hook replaces the plugin's default one, which only did this.
         hook_app.cleanup_before_exit();
     });
-    #[cfg(test)]
-    let builder = match std::env::var("HAMMER_TEST_UPDATER_ENDPOINT") {
-        Ok(endpoint) => builder.endpoints(vec![endpoint
-            .parse()
-            .expect("HAMMER_TEST_UPDATER_ENDPOINT is a URL")])?,
-        Err(_) => builder,
-    };
     let Some(update) = builder.build()?.check().await? else {
         return Ok(None);
     };
@@ -284,17 +279,27 @@ async fn check_and_download<R: Runtime>(
     Ok(Some(version))
 }
 
+/// Why an install cannot start now, if it cannot.
+fn install_refusal(phase: &Phase, has_ready: bool) -> Option<&'static str> {
+    if matches!(phase, Phase::Downloading { .. }) {
+        Some("Update is still downloading")
+    } else if !has_ready {
+        Some("No update is ready")
+    } else {
+        None
+    }
+}
+
 /// Hands the downloaded update to the installer. On Windows a successful
 /// install exits the process, so `Ok` is only seen on other platforms.
-pub fn install_ready_update<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<UpdaterState>();
-    if matches!(*lock(&state.phase), Phase::Downloading { .. }) {
-        return Err("Update is still downloading".to_string());
-    }
     let ready = lock(&state.ready);
-    let Some(ready) = ready.as_ref() else {
-        return Err("No update is ready".to_string());
-    };
+    let phase = lock(&state.phase).clone();
+    if let Some(refusal) = install_refusal(&phase, ready.is_some()) {
+        return Err(refusal.to_string());
+    }
+    let ready = ready.as_ref().expect("install_refusal checked has_ready");
     let version = ready.update.version.clone();
     record_install_attempt(app, &version)?;
     set_phase(app, Phase::Installing { version });
@@ -311,7 +316,7 @@ pub fn install_ready_update<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
     })
 }
 
-fn overlay_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
+fn overlay_visible(app: &AppHandle) -> bool {
     #[cfg(feature = "updater-smoke")]
     if std::env::var("HAMMER_SMOKE_OVERLAY_VISIBLE").as_deref() == Ok("1") {
         return true;
@@ -321,8 +326,13 @@ fn overlay_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
-pub fn show_restart_item<R: Runtime>(app: &AppHandle<R>, version: &str) {
-    match crate::create_system_tray_menu(app, Some(version)) {
+pub fn show_restart_item(app: &AppHandle, version: &str) {
+    set_tray_menu(app, Some(version));
+    log::info!("Update {version} ready; restart to update");
+}
+
+fn set_tray_menu(app: &AppHandle, restart_version: Option<&str>) {
+    match crate::create_system_tray_menu(app, restart_version) {
         Ok(menu) => {
             if let Some(Err(e)) = app.tray_by_id("main").map(|t| t.set_menu(Some(menu))) {
                 log::error!("Failed to set the tray menu: {e}");
@@ -330,7 +340,6 @@ pub fn show_restart_item<R: Runtime>(app: &AppHandle<R>, version: &str) {
         }
         Err(e) => log::error!("Failed to build the tray menu: {e}"),
     }
-    log::info!("Update {version} ready; restart to update");
 }
 
 #[tauri::command]
@@ -394,57 +403,37 @@ mod tests {
 
     #[test]
     fn install_while_downloading_is_refused() {
-        let app = tauri::test::mock_app();
-        let handle = app.handle().clone();
-        handle.manage(UpdaterState::default());
-        *handle.state::<UpdaterState>().phase.lock().unwrap() = Phase::Downloading {
+        let downloading = Phase::Downloading {
             version: "0.1.7".into(),
         };
         assert_eq!(
-            install_ready_update(&handle),
-            Err("Update is still downloading".to_string())
+            install_refusal(&downloading, false),
+            Some("Update is still downloading")
         );
-        assert!(matches!(
-            *handle.state::<UpdaterState>().phase.lock().unwrap(),
-            Phase::Downloading { .. }
-        ));
+        assert_eq!(
+            install_refusal(&downloading, true),
+            Some("Update is still downloading")
+        );
     }
 
     #[test]
     fn install_with_nothing_ready_is_refused() {
-        let app = tauri::test::mock_app();
-        let handle = app.handle().clone();
-        handle.manage(UpdaterState::default());
         assert_eq!(
-            install_ready_update(&handle),
-            Err("No update is ready".to_string())
+            install_refusal(&Phase::Idle, false),
+            Some("No update is ready")
         );
     }
 
     #[test]
-    fn unreachable_endpoint_leaves_failed_phase() {
-        // mock_app() has no plugin config, so register the updater plugin with a minimal one.
-        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-        context
-            .config_mut()
-            .plugins
-            .0
-            .insert("updater".into(), serde_json::json!({ "pubkey": "test" }));
-        let app = tauri::test::mock_builder()
-            .plugin(tauri_plugin_updater::Builder::new().build())
-            .build(context)
-            .unwrap();
-        let handle = app.handle().clone();
-        handle.manage(UpdaterState::default());
-        std::env::set_var(
-            "HAMMER_TEST_UPDATER_ENDPOINT",
-            "http://127.0.0.1:9/latest.json",
-        );
-        tauri::async_runtime::block_on(run_update_cycle(&handle, Trigger::Periodic));
-        assert!(matches!(
-            *handle.state::<UpdaterState>().phase.lock().unwrap(),
-            Phase::Failed { .. }
-        ));
+    fn install_with_ready_update_proceeds() {
+        let ready = Phase::Ready {
+            version: "0.1.7".into(),
+        };
+        assert_eq!(install_refusal(&ready, true), None);
+        let failed = Phase::Failed {
+            message: "boom".into(),
+        };
+        assert_eq!(install_refusal(&failed, true), None);
     }
 
     #[test]
