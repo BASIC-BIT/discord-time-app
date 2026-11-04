@@ -1472,12 +1472,21 @@ fn trigger_local_slm_start(app: &AppHandle) {
 }
 
 fn time_parser_health_check() -> bool {
+    time_parser_health_check_within(Duration::from_millis(500))
+}
+
+/// `/health` reads the database and nudges the endpoint, so a busy sidecar can take
+/// this long; the version probe and its "port answers" check share this deadline.
+const HEALTH_PROBE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// True when `/health` returns a 200 status line within `read_timeout`.
+fn time_parser_health_check_within(read_timeout: Duration) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(250)) else {
         return false;
     };
 
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
 
     let request = format!(
@@ -1507,8 +1516,9 @@ enum SidecarAction {
 
 /// A healthy sidecar is only adopted when it was spawned by this exact app version;
 /// otherwise an MSI upgrade would keep talking to the previous version's node.exe.
-/// `port_answers` (a plain `/health` 200) covers a body that was too slow to read or
-/// parse: a child spawned then could not bind the port, so the listener is adopted.
+/// `port_answers` (a `/health` 200 status line within `HEALTH_PROBE_READ_TIMEOUT`)
+/// covers a body that could not be read or parsed: a child spawned then could not
+/// bind the port, so the listener is adopted.
 fn sidecar_action(
     health_app_version: Option<&str>,
     port_answers: bool,
@@ -1522,12 +1532,15 @@ fn sidecar_action(
     }
 }
 
-const HEALTH_VERSION_PROBE_ATTEMPTS: usize = 3;
+/// Version probes at startup, 500 ms apart. Every later call (parse path, config,
+/// restart) makes one probe and never sleeps.
+const STARTUP_HEALTH_VERSION_PROBE_ATTEMPTS: usize = 3;
 
-/// A slow or unreadable `/health` body must not silently turn into adoption, so
-/// while the port answers, keep probing until one attempt reads a version.
-/// `attempts` is lazy: nothing after the first `Some` (or after the first attempt
-/// when the port is silent) is run.
+/// While the port answers (a `/health` 200 status line within 2 s), keep probing
+/// until one attempt reads a version or `attempts` runs out; only then is the port
+/// adopted without a version. A port whose status line takes longer than 2 s counts
+/// as silent: one attempt, then `Spawn`. `attempts` is lazy: nothing after the first
+/// `Some` (or after the first attempt when the port is silent) is run.
 fn resolve_probe<I: Iterator<Item = Option<String>>>(
     mut attempts: I,
     port_answers: bool,
@@ -1543,8 +1556,7 @@ fn resolve_probe<I: Iterator<Item = Option<String>>>(
 pub(crate) fn time_parser_health_app_version() -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).ok()?;
-    // `/health` reads the database and nudges the endpoint, so a busy sidecar can be slow.
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(HEALTH_PROBE_READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
 
     let request = format!(
@@ -1938,7 +1950,9 @@ fn time_parser_log_stdio(app: &AppHandle) -> (Stdio, Stdio) {
     (stdout, stderr)
 }
 
-fn start_time_parser_service(app: &AppHandle) {
+/// `probe_attempts` is `STARTUP_HEALTH_VERSION_PROBE_ATTEMPTS` at startup and 1
+/// everywhere else, so the parse hot path never sleeps between probes.
+fn start_time_parser_service(app: &AppHandle, probe_attempts: usize) {
     if supervised_time_parser_disabled() {
         log::info!("Supervised local time parser service is disabled for this session");
         return;
@@ -1948,18 +1962,19 @@ fn start_time_parser_service(app: &AppHandle) {
 
     let app_version = env!("CARGO_PKG_VERSION");
     let first_probe = time_parser_health_app_version();
-    let port_answers = first_probe.is_some() || time_parser_health_check();
+    let port_answers =
+        first_probe.is_some() || time_parser_health_check_within(HEALTH_PROBE_READ_TIMEOUT);
     let probes = std::iter::once(first_probe).chain(
         std::iter::repeat_with(|| {
             std::thread::sleep(Duration::from_millis(500));
             time_parser_health_app_version()
         })
-        .take(HEALTH_VERSION_PROBE_ATTEMPTS - 1),
+        .take(probe_attempts.saturating_sub(1)),
     );
     let running_version = resolve_probe(probes, port_answers);
     match sidecar_action(running_version.as_deref(), port_answers, app_version) {
         SidecarAction::Adopt if running_version.is_none() => {
-            log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read after {HEALTH_VERSION_PROBE_ATTEMPTS} attempts; adopting it");
+            log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read after {probe_attempts} attempt(s); adopting it");
             return;
         }
         SidecarAction::Adopt => {
@@ -2091,7 +2106,7 @@ async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfi
     let mut available = time_parser_health_check_blocking().await?;
 
     if !available && !supervised && !supervised_time_parser_disabled() {
-        start_time_parser_service(&app);
+        start_time_parser_service(&app, 1);
         supervised = parser_child_is_running(&state)?;
         available = time_parser_health_check_blocking().await?;
     }
@@ -2121,7 +2136,7 @@ async fn parse_time_with_local_service(
     request: NativeTimeParserRequest,
 ) -> Result<NativeTimeParserResponse, String> {
     if !time_parser_health_check_blocking().await? && !supervised_time_parser_disabled() {
-        start_time_parser_service(&app);
+        start_time_parser_service(&app, 1);
         if !wait_for_time_parser_service_blocking(Duration::from_secs(8)).await? {
             return Err("The local time parser service is still starting.".to_string());
         }
@@ -2316,6 +2331,16 @@ mod sidecar_adoption_tests {
             resolve_probe(vec![None, None, None].into_iter(), true),
             None
         );
+    }
+
+    #[test]
+    fn single_attempt_probe_of_an_answering_port_adopts_without_a_version() {
+        let version = resolve_probe(std::iter::once(None), true);
+        assert_eq!(version, None);
+        assert!(matches!(
+            sidecar_action(version.as_deref(), true, "0.1.7"),
+            SidecarAction::Adopt
+        ));
     }
 
     #[test]
@@ -2834,7 +2859,7 @@ pub(crate) fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn restart_time_parser_service(app: AppHandle) -> Result<TimeParserServiceConfig, String> {
     stop_time_parser_service(&app)?;
-    start_time_parser_service(&app);
+    start_time_parser_service(&app, 1);
     let _ = wait_for_time_parser_service_blocking(Duration::from_secs(8)).await?;
     get_time_parser_config(app).await
 }
@@ -3403,7 +3428,7 @@ pub fn run() {
                 }
             }
 
-            start_time_parser_service(app.handle());
+            start_time_parser_service(app.handle(), STARTUP_HEALTH_VERSION_PROBE_ATTEMPTS);
             updater::spawn_update_loop(app.handle().clone());
 
             // Initialize auto-start based on user settings
