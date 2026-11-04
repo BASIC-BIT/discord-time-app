@@ -3371,7 +3371,16 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Check for single instance
-    let instance = SingleInstance::new(APP_INSTANCE_ID).unwrap();
+    // A medium-integrity duplicate cannot open an elevated instance's mutex;
+    // treat that like another instance and exit quietly instead of panicking.
+    let instance = match SingleInstance::new(APP_INSTANCE_ID) {
+        Ok(instance) => instance,
+        Err(e) => {
+            log::warn!("Another instance of HammerOverlay is already running ({e})");
+            eprintln!("HammerOverlay is already running!");
+            std::process::exit(1);
+        }
+    };
     if !instance.is_single() {
         log::warn!("Another instance of HammerOverlay is already running");
         eprintln!("HammerOverlay is already running!");
