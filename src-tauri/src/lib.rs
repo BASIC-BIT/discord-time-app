@@ -1555,6 +1555,25 @@ enum SidecarAction {
     KillThenSpawn,
 }
 
+/// Who asked for the sidecar. Only `Startup` may kill a mismatched listener; every
+/// on-demand start (parse path, config, restart) adopts it with a warning so a user
+/// request never waits on PowerShell or the post-kill poll.
+#[derive(Clone, Copy)]
+enum SidecarStart {
+    Startup,
+    OnDemand,
+}
+
+impl SidecarStart {
+    /// Version probes, 500 ms apart: 3 at startup, 1 on demand (never sleeps).
+    fn probe_attempts(self) -> usize {
+        match self {
+            SidecarStart::Startup => 3,
+            SidecarStart::OnDemand => 1,
+        }
+    }
+}
+
 /// A healthy sidecar is only adopted when it was spawned by this exact app version;
 /// otherwise an MSI upgrade would keep talking to the previous version's node.exe.
 /// `port_answers` (a `/health` 200 status line within `HEALTH_PROBE_READ_TIMEOUT`)
@@ -1564,18 +1583,18 @@ fn sidecar_action(
     health_app_version: Option<&str>,
     port_answers: bool,
     app_version: &str,
+    start: SidecarStart,
 ) -> SidecarAction {
     match health_app_version {
         None if port_answers => SidecarAction::Adopt,
         None => SidecarAction::Spawn,
         Some(version) if version == app_version => SidecarAction::Adopt,
-        Some(_) => SidecarAction::KillThenSpawn,
+        Some(_) => match start {
+            SidecarStart::Startup => SidecarAction::KillThenSpawn,
+            SidecarStart::OnDemand => SidecarAction::Adopt,
+        },
     }
 }
-
-/// Version probes at startup, 500 ms apart. Every later call (parse path, config,
-/// restart) makes one probe and never sleeps.
-const STARTUP_HEALTH_VERSION_PROBE_ATTEMPTS: usize = 3;
 
 /// While the port answers (a `/health` 200 status line within 2 s), keep probing
 /// until one attempt reads a version or `attempts` runs out; only then is the port
@@ -2026,9 +2045,7 @@ fn time_parser_log_stdio(app: &AppHandle) -> (Stdio, Stdio) {
     (stdout, stderr)
 }
 
-/// `probe_attempts` is `STARTUP_HEALTH_VERSION_PROBE_ATTEMPTS` at startup and 1
-/// everywhere else, so the parse hot path never sleeps between probes.
-fn start_time_parser_service(app: &AppHandle, probe_attempts: usize) {
+fn start_time_parser_service(app: &AppHandle, start: SidecarStart) {
     if supervised_time_parser_disabled() {
         log::info!("Supervised local time parser service is disabled for this session");
         return;
@@ -2037,6 +2054,7 @@ fn start_time_parser_service(app: &AppHandle, probe_attempts: usize) {
     log_ignored_dev_api_overrides();
 
     let app_version = env!("CARGO_PKG_VERSION");
+    let probe_attempts = start.probe_attempts();
     let first_probe = time_parser_health_app_version();
     let port_answers =
         first_probe.is_some() || time_parser_health_check_within(HEALTH_PROBE_READ_TIMEOUT);
@@ -2048,9 +2066,16 @@ fn start_time_parser_service(app: &AppHandle, probe_attempts: usize) {
         .take(probe_attempts.saturating_sub(1)),
     );
     let running_version = resolve_probe(probes, port_answers);
-    match sidecar_action(running_version.as_deref(), port_answers, app_version) {
+    match sidecar_action(running_version.as_deref(), port_answers, app_version, start) {
         SidecarAction::Adopt if running_version.is_none() => {
             log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read after {probe_attempts} attempt(s); adopting it");
+            return;
+        }
+        SidecarAction::Adopt if running_version.as_deref() != Some(app_version) => {
+            log::warn!(
+                "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; on-demand start adopts it (only startup restarts it)",
+                running_version.unwrap_or_default()
+            );
             return;
         }
         SidecarAction::Adopt => {
@@ -2182,7 +2207,7 @@ async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfi
     let mut available = time_parser_health_check_blocking().await?;
 
     if !available && !supervised && !supervised_time_parser_disabled() {
-        start_time_parser_service(&app, 1);
+        start_time_parser_service(&app, SidecarStart::OnDemand);
         supervised = parser_child_is_running(&state)?;
         available = time_parser_health_check_blocking().await?;
     }
@@ -2212,7 +2237,7 @@ async fn parse_time_with_local_service(
     request: NativeTimeParserRequest,
 ) -> Result<NativeTimeParserResponse, String> {
     if !time_parser_health_check_blocking().await? && !supervised_time_parser_disabled() {
-        start_time_parser_service(&app, 1);
+        start_time_parser_service(&app, SidecarStart::OnDemand);
         if !wait_for_time_parser_service_blocking(Duration::from_secs(8)).await? {
             return Err("The local time parser service is still starting.".to_string());
         }
@@ -2322,7 +2347,7 @@ mod sidecar_adoption_tests {
     #[test]
     fn unhealthy_port_spawns() {
         assert!(matches!(
-            sidecar_action(None, false, "0.1.7"),
+            sidecar_action(None, false, "0.1.7", SidecarStart::Startup),
             SidecarAction::Spawn
         ));
     }
@@ -2330,7 +2355,7 @@ mod sidecar_adoption_tests {
     #[test]
     fn unreadable_health_body_on_a_live_port_is_adopted() {
         assert!(matches!(
-            sidecar_action(None, true, "0.1.7"),
+            sidecar_action(None, true, "0.1.7", SidecarStart::Startup),
             SidecarAction::Adopt
         ));
     }
@@ -2338,7 +2363,7 @@ mod sidecar_adoption_tests {
     #[test]
     fn same_version_is_adopted() {
         assert!(matches!(
-            sidecar_action(Some("0.1.7"), true, "0.1.7"),
+            sidecar_action(Some("0.1.7"), true, "0.1.7", SidecarStart::Startup),
             SidecarAction::Adopt
         ));
     }
@@ -2346,7 +2371,7 @@ mod sidecar_adoption_tests {
     #[test]
     fn old_sidecar_without_version_is_killed() {
         assert!(matches!(
-            sidecar_action(Some(""), true, "0.1.7"),
+            sidecar_action(Some(""), true, "0.1.7", SidecarStart::Startup),
             SidecarAction::KillThenSpawn
         ));
     }
@@ -2502,7 +2527,7 @@ mod sidecar_adoption_tests {
         let version = resolve_probe(std::iter::once(None), true);
         assert_eq!(version, None);
         assert!(matches!(
-            sidecar_action(version.as_deref(), true, "0.1.7"),
+            sidecar_action(version.as_deref(), true, "0.1.7", SidecarStart::Startup),
             SidecarAction::Adopt
         ));
     }
@@ -2517,8 +2542,20 @@ mod sidecar_adoption_tests {
     #[test]
     fn different_version_is_killed() {
         assert!(matches!(
-            sidecar_action(Some("0.1.6"), true, "0.1.7"),
+            sidecar_action(Some("0.1.6"), true, "0.1.7", SidecarStart::Startup),
             SidecarAction::KillThenSpawn
+        ));
+    }
+
+    #[test]
+    fn on_demand_start_adopts_a_different_version_instead_of_killing() {
+        assert!(matches!(
+            sidecar_action(Some("0.1.6"), true, "0.1.7", SidecarStart::OnDemand),
+            SidecarAction::Adopt
+        ));
+        assert!(matches!(
+            sidecar_action(None, false, "0.1.7", SidecarStart::OnDemand),
+            SidecarAction::Spawn
         ));
     }
 }
@@ -3023,7 +3060,7 @@ pub(crate) fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn restart_time_parser_service(app: AppHandle) -> Result<TimeParserServiceConfig, String> {
     stop_time_parser_service(&app)?;
-    start_time_parser_service(&app, 1);
+    start_time_parser_service(&app, SidecarStart::OnDemand);
     let _ = wait_for_time_parser_service_blocking(Duration::from_secs(8)).await?;
     get_time_parser_config(app).await
 }
@@ -3639,7 +3676,7 @@ pub fn run() {
                 }
             }
 
-            start_time_parser_service(app.handle(), STARTUP_HEALTH_VERSION_PROBE_ATTEMPTS);
+            start_time_parser_service(app.handle(), SidecarStart::Startup);
             updater::spawn_update_loop(app.handle().clone());
 
             // Initialize auto-start based on user settings
