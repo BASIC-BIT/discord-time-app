@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
@@ -50,12 +50,16 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [fallbackVersion, setFallbackVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Phase of the last status read from the backend. A toast stays until that phase
+  // changes or the user starts another action, so the poll cannot wipe it unread.
+  const lastPhase = useRef<UpdateStatus['phase'] | null>(null);
 
   const refreshStatus = async (): Promise<UpdateStatus | null> => {
     try {
       const next = await invoke<UpdateStatus>('get_update_status');
+      if (lastPhase.current !== null && lastPhase.current !== next.phase) setError(null);
+      lastPhase.current = next.phase;
       setStatus(next);
-      setError(null);
       return next;
     } catch (err) {
       setError(String(err));
@@ -114,7 +118,9 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
     // Show "Checking…" while the manual cycle runs; polling picks up progress
     setStatus(s => (s ? { ...s, phase: 'checking' } : s));
     try {
-      setStatus(await invoke<UpdateStatus>('check_for_updates_now'));
+      const next = await invoke<UpdateStatus>('check_for_updates_now');
+      lastPhase.current = next.phase;
+      setStatus(next);
     } catch (err) {
       await refreshStatus();
       setError(String(err));
