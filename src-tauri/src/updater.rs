@@ -9,6 +9,8 @@ pub const LAUNCH_DELAY: Duration = Duration::from_secs(90);
 #[cfg(feature = "updater-smoke")]
 pub const LAUNCH_DELAY: Duration = Duration::from_secs(5);
 pub const PERIODIC_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+/// Per request (manifest check, MSI download); generous for 80 MB on a slow link.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 const STORE_FILE: &str = "updater.json";
 const ATTEMPT_KEY: &str = "install_attempted";
@@ -199,7 +201,9 @@ pub fn spawn_update_loop(app: AppHandle) {
 }
 
 /// Only one cycle at a time; `Ready` still re-checks so a pulled or
-/// superseded release stops being offered.
+/// superseded release stops being offered. `REQUEST_TIMEOUT` on the check and
+/// download is what bounds `Checking` and `Downloading`: a half-open connection
+/// fails the cycle instead of skipping every later one until restart.
 fn should_skip_cycle(phase: &Phase) -> bool {
     matches!(
         phase,
@@ -278,16 +282,23 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
 /// Checks the endpoint and, when a new update exists, downloads it into `ReadyUpdate`.
 async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fetched> {
     let hook_app = app.clone();
-    let builder = app.updater_builder().on_before_exit(move || {
-        if let Err(e) = crate::stop_time_parser_service(&hook_app) {
-            log::warn!("Failed to stop the time parser service before installing: {e}");
-        }
-        // Setting a hook replaces the plugin's default one, which only did this.
-        hook_app.cleanup_before_exit();
-    });
-    let Some(update) = builder.build()?.check().await? else {
+    let builder = app
+        .updater_builder()
+        // The plugin sets no timeout of its own.
+        .timeout(REQUEST_TIMEOUT)
+        .on_before_exit(move || {
+            if let Err(e) = crate::stop_time_parser_service(&hook_app) {
+                log::warn!("Failed to stop the time parser service before installing: {e}");
+            }
+            // Setting a hook replaces the plugin's default one, which only did this.
+            hook_app.cleanup_before_exit();
+        });
+    let Some(mut update) = builder.build()?.check().await? else {
         return Ok(Fetched::UpToDate);
     };
+    // The builder's timeout covers only the check (2.10.1 builds `Update` with
+    // `timeout: None`), so the download needs its own; it spans the whole body.
+    update.timeout = Some(REQUEST_TIMEOUT);
     let version = update.version.clone();
     if same_version_ready(held_version(app).as_deref(), &version) {
         return Ok(Fetched::AlreadyReady(version));
