@@ -198,23 +198,46 @@ pub fn spawn_update_loop(app: AppHandle) {
     });
 }
 
+/// Only one cycle at a time; `Ready` still re-checks so a pulled or
+/// superseded release stops being offered.
+fn should_skip_cycle(phase: &Phase) -> bool {
+    matches!(
+        phase,
+        Phase::Checking | Phase::Downloading { .. } | Phase::Installing { .. }
+    )
+}
+
+fn same_version_ready(held_version: Option<&str>, candidate: &str) -> bool {
+    held_version == Some(candidate)
+}
+
+fn held_version(app: &AppHandle) -> Option<String> {
+    lock(&app.state::<UpdaterState>().ready)
+        .as_ref()
+        .map(|r| r.update.version.clone())
+}
+
+enum Fetched {
+    UpToDate,
+    AlreadyReady(String),
+    Downloaded(String),
+}
+
 pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
     {
         let state = app.state::<UpdaterState>();
         let mut phase = lock(&state.phase);
-        if matches!(
-            *phase,
-            Phase::Checking
-                | Phase::Downloading { .. }
-                | Phase::Installing { .. }
-                | Phase::Ready { .. }
-        ) {
+        if should_skip_cycle(&phase) {
             return;
         }
         *phase = Phase::Checking;
     }
     match check_and_download(app).await {
-        Ok(Some(version)) => {
+        Ok(Fetched::AlreadyReady(version)) => {
+            log::debug!("Update {version} is already downloaded");
+            set_phase(app, Phase::Ready { version });
+        }
+        Ok(Fetched::Downloaded(version)) => {
             let attempted = read_install_attempt(app);
             match next_action(
                 trigger,
@@ -233,7 +256,7 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
                 ReadyAction::OfferRestart => show_restart_item(app, &version),
             }
         }
-        Ok(None) => {
+        Ok(Fetched::UpToDate) => {
             log::info!("Up to date ({})", app.package_info().version);
             // A pulled release must not stay installable from the tray.
             *lock(&app.state::<UpdaterState>().ready) = None;
@@ -243,13 +266,17 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
         Err(e) => {
             let message = e.to_string();
             log::error!("Update check failed: {message}");
-            set_phase(app, Phase::Failed { message });
+            // A held download stays installable, so keep reporting it as ready.
+            match held_version(app) {
+                Some(version) => set_phase(app, Phase::Ready { version }),
+                None => set_phase(app, Phase::Failed { message }),
+            }
         }
     }
 }
 
-/// Checks the endpoint and, when an update exists, downloads it into `ReadyUpdate`.
-async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Option<String>> {
+/// Checks the endpoint and, when a new update exists, downloads it into `ReadyUpdate`.
+async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fetched> {
     let hook_app = app.clone();
     let builder = app.updater_builder().on_before_exit(move || {
         if let Err(e) = crate::stop_time_parser_service(&hook_app) {
@@ -259,9 +286,12 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Opt
         hook_app.cleanup_before_exit();
     });
     let Some(update) = builder.build()?.check().await? else {
-        return Ok(None);
+        return Ok(Fetched::UpToDate);
     };
     let version = update.version.clone();
+    if same_version_ready(held_version(app).as_deref(), &version) {
+        return Ok(Fetched::AlreadyReady(version));
+    }
     set_phase(
         app,
         Phase::Downloading {
@@ -276,7 +306,7 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Opt
             version: version.clone(),
         },
     );
-    Ok(Some(version))
+    Ok(Fetched::Downloaded(version))
 }
 
 /// Why an install cannot start now, if it cannot.
@@ -400,6 +430,25 @@ fn rfc3339_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_in_flight_phases_skip_a_cycle() {
+        let v = || "0.1.7".to_string();
+        assert!(should_skip_cycle(&Phase::Checking));
+        assert!(should_skip_cycle(&Phase::Downloading { version: v() }));
+        assert!(should_skip_cycle(&Phase::Installing { version: v() }));
+        assert!(!should_skip_cycle(&Phase::Ready { version: v() }));
+        assert!(!should_skip_cycle(&Phase::Idle));
+        assert!(!should_skip_cycle(&Phase::UpToDate));
+        assert!(!should_skip_cycle(&Phase::Failed { message: v() }));
+    }
+
+    #[test]
+    fn held_download_is_reused_only_for_the_same_version() {
+        assert!(same_version_ready(Some("0.1.7"), "0.1.7"));
+        assert!(!same_version_ready(Some("0.1.7"), "0.1.8"));
+        assert!(!same_version_ready(None, "0.1.7"));
+    }
 
     #[test]
     fn install_while_downloading_is_refused() {
