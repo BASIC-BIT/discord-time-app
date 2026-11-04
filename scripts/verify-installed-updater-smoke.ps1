@@ -36,6 +36,9 @@ Legs:
 .PARAMETER SkipBuild     Reuse the MSIs already in <WorkDir>\artifacts.
 .PARAMETER KeepArtifacts Keep <WorkDir>\artifacts after the run (for -SkipBuild reruns).
 .PARAMETER BuildOnly     Build the missing MSIs and stop (no elevation, no install).
+.PARAMETER AllowDirtyBuild Build the new-code MSIs in this checkout when it has uncommitted changes (its
+                         Cargo.toml version is rewritten during the build); otherwise they build from a
+                         temporary worktree of HEAD.
 .PARAMETER NoNpm         Build through node only, with npm dropped from PATH (also used when npm is absent).
 .PARAMETER NodeExe       Node runtime for -NoNpm builds. Default: node on PATH, else C:\ProgramData\nvm\v24.22.2\node.exe.
 .PARAMETER Elevated      Internal: set on the elevated re-launch.
@@ -51,6 +54,7 @@ param(
     [switch]$SkipBuild,
     [switch]$KeepArtifacts,
     [switch]$BuildOnly,
+    [switch]$AllowDirtyBuild,
     [switch]$NoNpm,
     [string]$NodeExe = '',
     [switch]$Elevated,
@@ -214,11 +218,49 @@ function Build-SmokeMsi {
     }
 }
 
+# The real checkout's Cargo.toml is only ever rewritten by an -AllowDirtyBuild build, and a
+# killed build there skips its restore, so refuse to start on top of a leftover rewrite.
+function Assert-CargoManifestClean {
+    $changed = @(git -C $repoRoot status --porcelain -- src-tauri/Cargo.toml src-tauri/Cargo.lock)
+    if ($LASTEXITCODE -ne 0) { throw "git status failed ($LASTEXITCODE)." }
+    if ($changed.Count -gt 0) {
+        $changed | ForEach-Object { Write-Host $_ }
+        throw 'Cargo.toml/Cargo.lock are modified; restore them (git checkout -- src-tauri/Cargo.toml src-tauri/Cargo.lock) before running the smoke'
+    }
+}
+
+$BuildTreeLinks = @('node_modules', 'api\node_modules')
+
+# Unlinks the node_modules junctions first so removing the worktree never deletes through them.
+function Remove-BuildWorktree {
+    param([string]$Tree)
+    if (Test-Path $Tree) {
+        foreach ($rel in $BuildTreeLinks) {
+            $link = Join-Path $Tree $rel
+            if ((Get-Item $link -ErrorAction SilentlyContinue).LinkType -eq 'Junction') { cmd /c rmdir "$link" | Out-Null }
+        }
+        git -C $repoRoot worktree remove --force $Tree
+    }
+    git -C $repoRoot worktree prune
+}
+
+# A detached worktree of $Commit that borrows this checkout's node_modules through junctions.
+function New-BuildWorktree {
+    param([string]$Tree, [string]$Commit)
+    Remove-BuildWorktree $Tree
+    git -C $repoRoot worktree add --detach $Tree $Commit | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "git worktree add $Commit failed." }
+    foreach ($rel in $BuildTreeLinks) { New-Item -ItemType Junction -Path (Join-Path $Tree $rel) -Target (Join-Path $repoRoot $rel) | Out-Null }
+}
+
 # Builds only what is missing from <WorkDir>\artifacts, so an interrupted run resumes.
 # The new-code MSIs share one throwaway key: if either is missing, both are rebuilt with a
 # fresh key. The old-code MSI is never served, so it is built unsigned against the saved
-# public key.
+# public key. Both build in temporary worktrees, so the version patch never touches this
+# checkout; only -AllowDirtyBuild builds the new code here, since a worktree of HEAD cannot
+# see uncommitted changes.
 function Invoke-Builds {
+    Assert-CargoManifestClean
     New-Item -ItemType Directory -Force $ArtifactDir | Out-Null
     Initialize-BuildTools
     $newNames = @('new-0.0.2')
@@ -231,8 +273,13 @@ function Invoke-Builds {
     $builtFrom = if (Test-Path $commitPath) { (Get-Content -Raw $commitPath).Trim() } else { '' }
     $missingNew = @($newNames | Where-Object { -not (Test-Path (Join-Path $ArtifactDir "$_.msi.sig")) })
     if ($builtFrom -ne $treeState) { $missingNew = $newNames }
-    Write-Host "New-code MSIs built from '$builtFrom'; tree is '$treeState'; building: $($missingNew -join ', ')" 
+    Write-Host "New-code MSIs built from '$builtFrom'; tree is '$treeState'; building: $($missingNew -join ', ')"
+    if ($missingNew.Count -gt 0 -and $dirty -and -not $AllowDirtyBuild) {
+        $dirty | ForEach-Object { Write-Host $_ }
+        throw 'The tree has uncommitted changes (listed above) that a worktree of HEAD would not build. Commit them, or pass -AllowDirtyBuild to build from this checkout (its Cargo.toml version is rewritten during the build).'
+    }
     $needOld = ($Legs -contains 'oldhop') -and -not (Test-Path (Join-Path $ArtifactDir 'old-0.0.1.msi'))
+    $newTree = Join-Path $WorkDir 'new'
     $oldTree = Join-Path $WorkDir 'old'
     $key = $null
     try {
@@ -240,28 +287,32 @@ function Invoke-Builds {
             $key = New-SmokeKey
             Write-Utf8 $pubPath $key.PublicKey
             Remove-Item -Path (Join-Path $ArtifactDir 'new-*') -Force -ErrorAction SilentlyContinue
-            foreach ($name in $newNames) {
-                Build-SmokeMsi -Version $name.Substring(4) -Features 'routing-smoke,updater-smoke' -SourceRoot $repoRoot -Name $name -PublicKey $key.PublicKey
+            $newSource = $repoRoot
+            if (-not $dirty) {
+                New-BuildWorktree $newTree HEAD
+                # The sidecar staging stamp hashes relative paths and contents, so this checkout's
+                # staging stays current in the worktree and prepare-api-sidecar skips its npm ci.
+                $staging = Join-Path $repoRoot 'src-tauri\sidecars'
+                if (Test-Path $staging) { Copy-Item -LiteralPath $staging (Join-Path $newTree 'src-tauri\sidecars') -Recurse -Force }
+                # Share the compiled dependencies; the bundle lands under this target dir.
+                $env:CARGO_TARGET_DIR = Join-Path $repoRoot 'src-tauri\target'
+                $newSource = $newTree
             }
+            try {
+                foreach ($name in $newNames) {
+                    Build-SmokeMsi -Version $name.Substring(4) -Features 'routing-smoke,updater-smoke' -SourceRoot $newSource -Name $name -PublicKey $key.PublicKey
+                }
+            } finally { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
             Write-Utf8 $commitPath $treeState
         }
         if ($needOld) {
             Assert-True (Test-Path $pubPath) "Saved smoke public key $pubPath exists."
-            $head = if (Test-Path $oldTree) { git -C $oldTree rev-parse HEAD } else { '' }
-            if ($head -ne (git -C $repoRoot rev-parse $OldCommit)) {
-                if (Test-Path $oldTree) { git -C $repoRoot worktree remove --force $oldTree }
-                git -C $repoRoot worktree add --detach $oldTree $OldCommit | Out-Host
-                if ($LASTEXITCODE -ne 0) { throw "git worktree add $OldCommit failed." }
-            }
-            # Same lockfiles, so the old tree borrows this tree's node_modules through junctions.
+            New-BuildWorktree $oldTree $OldCommit
+            # Same lockfiles, so the old tree can borrow this tree's node_modules.
             foreach ($rel in 'package-lock.json', 'api\package-lock.json') {
                 Assert-True ((Get-FileHash (Join-Path $repoRoot $rel)).Hash -eq (Get-FileHash (Join-Path $oldTree $rel)).Hash) "$rel is identical in $OldCommit (node_modules can be shared)."
             }
             Assert-True $script:useNpm 'The old-code build needs npm: prepare-api-sidecar.mjs runs npm ci for the sidecar staging.'
-            foreach ($rel in 'node_modules', 'api\node_modules') {
-                $link = Join-Path $oldTree $rel
-                if (-not (Test-Path $link)) { New-Item -ItemType Junction -Path $link -Target (Join-Path $repoRoot $rel) | Out-Null }
-            }
             # Share the compiled dependencies; the bundle lands under this target dir.
             $env:CARGO_TARGET_DIR = Join-Path $repoRoot 'src-tauri\target'
             try {
@@ -272,14 +323,7 @@ function Invoke-Builds {
         Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
         # The private key is never kept; a later build that needs one makes a fresh key.
         if ($key) { Remove-Item -LiteralPath $key.KeyPath, "$($key.KeyPath).pub" -Force -ErrorAction SilentlyContinue }
-        if (Test-Path $oldTree) {
-            # Unlink the junctions first so removing the worktree never deletes through them.
-            foreach ($rel in 'node_modules', 'api\node_modules') {
-                $link = Join-Path $oldTree $rel
-                if ((Get-Item $link -ErrorAction SilentlyContinue).LinkType -eq 'Junction') { cmd /c rmdir "$link" | Out-Null }
-            }
-            git -C $repoRoot worktree remove --force $oldTree
-        }
+        foreach ($tree in $newTree, $oldTree) { Remove-BuildWorktree $tree }
         Get-ChildItem $WorkDir -Filter 'tauri.updater-smoke.*.conf.json' | Remove-Item -Force
     }
 }
@@ -817,6 +861,9 @@ if ($isAdmin -and -not $SkipBuild) {
 }
 
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
+# A killed build can leave a worktree whose junctions point into this checkout's node_modules;
+# unlink them before anything deletes <WorkDir>.
+foreach ($tree in 'new', 'old') { Remove-BuildWorktree (Join-Path $WorkDir $tree) }
 if (-not $SkipBuild) { Invoke-Builds }
 if ($BuildOnly) {
     Get-ChildItem $ArtifactDir | ForEach-Object { Write-Host ("{0,-22} {1,12:N0} bytes  {2}" -f $_.Name, $_.Length, $_.LastWriteTime) }
