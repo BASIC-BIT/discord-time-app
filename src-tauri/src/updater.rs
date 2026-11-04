@@ -193,7 +193,15 @@ fn set_phase(app: &AppHandle, phase: Phase) {
     *lock(&app.state::<UpdaterState>().phase) = phase;
 }
 
+/// `tauri dev` must never download the released MSI and hand it to the real
+/// installer. The `updater-smoke` feature keeps updates on for the smoke MSIs.
+const UPDATES_DISABLED: bool = cfg!(debug_assertions) && !cfg!(feature = "updater-smoke");
+
 pub fn spawn_update_loop(app: AppHandle) {
+    if UPDATES_DISABLED {
+        log::info!("Updater loop disabled in debug builds");
+        return;
+    }
     std::thread::spawn(move || {
         std::thread::sleep(LAUNCH_DELAY);
         let current = app.package_info().version.to_string();
@@ -359,6 +367,9 @@ fn install_refusal(phase: &Phase, has_ready: bool) -> Option<&'static str> {
 /// Hands the downloaded update to the installer. On Windows a successful
 /// install exits the process, so `Ok` is only seen on other platforms.
 pub fn install_ready_update(app: &AppHandle) -> Result<(), String> {
+    if UPDATES_DISABLED {
+        return Err("Updates are disabled in debug builds".to_string());
+    }
     let state = app.state::<UpdaterState>();
     let ready = lock(&state.ready);
     let phase = lock(&state.phase).clone();
