@@ -3240,12 +3240,16 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
     trigger_local_slm_start(app);
 }
 
+/// Not "main": Tauri gives the tray it builds from `tauri.conf.json`'s `app.trayIcon`
+/// that id, before `setup` runs, and `tray_by_id` would return that menu-less icon.
+pub(crate) const TRAY_ID: &str = "hammer-overlay-tray";
+
 fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Setting up system tray");
 
     let menu = create_system_tray_menu(app, updater::TrayUpdateItem::None)?;
 
-    let _tray = TrayIconBuilder::with_id("main")
+    let _tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .tooltip("HammerOverlay - Discord Timestamp Converter")
         .on_menu_event(|app, event| {

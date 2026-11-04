@@ -317,7 +317,7 @@ pub async fn run_update_cycle(app: &AppHandle, trigger: Trigger) {
             log::info!("Up to date ({})", app.package_info().version);
             // A pulled release must not stay installable from the tray.
             *lock(&app.state::<UpdaterState>().ready) = None;
-            set_tray_menu(app, TrayUpdateItem::None);
+            let _ = set_tray_menu(app, TrayUpdateItem::None);
             set_phase(app, Phase::UpToDate);
         }
         Err(e) => {
@@ -390,7 +390,7 @@ async fn check_and_download(app: &AppHandle) -> tauri_plugin_updater::Result<Fet
     // A tray click would only be refused while the newer version downloads, so the
     // held version's restart item is disabled until the download ends.
     if held.is_some() {
-        set_tray_menu(app, TrayUpdateItem::Downloading(&version));
+        let _ = set_tray_menu(app, TrayUpdateItem::Downloading(&version));
     }
     let bytes = update.download(|_, _| {}, || {}).await?;
     *lock(&app.state::<UpdaterState>().ready) = Some(ReadyUpdate { update, bytes });
@@ -594,20 +594,42 @@ fn app_is_busy(app: &AppHandle) -> bool {
         || crate::local_slm_in_flight(app) > 0
 }
 
+/// The smoke's `tray` and `click` legs grep the success line, so it is logged
+/// only once the tray menu holds the item; the update window still offers the
+/// restart when it does not.
 pub fn show_restart_item(app: &AppHandle, version: &str) {
-    set_tray_menu(app, TrayUpdateItem::Ready(version));
-    log::info!("Update {version} ready; restart to update");
+    let (level, line) =
+        restart_item_log(version, set_tray_menu(app, TrayUpdateItem::Ready(version)));
+    log::log!(level, "{line}");
 }
 
-fn set_tray_menu(app: &AppHandle, item: TrayUpdateItem) {
-    match crate::create_system_tray_menu(app, item) {
-        Ok(menu) => {
-            if let Some(Err(e)) = app.tray_by_id("main").map(|t| t.set_menu(Some(menu))) {
-                log::error!("Failed to set the tray menu: {e}");
-            }
-        }
-        Err(e) => log::error!("Failed to build the tray menu: {e}"),
+fn restart_item_log(version: &str, shown: Result<(), String>) -> (log::Level, String) {
+    match shown {
+        Ok(()) => (
+            log::Level::Info,
+            format!("Update {version} ready; restart to update"),
+        ),
+        Err(e) => (
+            log::Level::Error,
+            format!("Update {version} ready but the tray item could not be shown: {e}"),
+        ),
     }
+}
+
+/// Logs any failure at error level as well as returning it.
+fn set_tray_menu(app: &AppHandle, item: TrayUpdateItem) -> Result<(), String> {
+    let result = crate::create_system_tray_menu(app, item)
+        .map_err(|e| format!("Failed to build the tray menu: {e}"))
+        .and_then(|menu| {
+            app.tray_by_id(crate::TRAY_ID)
+                .ok_or_else(|| format!("No tray icon with id {}", crate::TRAY_ID))?
+                .set_menu(Some(menu))
+                .map_err(|e| format!("Failed to set the tray menu: {e}"))
+        });
+    if let Err(e) = &result {
+        log::error!("{e}");
+    }
+    result
 }
 
 #[tauri::command]
@@ -805,6 +827,24 @@ mod tests {
         // The path is passed as data, never embedded in the script text.
         assert!(!script.contains(".exe"));
         assert!(!script.contains("{exe}"));
+    }
+
+    #[test]
+    fn restart_item_success_line_is_logged_only_when_the_tray_was_set() {
+        assert_eq!(
+            restart_item_log("0.0.2", Ok(())),
+            (
+                log::Level::Info,
+                "Update 0.0.2 ready; restart to update".to_string()
+            )
+        );
+        let (level, line) = restart_item_log("0.0.2", Err("No tray icon".into()));
+        assert_eq!(level, log::Level::Error);
+        assert_eq!(
+            line,
+            "Update 0.0.2 ready but the tray item could not be shown: No tray icon"
+        );
+        assert!(!line.contains("ready; restart to update"));
     }
 
     #[test]
