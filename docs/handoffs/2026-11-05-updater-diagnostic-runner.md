@@ -1,6 +1,6 @@
 # Diagnostic runner candidate for PR #29
 
-Runner-only preparation is implemented in this isolated candidate. The recommendation is to review the two PowerShell files, then approve exactly one elevated `auto` diagnostic attempt. Application code and the frozen installer pair are unchanged. This candidate does not establish installed acceptance or explain the missing post-relaunch result.
+The isolated runner candidate now corrects the argument-forwarding defect that ended the approved attempt before smoke began. Recommend reviewing the scoped correction and its child-preflight regression before deciding on a new elevated `auto` attempt. Application code and the frozen installer pair are unchanged. This candidate does not establish installed acceptance or explain the original missing post-relaunch result.
 
 The latest coordinator instruction permits this preparation under standing source authority. It preserves the frozen application checkout and artifacts, and keeps application P2 changes separate. No additional runner-preparation approval is requested. The elevated retry still requires BASIC's explicit approval after this instrumentation is reviewed.
 
@@ -20,12 +20,14 @@ Changed source files:
 - [Diagnostic runner](../../scripts/verify-installed-updater-smoke.ps1)
 - [Offline regressions](../../scripts/test-updater-smoke-diagnostics.ps1)
 - [Serialized HTTP loopback regression](../../scripts/test-updater-smoke-http.ps1)
+- [Actual child-handoff regression](../../scripts/test-updater-smoke-handoff.ps1)
 
 Run the offline checks from this candidate:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-diagnostics.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-http.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-handoff.ps1
 ```
 
 Both checks parse the runner and load selected function definitions without executing its entry point. They never start the application, call the installer, terminate a process or elevate. The diagnostic checks use fixture process/token responses, in-memory response streams and a new temporary Git repository with signing and hooks disabled. The HTTP check starts one hidden, ordinary PowerShell child serving harmless fixture files on an ephemeral loopback port. It uses the exact script serialized by `Start-ManifestServer`, bounding only its request count and accept wait so it exits without a process-stop helper.
@@ -50,17 +52,31 @@ Steward subsequently reported an independent diagnostic-regression pass. Its ind
 
 Remaining gaps are real CIM owner/token access, cross-profile file permissions, and the installed relaunch. A completed HTTP response still does not prove the application processed an up-to-date result. No Rust/frontend build was rerun because application source did not change. The candidate is stopped for review; no installed retry follows from these checks.
 
-## Next installed gate, not executed
+## Approved attempt result: failed before smoke
+
+BASIC approved exactly one diagnostic attempt with `Approve one diagnostic run`. That attempt executed the prepared command below and returned exit code 1. The parent printed `auto    no report`. The evidence directory and transcript were not created; the smoke install directory was absent afterward. No installed checks ran, no MSI exit was captured, and relaunched integrity is UNKNOWN. No second elevated attempt was started.
+
+Source inspection found a runner argument-forwarding bug. The parent forwards `-ApplicationCommit` but not `-SkipBuild` to its elevated child. The top-level guard rejects `ApplicationCommit` without `SkipBuild` before opening the transcript or entering a leg. This deterministically explains a pre-transcript failure for the prepared command, although the child console's error text was not retained. The offline helper regressions missed this entry-point handoff. This is a runner preparation defect, not evidence of an application updater failure.
+
+The correction is committed separately. Both launch branches now forward `-SkipBuild` and use the existing canonical runner path. The frozen-artifact guard stays intact. This scoped source correction was authorized after the failed attempt; no second elevated run followed it. The single-run approval is consumed and is not reused.
+
+The new non-elevated regression extracts and executes the actual parent handoff body, including its argument construction, instead of duplicating those strings. RunAs is intercepted, and the already-admin path is intercepted separately. Ordinary PowerShell fixture children bind the production parameter block, execute the actual frozen-mode guard and read-only artifact preflight, then stop. The OS privilege check and all transcript/smoke/build/install entry-point actions are excluded from these fixtures. They do not elevate or impersonate an administrator.
+
+The regression reproduced the exact guard failure without `SkipBuild`, then passed for both paths after the fix. It verifies `SkipBuild`, `Elevated`, `ViaRunAs`, `ApplicationCommit`, leg, manifest port, old commit, output/work paths and the optional stale-artifact switch. `KeepArtifacts` belongs to parent cleanup; build-only options are not needed by a child forced into SkipBuild mode. This pass is argument/preflight evidence, not installed evidence.
+
+The local attempt record is `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/attempt-result.json`. It preserves the parent console output, exit code, absence of reports, provenance and source finding. All seven copied artifact hashes still match the copy inventory. The frozen application and its original failed-run evidence were not changed.
+
+## Corrected next-run packet, not executed
 
 Review preparation is complete. The runner source is committed, and all three frozen MSIs, their signatures and `new.commit` have been copied into a fresh scratch directory. Every copied file's SHA-256 equals its source; the three MSI hashes also equal the recorded baseline, and the application stamp still matches the frozen application. The evidence destination does not yet exist. Copy inventory and exact identities are in the appendix below.
 
-**BASIC's explicit approval of a new installed attempt is still pending.** The previous run authorization is not reused. After that approval, execute this one command from a normal PowerShell, using the reviewed worktree as-is:
+**Pending review and BASIC's new explicit approval.** This is the next-run command for the corrected runner, with a distinct unused evidence destination. The earlier command remains preserved in documentation checkpoint `cb16362`. The scratch contains the unchanged copied artifacts and the first attempt's record, but no manifest or installer logs, so the runner's preservation guard permits it without overwriting earlier run data:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\steve\.codex\worktrees\updater-smoke-diagnostics\discord-time-app\scripts\verify-installed-updater-smoke.ps1" -Leg auto -SkipBuild -KeepArtifacts -ApplicationCommit f3fd60975b718b4d8fb22193166de603789ad136 -WorkDir "C:\Users\steve\AppData\Local\Temp\hammer-updater-diagnostic-20261105-01a1a8be" -Output "C:\Users\steve\.codex\worktrees\updater-smoke-diagnostics\discord-time-app\api\reports\temporal-ml\updater-smoke-diagnostic-20261105-01a1a8be"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\steve\.codex\worktrees\updater-smoke-diagnostics\discord-time-app\scripts\verify-installed-updater-smoke.ps1" -Leg auto -SkipBuild -KeepArtifacts -ApplicationCommit f3fd60975b718b4d8fb22193166de603789ad136 -WorkDir "C:\Users\steve\AppData\Local\Temp\hammer-updater-diagnostic-20261105-01a1a8be" -Output "C:\Users\steve\.codex\worktrees\updater-smoke-diagnostics\discord-time-app\api\reports\temporal-ml\updater-smoke-diagnostic-20261105-handoff-fixed"
 ```
 
-The command has not been executed. Do not point this candidate at the original failed-run scratch directory, replace its stamp, or rebuild/sign from the candidate. No `-AllowStaleArtifacts` is needed for this explicit runner/application split. Do not supply internal `-Elevated` or `-ViaRunAs` yourself. BASIC handles the native UAC prompt. There is no tray click in `auto`. A failure stops and preserves diagnostics; it does not authorize another elevated attempt.
+Do not point this candidate at the original failed-run scratch directory, replace its stamp, or rebuild/sign from the candidate. No `-AllowStaleArtifacts` is needed for this explicit runner/application split. Do not supply internal `-Elevated` or `-ViaRunAs` yourself. BASIC handles the native UAC prompt. There is no tray click in `auto`. A failure does not authorize another elevated attempt.
 
 Application P2 fixes, the remaining four installed legs, exact-candidate acceptance, post-window readiness review, merge, signing-key custody and release remain separate work. Do not call this runner candidate merge-ready or installed-tested.
 
@@ -68,14 +84,16 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 
 - Branch: `codex/updater-smoke-diagnostics` in the managed worktree at `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app`.
 - Runner implementation commit: `3d1545f3214cd7d925dcf79e328695f7a1e1f5ef`, based on `64430992ef645d50159b0fe760e8f96b6652d7e2`. A subsequent documentation-only checkpoint records this run packet; it does not change the runner. No commit has been pushed.
-- Runner file SHA-256: `2006CE27259126CDC8724D1702CB5E19B101CCFE58AB17AD4B780F2999EEB261`.
+- Corrected runner/handoff regression commit: `a04b420ae2a9bcea96e88832a98c770d938ac90d`. Later documentation-only checkpoints do not change that runner source.
+- Corrected runner file SHA-256: `202592ED03CD6F9E4547D043855A383F694B797B12D8D77AA78CE8FA0F4BFB2D`.
 - Frozen application/MSI stamp: `f3fd60975b718b4d8fb22193166de603789ad136`.
 - Frozen checkout: `D:/bench/discord-time-app/.claude/worktrees/awesome-swirles-2408a1`.
 - Earlier diagnosis and artifact hashes remain in that checkout's `docs/handoffs/2026-11-05-updater-smoke-diagnosis.md`.
 - Review-correction diagnostic fixture: `C:/Users/steve/AppData/Local/Temp/updater-diagnostics-test-f58ea4616c96452aaf570fb5e5a659f7`.
 - Actual serialized HTTP fixture: `C:/Users/steve/AppData/Local/Temp/updater-http-test-4004c8f19b534dbda7dbb32742559b9a`.
+- Successful actual-handoff fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-a43901580b9b42078329931f99cd62a9`.
 - Fresh scratch directory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be`.
 - Copy inventory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/artifact-copy.json`, including source/copy SHA-256 values for seven files. This is file identity evidence, not new cryptographic signature verification or installed acceptance.
-- Future evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-01a1a8be`. The final per-leg report will be `updater-smoke-auto.json`, with separate stage JSON/log snapshots and the run transcript beside it. The local manifest log will remain in the fresh scratch directory.
+- Next evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-handoff-fixed`. The final per-leg report will be `updater-smoke-auto.json`, with separate stage JSON/log snapshots and the run transcript beside it. The local manifest log will remain in the prepared scratch directory. Neither this evidence directory nor the prior attempt's planned evidence directory existed at review preparation.
 
-No remote post, push, merge, BuildOnly, MSI rebuild, signing, install, elevation or relaunch was performed during this preparation. The previously rejected status message to Steward was not retried.
+Preparation performed no remote post, push, merge, BuildOnly, MSI rebuild, signing, install, elevation or relaunch. The subsequently approved single elevated attempt is recorded above; it failed before smoke execution. The previously rejected status message to Steward was not retried.
