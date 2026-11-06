@@ -64,6 +64,12 @@ The new non-elevated regression extracts and executes the actual parent handoff 
 
 The regression reproduced the exact guard failure without `SkipBuild`, then passed for both paths after the fix. It verifies `SkipBuild`, `Elevated`, `ViaRunAs`, `ApplicationCommit`, leg, manifest port, old commit, output/work paths and the optional stale-artifact switch. `KeepArtifacts` belongs to parent cleanup; build-only options are not needed by a child forced into SkipBuild mode. This pass is argument/preflight evidence, not installed evidence.
 
+### Fixture portability correction
+
+Steward's independent handoff check then failed in the already-admin fixture because its host emitted the harmless Git warning `unable to access C:/Users/steve/.config/git/ignore: Permission denied`. Windows PowerShell wrapped the ordinary child's stderr as a terminating `NativeCommandError` under the fixture's `ErrorActionPreference = Stop`. That was fixture stderr handling, not evidence of a child mode-guard failure.
+
+The test now relaxes that preference only around the direct native-child invocation, captures its exit code immediately, restores the original preference, and reads retained stderr separately. Both fixture children deliberately emit harmless stderr while exiting zero. An additional negative case omits SkipBuild only in the fixture adapter, proving the actual frozen-mode guard still returns nonzero and prevents preflight. The regression reproduced the harmless-stderr termination before this correction and passed afterward. No production runner behavior changed in this portability fix, and no installed attempt was made.
+
 The local attempt record is `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/attempt-result.json`. It preserves the parent console output, exit code, absence of reports, provenance and source finding. All seven copied artifact hashes still match the copy inventory. The frozen application and its original failed-run evidence were not changed.
 
 ## Corrected next-run packet, not executed
@@ -92,6 +98,7 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 - Review-correction diagnostic fixture: `C:/Users/steve/AppData/Local/Temp/updater-diagnostics-test-f58ea4616c96452aaf570fb5e5a659f7`.
 - Actual serialized HTTP fixture: `C:/Users/steve/AppData/Local/Temp/updater-http-test-4004c8f19b534dbda7dbb32742559b9a`.
 - Successful actual-handoff fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-a43901580b9b42078329931f99cd62a9`.
+- Latest handoff/stderr regression fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-0119b651812644e291e241cad1cf895e`. Its two positive children reach preflight despite stderr; its negative child's stderr and nonzero exit remain observable.
 - Fresh scratch directory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be`.
 - Copy inventory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/artifact-copy.json`, including source/copy SHA-256 values for seven files. This is file identity evidence, not new cryptographic signature verification or installed acceptance.
 - Next evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-handoff-fixed`. The final per-leg report will be `updater-smoke-auto.json`, with separate stage JSON/log snapshots and the run transcript beside it. The local manifest log will remain in the prepared scratch directory. Neither this evidence directory nor the prior attempt's planned evidence directory existed at review preparation.

@@ -30,6 +30,7 @@ $childScript += "`n" + '$runnerScriptPath = ' + "'$($runnerScriptPath.Replace("'
 $childScript += "`n" + '$ArtifactDir = Join-Path $WorkDir ''artifacts''; $script:checks = $null' + "`n"
 $childScript += ($legSetup.Extent.Text -join "`n") + "`n"
 $childScript += ($definitions.Extent.Text -join "`n") + "`n"
+$childScript += '[Console]::Error.WriteLine(''fixture harmless stderr'')' + "`n"
 $childScript += $modeGuard[0].Extent.Text + "`n"
 $childScript += 'if (-not $Elevated) { throw ''Missing child mode'' }' + "`n"
 # Only the real guard and read-only preflight are included, not the smoke entry point.
@@ -64,9 +65,16 @@ function powershell.exe {
     $fileIndex = [Array]::IndexOf($forwarded, '-File')
     Check ($fileIndex -ge 0 -and $forwarded[$fileIndex + 1] -eq $runnerScriptPath) 'Unexpected direct-child File target.'
     $forwarded[$fileIndex + 1] = $stubPath
-    & $nativePowerShell @forwarded 2> (Join-Path $fixture 'direct-child-error.txt')
+    if ($script:omitSkipBuild) { $forwarded = @($forwarded | Where-Object { $_ -ne '-SkipBuild' }) }
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        # Windows PowerShell can wrap native stderr as errors even when the child exits zero.
+        $ErrorActionPreference = 'Continue'
+        & $nativePowerShell @forwarded 2> (Join-Path $fixture 'direct-child-error.txt')
+        $childExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousErrorAction }
     $script:childError = Get-Content -Raw -LiteralPath (Join-Path $fixture 'direct-child-error.txt')
-    Set-Variable -Name LASTEXITCODE -Scope 1 -Value $LASTEXITCODE
+    Set-Variable -Name LASTEXITCODE -Scope 1 -Value $childExit
 }
 
 foreach ($isAdmin in @($false, $true)) {
@@ -87,6 +95,7 @@ foreach ($isAdmin in @($false, $true)) {
     $script:childError = ''
     . $handoffBody
     Check ($exitCode -eq 0) "$caseName child did not reach preflight: $script:childError"
+    Check ($script:childError -match 'fixture harmless stderr') "$caseName child stderr was not preserved."
     $bound = Get-Content -Raw -LiteralPath (Join-Path $WorkDir 'child-preflight.json') | ConvertFrom-Json
     Check ($bound.stage -eq 'child-preflight' -and $bound.SkipBuild -and $bound.Elevated) "$caseName lost frozen child mode."
     Check ($bound.ViaRunAs -eq (-not $isAdmin)) "$caseName has incorrect RunAs provenance."
@@ -94,4 +103,12 @@ foreach ($isAdmin in @($false, $true)) {
         Check ($bound.$field -eq (Get-Variable -Name $field -ValueOnly)) "$caseName lost $field."
     }
 }
+$WorkDir = Join-Path $fixture 'nonzero-child'
+New-Item -ItemType Directory -Path (Join-Path $WorkDir 'artifacts') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $WorkDir 'artifacts/new.commit'), $ApplicationCommit)
+$Output = Join-Path $WorkDir 'unused-output'
+$script:omitSkipBuild = $true
+. $handoffBody
+Check ($exitCode -ne 0 -and $script:childError -match 'use -SkipBuild') 'Actual nonzero guard failure was hidden.'
+Check (-not (Test-Path -LiteralPath (Join-Path $WorkDir 'child-preflight.json'))) 'Guard-rejected child reached preflight.'
 Write-Host "PASS: actual RunAs/direct handoff bodies reach the real frozen-artifact preflight in ordinary children; all required mode/path/provenance flags preserved. Fixtures: $fixture"
