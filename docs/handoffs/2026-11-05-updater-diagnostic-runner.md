@@ -1,6 +1,6 @@
 # Diagnostic runner candidate for PR #29
 
-The isolated runner candidate now corrects the argument-forwarding defect that ended the approved attempt before smoke began. Recommend reviewing the scoped correction and its child-preflight regression before deciding on a new elevated `auto` attempt. Application code and the frozen installer pair are unchanged. This candidate does not establish installed acceptance or explain the original missing post-relaunch result.
+The corrected runner reached the smoke leg in the separately approved attempt, but failed its preparation check because old smoke log content remained after reset. It finalized diagnostics and cleanup, then stopped. No installation or app launch was reached. Application code and the frozen installer pair are unchanged. Both one-run approvals have been consumed; another elevated attempt is not authorized.
 
 The latest coordinator instruction permits this preparation under standing source authority. It preserves the frozen application checkout and artifacts, and keeps application P2 changes separate. No additional runner-preparation approval is requested. The elevated retry still requires BASIC's explicit approval after this instrumentation is reviewed.
 
@@ -72,11 +72,30 @@ The test now relaxes that preference only around the direct native-child invocat
 
 The local attempt record is `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/attempt-result.json`. It preserves the parent console output, exit code, absence of reports, provenance and source finding. All seven copied artifact hashes still match the copy inventory. The frozen application and its original failed-run evidence were not changed.
 
-## Corrected next-run packet, not executed
+## Corrected attempt: terminal failure during reset
+
+BASIC separately approved `Approve one corrected attempt`. The reviewed runner ran from a clean `e73eb09` checkout on November 5 at 10:25:55 PM Eastern. It returned exit 1 after approximately 13.4 seconds, with a finalized `failed` report and no cleanup error.
+
+| Observation | Terminal result |
+|---|---|
+| Checks | 0 passed, 1 failed: `Smoke log directory is empty before the leg.` |
+| Checkpoint/final report | Saved; `stage=complete`, `incomplete=false` |
+| Application installation and launch | NOT REACHED, reset precedes `Invoke-AutoLeg` |
+| MSI installation exit | UNKNOWN/not observed; no install log was created |
+| Relaunched app/sidecar token | UNKNOWN; no current-run relaunch occurred |
+| Cleanup | Completed with no reported cleanup error |
+| Real app isolation | `realHammerOverlayPidsUnchanged=true` |
+| Frozen evidence | All seven original/copied artifact hashes still match |
+
+The retained pre-cleanup snapshot contains historical `Application version: 0.0.2` at November 4, 7:28:44 PM Eastern, and `Up to date (0.0.2)` at 7:28:49 PM. These match the first attempt's relaunch/manifest timing and precede the corrected run by more than a day. The older application therefore did emit the previously missing result. This does not retroactively finalize the older failed run, establish its token integrity, or pass the current run. The precise collector/reset path or filesystem failure remains UNKNOWN; `Reset-SmokeData` suppresses removal errors, so the report cannot identify that cause.
+
+Reports, transcript and historical log snapshot are preserved in the evidence directory below. `terminal-summary.json` records the terminal result separately from the runner's primary report. No second attempt, other leg, source fix, rebuild, signing, merge or release followed this failure. Investigation of the reset and collector paths should preserve the historical logs rather than silently deleting them or weakening the empty-log check.
+
+## Executed corrected command, retained for traceability
 
 Review preparation is complete. The runner source is committed, and all three frozen MSIs, their signatures and `new.commit` have been copied into a fresh scratch directory. Every copied file's SHA-256 equals its source; the three MSI hashes also equal the recorded baseline, and the application stamp still matches the frozen application. The evidence destination does not yet exist. Copy inventory and exact identities are in the appendix below.
 
-**Pending review and BASIC's new explicit approval.** This is the next-run command for the corrected runner, with a distinct unused evidence destination. The earlier command remains preserved in documentation checkpoint `cb16362`. The scratch contains the unchanged copied artifacts and the first attempt's record, but no manifest or installer logs, so the runner's preservation guard permits it without overwriting earlier run data:
+**Do not replay this command.** It is the corrected attempt described above. Its one-run approval is consumed, and its evidence destination now contains the failed run. The earlier argument-handoff failure's command remains preserved in documentation checkpoint `cb16362`:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\steve\.codex\worktrees\updater-smoke-diagnostics\discord-time-app\scripts\verify-installed-updater-smoke.ps1" -Leg auto -SkipBuild -KeepArtifacts -ApplicationCommit f3fd60975b718b4d8fb22193166de603789ad136 -WorkDir "C:\Users\steve\AppData\Local\Temp\hammer-updater-diagnostic-20261105-01a1a8be" -Output "C:\Users\steve\.codex\worktrees\updater-smoke-diagnostics\discord-time-app\api\reports\temporal-ml\updater-smoke-diagnostic-20261105-handoff-fixed"
@@ -101,6 +120,7 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 - Latest handoff/stderr regression fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-0119b651812644e291e241cad1cf895e`. Its two positive children reach preflight despite stderr; its negative child's stderr and nonzero exit remain observable.
 - Fresh scratch directory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be`.
 - Copy inventory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/artifact-copy.json`, including source/copy SHA-256 values for seven files. This is file identity evidence, not new cryptographic signature verification or installed acceptance.
-- Next evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-handoff-fixed`. The final per-leg report will be `updater-smoke-auto.json`, with separate stage JSON/log snapshots and the run transcript beside it. The local manifest log will remain in the prepared scratch directory. Neither this evidence directory nor the prior attempt's planned evidence directory existed at review preparation.
+- Corrected-attempt evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-handoff-fixed`. It contains the finalized `updater-smoke-auto.json`, `updater-smoke-auto-before-cleanup.json`, collected log snapshots, `updater-smoke-run.log` and `terminal-summary.json`. No manifest or installer log was created in the scratch during this attempt.
+- Corrected-attempt runner head: `e73eb09205c74a307a5c16664e53813e92e8165a`; runner script SHA-256 remained `202592ED03CD6F9E4547D043855A383F694B797B12D8D77AA78CE8FA0F4BFB2D`.
 
-Preparation performed no remote post, push, merge, BuildOnly, MSI rebuild, signing, install, elevation or relaunch. The subsequently approved single elevated attempt is recorded above; it failed before smoke execution. The previously rejected status message to Steward was not retried.
+Preparation performed no remote post, push, merge, BuildOnly, MSI rebuild, signing, install, elevation or relaunch. Two separately approved single elevated attempts are recorded above: the first failed its child-mode guard, the corrected one failed reset before installation or app launch. No approval was reused. The previously rejected status message to Steward was not retried.
