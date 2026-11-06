@@ -21,6 +21,7 @@ Changed source files:
 - [Offline regressions](../../scripts/test-updater-smoke-diagnostics.ps1)
 - [Serialized HTTP loopback regression](../../scripts/test-updater-smoke-http.ps1)
 - [Actual child-handoff regression](../../scripts/test-updater-smoke-handoff.ps1)
+- [Scoped reset-error regression](../../scripts/test-updater-smoke-reset.ps1)
 
 Run the offline checks from this candidate:
 
@@ -28,6 +29,7 @@ Run the offline checks from this candidate:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-diagnostics.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-http.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-handoff.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-updater-smoke-reset.ps1
 ```
 
 Both checks parse the runner and load selected function definitions without executing its entry point. They never start the application, call the installer, terminate a process or elevate. The diagnostic checks use fixture process/token responses, in-memory response streams and a new temporary Git repository with signing and hooks disabled. The HTTP check starts one hidden, ordinary PowerShell child serving harmless fixture files on an ephemeral loopback port. It uses the exact script serialized by `Start-ManifestServer`, bounding only its request count and accept wait so it exits without a process-stop helper.
@@ -91,6 +93,16 @@ The retained pre-cleanup snapshot contains historical `Application version: 0.0.
 
 Reports, transcript and historical log snapshot are preserved in the evidence directory below. `terminal-summary.json` records the terminal result separately from the runner's primary report. No second attempt, other leg, source fix, rebuild, signing, merge or release followed this failure. Investigation of the reset and collector paths should preserve the historical logs rather than silently deleting them or weakening the empty-log check.
 
+### Bounded reset diagnosis and prepared diagnostic correction
+
+Read-only inspection after terminal cleanup confirmed that the retained 6,815-byte log is under the current LocalAppData smoke reset root. Its attributes were Archive, with neither ReadOnly nor ReparsePoint set. Its ACL had inherited allow entries and no explicit deny; the owner was Administrators. These are current metadata observations, not proof that the earlier elevated removal had effective delete access or no sharing conflict. Neither the finalized report nor transcript retained an exact removal error. **The reset failure's historical filesystem cause remains UNKNOWN.**
+
+The smallest runner-only diagnostic correction is implemented separately at `18e5129`. `Reset-SmokeData` now receives the existing leg report, records each of the same two roots before/after removal, and retains removal error message, error ID, category and target through PowerShell's ErrorVariable. It also warns with those details so they remain visible if report writing fails. It still removes only the original smoke identifier roots, with the same flags, and retains the exact empty-log assertion. No deletion-scope extension, assertion suppression, application change or elevated retry was made.
+
+The fixture reproduced `Reset discarded exact removal errors` before this change, then passed after it. It intercepts Remove-Item, injects access-denied errors for exactly two fresh fixture roots, and verifies precise error fields, the unchanged guard, and preserved fixture content. A silent no-op case still fails the guard without fabricating an IO error. The existing cleanup/report diagnostic regression also passed after the caller update. These checks finished before the interruption and were not repeated merely to resume the chat.
+
+Read-only observations are saved in `reset-readonly-observation.json` beside the finalized failed-run report. That report, transcript, snapshots and prepared MSI files were not modified by this source correction. The reset diagnostic has not run against real profile data. Review this small source change before considering another separately approved installed attempt.
+
 ## Executed corrected command, retained for traceability
 
 Review preparation is complete. The runner source is committed, and all three frozen MSIs, their signatures and `new.commit` have been copied into a fresh scratch directory. Every copied file's SHA-256 equals its source; the three MSI hashes also equal the recorded baseline, and the application stamp still matches the frozen application. The evidence destination does not yet exist. Copy inventory and exact identities are in the appendix below.
@@ -109,8 +121,9 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 
 - Branch: `codex/updater-smoke-diagnostics` in the managed worktree at `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app`.
 - Runner implementation commit: `3d1545f3214cd7d925dcf79e328695f7a1e1f5ef`, based on `64430992ef645d50159b0fe760e8f96b6652d7e2`. A subsequent documentation-only checkpoint records this run packet; it does not change the runner. No commit has been pushed.
-- Corrected runner/handoff regression commit: `a04b420ae2a9bcea96e88832a98c770d938ac90d`. Later documentation-only checkpoints do not change that runner source.
-- Corrected runner file SHA-256: `202592ED03CD6F9E4547D043855A383F694B797B12D8D77AA78CE8FA0F4BFB2D`.
+- Corrected runner/handoff regression commit: `a04b420ae2a9bcea96e88832a98c770d938ac90d`, the production runner used by the corrected attempt.
+- Attempted runner file SHA-256: `202592ED03CD6F9E4547D043855A383F694B797B12D8D77AA78CE8FA0F4BFB2D`.
+- New reset-diagnostic source/fixture commit: `18e512948330b536aacba80094fce60f74d64385`; runner file SHA-256 `846A1FB9FBD09A2A607C8C4E5F10913E8C8A1938F88319337F5EB956760E9EA8`. This source has not been installed-tested.
 - Frozen application/MSI stamp: `f3fd60975b718b4d8fb22193166de603789ad136`.
 - Frozen checkout: `D:/bench/discord-time-app/.claude/worktrees/awesome-swirles-2408a1`.
 - Earlier diagnosis and artifact hashes remain in that checkout's `docs/handoffs/2026-11-05-updater-smoke-diagnosis.md`.
@@ -118,6 +131,8 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 - Actual serialized HTTP fixture: `C:/Users/steve/AppData/Local/Temp/updater-http-test-4004c8f19b534dbda7dbb32742559b9a`.
 - Successful actual-handoff fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-a43901580b9b42078329931f99cd62a9`.
 - Latest handoff/stderr regression fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-0119b651812644e291e241cad1cf895e`. Its two positive children reach preflight despite stderr; its negative child's stderr and nonzero exit remain observable.
+- Reset-error fixture: `C:/Users/steve/AppData/Local/Temp/updater-reset-test-55f69da2cdd7472b9e30c4687aafd142`.
+- Cleanup/report integration fixture after reset caller update: `C:/Users/steve/AppData/Local/Temp/updater-diagnostics-test-bc89eb7863e9488dbfde05b3c6716a41`.
 - Fresh scratch directory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be`.
 - Copy inventory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/artifact-copy.json`, including source/copy SHA-256 values for seven files. This is file identity evidence, not new cryptographic signature verification or installed acceptance.
 - Corrected-attempt evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-handoff-fixed`. It contains the finalized `updater-smoke-auto.json`, `updater-smoke-auto-before-cleanup.json`, collected log snapshots, `updater-smoke-run.log` and `terminal-summary.json`. No manifest or installer log was created in the scratch during this attempt.
