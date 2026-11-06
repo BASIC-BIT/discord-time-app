@@ -41,6 +41,8 @@ Legs:
                          temporary worktree of HEAD.
 .PARAMETER AllowStaleArtifacts Run the legs on MSIs whose new.commit stamp differs from this checkout's tree
                          (normally refused); every leg report then records staleArtifactsAllowed and both stamps.
+.PARAMETER ApplicationCommit Exact frozen application commit for a runner-only candidate. Application paths
+                         must match it and artifacts must carry that stamp, even with AllowStaleArtifacts.
 .PARAMETER NoNpm         Build through node only, with npm dropped from PATH (also used when npm is absent).
 .PARAMETER NodeExe       Node runtime for -NoNpm builds. Default: node on PATH, else C:\ProgramData\nvm\v24.22.2\node.exe.
 .PARAMETER Elevated      Internal: set on the elevated re-launch.
@@ -58,6 +60,7 @@ param(
     [switch]$BuildOnly,
     [switch]$AllowDirtyBuild,
     [switch]$AllowStaleArtifacts,
+    [ValidatePattern('^([0-9a-fA-F]{7,40})?$')][string]$ApplicationCommit = '',
     [switch]$NoNpm,
     [string]$NodeExe = '',
     [switch]$Elevated,
@@ -66,6 +69,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$runnerScriptPath = $PSCommandPath
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path $repoRoot 'api\reports\temporal-ml'
 }
@@ -522,6 +526,68 @@ function Get-SmokeLog {
     $script:logArchive + $current
 }
 
+# The relaunch can use another token/profile. Candidate paths are not a resolved app path.
+function Get-SmokeProcessEvidence {
+    $evidence = [ordered]@{ pid = $null; parentPid = $null; executablePath = $null; owner = 'unknown'; profilePath = $null; integrity = 'unknown'; resolvedLogPath = $null }
+    $process = Get-SmokeAppProcess
+    if (-not $process) { return $evidence }
+    $evidence.pid = [int]$process.ProcessId
+    $evidence.parentPid = [int]$process.ParentProcessId
+    $evidence.executablePath = $process.ExecutablePath
+    $evidence.integrity = Get-ProcessIntegrityLevel $process.ProcessId
+    try {
+        $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwner -OperationTimeoutSec 3
+        if ($owner.ReturnValue -eq 0) { $evidence.owner = "$($owner.Domain)\$($owner.User)" }
+        $sid = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -OperationTimeoutSec 3
+        if ($sid.ReturnValue -eq 0 -and $sid.Sid -match '^S-[0-9-]+$') {
+            $profile = Get-CimInstance Win32_UserProfile -Filter "SID='$($sid.Sid)'" -OperationTimeoutSec 3
+            $evidence.profilePath = $profile.LocalPath
+        }
+    } catch { $evidence.ownerQueryError = $_.Exception.Message }
+    return $evidence
+}
+
+function Save-SmokeCheckpoint {
+    param([System.Collections.IDictionary]$Report, [ValidatePattern('^[a-z-]+$')][string]$Stage)
+    $Report.stage = $Stage
+    $Report.checks = $script:checks
+    $Report.checkpointAt = (Get-Date).ToString('o')
+    # Persist the failure before optional diagnostic queries or cleanup can block.
+    Write-Report $Report.leg $Report
+    if ($Stage -eq 'complete') { return }
+    Write-Report "$($Report.leg)-$Stage" $Report
+    try {
+        $Report.observedInstalledVersion = Get-InstalledVersion
+        $evidence = Get-SmokeProcessEvidence
+        if ($evidence.pid -or -not $Report.Contains('processEvidence')) { $Report.processEvidence = $evidence }
+        $listeners = @(Get-ListenerPids $ParserPort)
+        Save-ProcessIntegrity $Report $listeners
+        $Report.parserListenerPids = $listeners
+        $Report.observedSidecarVersion = (Get-SidecarHealth).Body.appVersion
+        $log = Get-SmokeLog
+        Write-Utf8 (Join-Path $Output "updater-smoke-$($Report.leg)-$Stage.log") $log
+        $candidates = @(Join-Path $env:LOCALAPPDATA "$Identifier\logs")
+        if ($evidence.profilePath) {
+            $candidates += Join-Path $evidence.profilePath "AppData\Local\$Identifier\logs"
+            $candidates += Join-Path $evidence.profilePath "AppData\Roaming\$Identifier\logs"
+        }
+        $Report.collectorLogDirectory = $candidates[0]
+        $Report.logFiles = @()
+        foreach ($directory in @($candidates | Select-Object -Unique)) {
+            if (-not (Test-Path -LiteralPath $directory)) { continue }
+            foreach ($file in @(Get-ChildItem -LiteralPath $directory -Filter '*.log' -File)) {
+                $snapshot = Join-Path $Output "updater-smoke-$($Report.leg)-$Stage-file-$($Report.logFiles.Count).log"
+                $stream = New-Object IO.FileStream($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
+                try { Write-Utf8 $snapshot ((New-Object IO.StreamReader($stream)).ReadToEnd()) } finally { $stream.Dispose() }
+                $Report.logFiles += [ordered]@{ path = $file.FullName; bytes = $file.Length; modifiedAt = $file.LastWriteTimeUtc.ToString('o'); snapshot = $snapshot }
+            }
+        }
+        $Report.servedRequests = Get-ServedRequests
+    } catch { $Report.diagnosticError = $_.Exception.Message }
+    Write-Report $Report.leg $Report
+    Write-Report "$($Report.leg)-$Stage" $Report
+}
+
 function Find-LogLine {
     param([string]$Text)
     (Get-SmokeLog) -split "`r?`n" | Where-Object { $_.Contains($Text) } | Select-Object -First 1
@@ -586,37 +652,50 @@ function Start-ManifestServer {
     $script:requestLog = Join-Path $WorkDir 'manifest-requests.log'
     Set-Content -LiteralPath $script:requestLog -Value $null
     # A separate process, so stopping it never waits on a blocked GetContext().
+    $responseFunction = ${function:Send-SmokeResponse}.ToString()
     $server = @"
 `$ErrorActionPreference = 'Stop'
+function Send-SmokeResponse { $responseFunction }
 `$allowed = @('latest.json', '$msiName')
 `$listener = New-Object System.Net.HttpListener
 `$listener.Prefixes.Add('http://127.0.0.1:$ManifestPort/')
 `$listener.Start()
 while (`$true) {
     `$ctx = `$listener.GetContext()
-    try {
-    `$name = [Uri]::UnescapeDataString(`$ctx.Request.Url.AbsolutePath.TrimStart('/'))
-    Add-Content -LiteralPath '$($script:requestLog)' -Value ("{0} {1} /{2} Accept={3}" -f (Get-Date -Format o), `$ctx.Request.HttpMethod, `$name, `$ctx.Request.Headers['Accept'])
-    if (`$allowed -contains `$name) {
-        `$bytes = [IO.File]::ReadAllBytes((Join-Path '$serveDir' `$name))
-        `$ctx.Response.StatusCode = 200
-        `$ctx.Response.ContentType = if (`$name -eq 'latest.json') { 'application/json' } else { 'application/octet-stream' }
-        `$ctx.Response.ContentLength64 = `$bytes.Length
-        `$ctx.Response.OutputStream.Write(`$bytes, 0, `$bytes.Length)
-    } else {
-        `$ctx.Response.StatusCode = 404
-    }
-    } catch {
-        try { `$ctx.Response.StatusCode = 500 } catch { }
-    } finally {
-        try { `$ctx.Response.Close() } catch { }
-    }
+    Send-SmokeResponse `$ctx `$allowed '$serveDir' '$($script:requestLog)'
 }
 "@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($server))
     $script:serverProcess = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
     $up = Wait-Until { (Get-JsonResponse "http://127.0.0.1:$ManifestPort/latest.json").StatusCode -eq 200 } 20
     Assert-True $up "Manifest server answers on port $ManifestPort."
+}
+
+function Send-SmokeResponse {
+    param($Context, [string[]]$Allowed, [string]$ServeDir, [string]$RequestLog)
+    $name = [Uri]::UnescapeDataString($Context.Request.Url.AbsolutePath.TrimStart('/'))
+    $entry = [ordered]@{ event = 'request'; at = (Get-Date).ToString('o'); method = $Context.Request.HttpMethod; path = $(if ($Allowed -contains $name) { $name } else { 'unrecognized' }); attemptedStatus = $null; bytesWritten = 0; completed = $false; error = $null }
+    Add-Content -LiteralPath $RequestLog -Value ($entry | ConvertTo-Json -Compress)
+    try {
+        if ($Allowed -contains $name) {
+            $bytes = [IO.File]::ReadAllBytes((Join-Path $ServeDir $name))
+            $Context.Response.StatusCode = 200
+            $Context.Response.ContentType = if ($name -eq 'latest.json') { 'application/json' } else { 'application/octet-stream' }
+            $Context.Response.ContentLength64 = $bytes.Length
+            $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+            $entry.bytesWritten = $bytes.Length
+        } else { $Context.Response.StatusCode = 404 }
+        $Context.Response.Close()
+        $entry.completed = $true
+    } catch {
+        $entry.error = $_.Exception.Message
+        try { $Context.Response.Close() } catch { }
+    } finally {
+        $entry.event = 'response'
+        $entry.at = (Get-Date).ToString('o')
+        $entry.attemptedStatus = $Context.Response.StatusCode
+        Add-Content -LiteralPath $RequestLog -Value ($entry | ConvertTo-Json -Compress)
+    }
 }
 
 function Stop-ManifestServer {
@@ -682,8 +761,10 @@ function Test-AutoInstallOnLaunch {
     $Report.parserListenerPids = $listeners
     Save-ProcessIntegrity $Report $listeners
     Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
+    Save-SmokeCheckpoint $Report 'before-final-check'
     $upToDate = Wait-Until { [bool](Find-LogLine 'Up to date (0.0.2)') } 60
     $Report.upToDateLogLine = Find-LogLine 'Up to date (0.0.2)'
+    Save-SmokeCheckpoint $Report 'after-final-check'
     Assert-True $upToDate 'Relaunched 0.0.2 checks again and reports up to date (no install loop).'
     $Report.versionFlipSeconds = $Report.elapsedSecondsLaunchToRelaunched
 }
@@ -890,10 +971,32 @@ function Get-ArtifactFreshness {
     $builtFromPath = Join-Path $ArtifactDir 'new.commit'
     $builtFrom = if (Test-Path $builtFromPath) { (Get-Content -Raw $builtFromPath).Trim() } else { 'unknown' }
     $head = (Get-TreeState).State
-    if ($builtFrom -ne $head -and -not $AllowStaleArtifacts) {
+    $expected = $head
+    if ($ApplicationCommit) {
+        $expected = git -C $repoRoot rev-parse --verify "$ApplicationCommit^{commit}"
+        if ($LASTEXITCODE -ne 0) { throw 'ApplicationCommit must identify a local commit.' }
+        $applicationPaths = @('src', 'src-tauri', 'api', 'shared', 'package.json', 'package-lock.json', 'scripts/prepare-api-sidecar.mjs')
+        $changed = git -C $repoRoot diff $expected -- @applicationPaths
+        if ($LASTEXITCODE -ne 0) { throw 'Could not verify application source.' }
+        $uncommitted = git -C $repoRoot status --porcelain -- @applicationPaths
+        if ($LASTEXITCODE -ne 0 -or $changed -or $uncommitted) { throw 'Application source differs from ApplicationCommit; frozen artifacts cannot qualify it.' }
+    }
+    if ($ApplicationCommit -and $builtFrom -ne $expected) { throw 'Artifacts do not match ApplicationCommit. Do not waive frozen application provenance.' }
+    if ($builtFrom -ne $expected -and -not $AllowStaleArtifacts) {
         throw "Smoke MSIs were built from $builtFrom, but HEAD is $head; rebuild (drop -SkipBuild) or pass -AllowStaleArtifacts"
     }
-    [pscustomobject]@{ BuiltFrom = $builtFrom; Head = $head }
+    $runnerDirty = git -C $repoRoot status --porcelain
+    if ($LASTEXITCODE -ne 0) { throw 'Could not verify runner tree state.' }
+    [pscustomobject]@{ BuiltFrom = $builtFrom; Head = $head; ApplicationCommit = $expected; RunnerScriptSha256 = (Get-FileHash -LiteralPath $runnerScriptPath -Algorithm SHA256).Hash; RunnerDirty = [bool]$runnerDirty }
+}
+
+function Assert-FreshSmokeEvidence {
+    foreach ($name in $Legs) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $Output "updater-smoke-$name.json"))) 'Use a new Output directory to preserve earlier reports.'
+    }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Output 'updater-smoke-run.log'))) 'Use a new Output directory to preserve the earlier transcript.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $WorkDir 'manifest-requests.log'))) 'Copy the frozen artifacts into a fresh WorkDir; preserve the earlier manifest log.'
+    Assert-True (@(Get-ChildItem -LiteralPath $WorkDir -Filter 'install-*.log' -ErrorAction SilentlyContinue).Count -eq 0) 'Copy the frozen artifacts into a fresh WorkDir; preserve earlier installer logs.'
 }
 
 function Invoke-ElevatedLegs {
@@ -903,12 +1006,15 @@ function Invoke-ElevatedLegs {
     $realBefore = Get-RealAppPids
     Assert-NoSmokeRunning
     foreach ($name in $Legs) {
-        $report = [ordered]@{ leg = $name; status = 'failed'; startedAt = (Get-Date).ToString('o'); elevatedRun = $true; manifestPort = $ManifestPort }
+        $report = [ordered]@{ leg = $name; status = 'running'; incomplete = $true; startedAt = (Get-Date).ToString('o'); elevatedRun = $true; manifestPort = $ManifestPort }
         $report.appRanElevated = $true
         $source = if ($ViaRunAs) { 'the RunAs child (one UAC prompt, approved by the operator)' } else { 'the already elevated shell' }
         $report.note = "The app inherited the elevated token of $source, so the user-facing UAC prompt on the app's own msiexec was not exercised."
         $report.newMsisBuiltFrom = $freshness.BuiltFrom
         $report.headTreeState = $freshness.Head
+        $report.runnerCommit = $freshness.Head
+        $report.runnerScriptSha256 = $freshness.RunnerScriptSha256
+        $report.runnerDirty = $freshness.RunnerDirty
         if ($AllowStaleArtifacts) { $report.staleArtifactsAllowed = $true }
         $report.artifactSha256 = [ordered]@{}
         Get-ChildItem $ArtifactDir -Filter '*.msi' | ForEach-Object { $report.artifactSha256[$_.Name] = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
@@ -927,30 +1033,47 @@ function Invoke-ElevatedLegs {
             }
             $report.status = 'passed'
         } catch {
-            $failed++
+            $report.status = 'failed'
             $report.error = $_.Exception.Message
             try { $report.logTail = @((Get-SmokeLog) -split "`r?`n" | Select-Object -Last 40) } catch { $report.logTail = @("log unreadable: $($_.Exception.Message)") }
             Write-Host "Leg $name FAILED: $($_.Exception.Message)" -ForegroundColor Red
         } finally {
+            $legPassed = $report.status -eq 'passed'
+            if ($legPassed) { $report.status = 'running' }
+            try { Save-SmokeCheckpoint $report 'before-cleanup' } catch {
+                $report.diagnosticError = "Before cleanup: $($_.Exception.Message)"
+                Write-Warning $report.diagnosticError
+            }
             try { Stop-ManifestServer } catch { $report.cleanupError = $_.Exception.Message }
             try { $report.servedRequests = Get-ServedRequests } catch { $report.servedRequests = @("unreadable: $($_.Exception.Message)") }
             try { Remove-SmokeInstall } catch { $report.cleanupError = $_.Exception.Message }
-            $report.realHammerOverlayPidsUnchanged = (@(Get-RealAppPids) -join ',') -eq ($realBefore -join ',')
+            try { $report.realHammerOverlayPidsUnchanged = (@(Get-RealAppPids) -join ',') -eq ($realBefore -join ',') } catch { $report.cleanupError = $_.Exception.Message }
+            $report.status = if ($legPassed -and -not $report.diagnosticError -and -not $report.cleanupError -and $report.realHammerOverlayPidsUnchanged -eq $true) { 'passed' } else { 'failed' }
             $report.checks = $script:checks
             $report.finishedAt = (Get-Date).ToString('o')
-            Write-Report $name $report
+            $report.incomplete = $false
+            try { Save-SmokeCheckpoint $report 'complete' } catch {
+                $report.status = 'failed'
+                $report.incomplete = $true
+                $report.diagnosticError = "$($report.diagnosticError) Final report: $($_.Exception.Message)".Trim()
+                Write-Warning $report.diagnosticError
+            }
         }
+        if ($report.status -ne 'passed') { $failed++; break }
     }
-    Remove-Item -LiteralPath (Join-Path $WorkDir 'manifest-requests.log') -Force -ErrorAction SilentlyContinue
+    # Preserve manifest evidence even when a report or cleanup is interrupted.
     $script:failed = $failed
 }
 
 # ---------------------------------------------------------------- entry
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($ApplicationCommit -and -not $SkipBuild) { throw 'ApplicationCommit is a frozen-artifact diagnostic run; use -SkipBuild. Never rebuild those artifacts from the runner candidate.' }
 
 if ($Elevated) {
     if (-not $isAdmin) { throw 'The -Elevated run must be elevated: the smoke MSI installs per-machine.' }
+    $null = Get-ArtifactFreshness
+    Assert-FreshSmokeEvidence
     $runLog = Join-Path $Output 'updater-smoke-run.log'
     New-Item -ItemType Directory -Force $Output | Out-Null
     Start-Transcript -LiteralPath $runLog -Force | Out-Null
@@ -967,8 +1090,10 @@ if ($isAdmin -and -not $SkipBuild) {
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
 # A killed build can leave a worktree whose junctions point into this checkout's node_modules;
 # unlink them before anything deletes <WorkDir>.
-foreach ($tree in 'new', 'old') { Remove-BuildWorktree (Join-Path $WorkDir $tree) }
-if (-not $SkipBuild) { Invoke-Builds }
+if (-not $SkipBuild) {
+    foreach ($tree in 'new', 'old') { Remove-BuildWorktree (Join-Path $WorkDir $tree) }
+    Invoke-Builds
+}
 if ($BuildOnly) {
     Get-ChildItem $ArtifactDir | ForEach-Object { Write-Host ("{0,-22} {1,12:N0} bytes  {2}" -f $_.Name, $_.Length, $_.LastWriteTime) }
     exit 0
@@ -977,15 +1102,18 @@ $needed = @('new-0.0.2.msi')
 if (@($Legs | Where-Object { $_ -in 'auto', 'tray', 'click' }).Count -gt 0) { $needed += 'new-0.0.1.msi' }
 if ($Legs -contains 'oldhop') { $needed += 'old-0.0.1.msi' }
 foreach ($n in $needed) { Assert-True (Test-Path (Join-Path $ArtifactDir $n)) "Artifact $n exists in $ArtifactDir." }
-foreach ($name in $Legs) { Remove-Item -LiteralPath (Join-Path $Output "updater-smoke-$name.json") -Force -ErrorAction SilentlyContinue }
+$freshness = Get-ArtifactFreshness
+Assert-FreshSmokeEvidence
 
 try {
     $childArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output `"$Output`" -WorkDir `"$WorkDir`" -Elevated -ViaRunAs"
     # Native -File arguments cannot carry -Switch:$false, so the switch is forwarded only when set.
     $staleArg = @(if ($AllowStaleArtifacts) { '-AllowStaleArtifacts' })
     if ($staleArg) { $childArgs += " $staleArg" }
+    if ($ApplicationCommit) { $childArgs += " -ApplicationCommit $($freshness.ApplicationCommit)" }
     if ($isAdmin) {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output $Output -WorkDir $WorkDir -Elevated @staleArg
+        $applicationArg = @(if ($ApplicationCommit) { '-ApplicationCommit'; $ApplicationCommit })
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output $Output -WorkDir $WorkDir -Elevated @staleArg @applicationArg
         $exitCode = $LASTEXITCODE
     } else {
         Write-Host 'Elevating for the MSI installs (approve the UAC prompt)...'
