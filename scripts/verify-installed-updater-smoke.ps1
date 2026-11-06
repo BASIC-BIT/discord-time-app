@@ -623,9 +623,20 @@ function Remove-SmokeInstall {
 }
 
 function Reset-SmokeData {
+    param([System.Collections.IDictionary]$Report)
     # Logs, updater.json (the install-attempt marker) and settings of the smoke identifier only.
+    $Report.resetRoots = @()
+    $resetErrors = @()
     foreach ($dir in (Join-Path $env:LOCALAPPDATA $Identifier), (Join-Path $env:APPDATA $Identifier)) {
-        if (Test-Path $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        $existed = Test-Path -LiteralPath $dir
+        if ($existed) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable +resetErrors }
+        $Report.resetRoots += [ordered]@{ path = $dir; existedBefore = $existed; existsAfter = (Test-Path -LiteralPath $dir) }
+    }
+    $Report.resetErrors = @($resetErrors | ForEach-Object {
+        [ordered]@{ message = $_.Exception.Message; errorId = $_.FullyQualifiedErrorId; category = $_.CategoryInfo.Category.ToString(); target = [string]$_.TargetObject }
+    })
+    foreach ($detail in $Report.resetErrors) {
+        Write-Warning "Smoke reset removal error: $($detail.message) Target: $($detail.target)"
     }
     $script:logArchive = ''
     $script:logLast = ''
@@ -1023,7 +1034,7 @@ function Invoke-ElevatedLegs {
         Write-Host "=== leg $name ==="
         try {
             Remove-SmokeInstall
-            Reset-SmokeData
+            Reset-SmokeData $report
             switch ($name) {
                 'auto' { Invoke-AutoLeg $report }
                 'tray' { Invoke-TrayLeg $report }
