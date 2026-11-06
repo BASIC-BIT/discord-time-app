@@ -1106,14 +1106,14 @@ $freshness = Get-ArtifactFreshness
 Assert-FreshSmokeEvidence
 
 try {
-    $childArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output `"$Output`" -WorkDir `"$WorkDir`" -Elevated -ViaRunAs"
+    $childArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScriptPath`" -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output `"$Output`" -WorkDir `"$WorkDir`" -SkipBuild -Elevated -ViaRunAs"
     # Native -File arguments cannot carry -Switch:$false, so the switch is forwarded only when set.
     $staleArg = @(if ($AllowStaleArtifacts) { '-AllowStaleArtifacts' })
     if ($staleArg) { $childArgs += " $staleArg" }
     if ($ApplicationCommit) { $childArgs += " -ApplicationCommit $($freshness.ApplicationCommit)" }
     if ($isAdmin) {
         $applicationArg = @(if ($ApplicationCommit) { '-ApplicationCommit'; $ApplicationCommit })
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output $Output -WorkDir $WorkDir -Elevated @staleArg @applicationArg
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runnerScriptPath -Leg $Leg -ManifestPort $ManifestPort -OldCommit $OldCommit -Output $Output -WorkDir $WorkDir -SkipBuild -Elevated @staleArg @applicationArg
         $exitCode = $LASTEXITCODE
     } else {
         Write-Host 'Elevating for the MSI installs (approve the UAC prompt)...'
