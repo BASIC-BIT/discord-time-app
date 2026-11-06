@@ -103,6 +103,12 @@ The fixture reproduced `Reset discarded exact removal errors` before this change
 
 Read-only observations are saved in `reset-readonly-observation.json` beside the finalized failed-run report. That report, transcript, snapshots and prepared MSI files were not modified by this source correction. The reset diagnostic has not run against real profile data. Review this small source change before considering another separately approved installed attempt.
 
+### Fail closed on stale non-log state
+
+Follow-up review identified that merely recording reset errors was insufficient: if only `updater.json` or settings remained, the empty-log assertion could pass and the leg could proceed on a dirty baseline. The fixture reproduced this continuation with a denied reset and no log files.
+
+The smallest source correction adds two assertions immediately after the unchanged empty-log assertion: reset must report no removal errors, and neither intended smoke root may remain. Deletion targets and removal flags are unchanged. The fixture now covers denied and silent no-op resets with stale non-log state, verifies that the leg marker is never reached, preserves both fixture files, and verifies that already absent roots still pass. It passed in Windows PowerShell 5.1. No real profile deletion, elevated retry, app change or installer action was performed. The historical reset cause remains UNKNOWN.
+
 ## Executed corrected command, retained for traceability
 
 Review preparation is complete. The runner source is committed, and all three frozen MSIs, their signatures and `new.commit` have been copied into a fresh scratch directory. Every copied file's SHA-256 equals its source; the three MSI hashes also equal the recorded baseline, and the application stamp still matches the frozen application. The evidence destination does not yet exist. Copy inventory and exact identities are in the appendix below.
@@ -133,6 +139,7 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 - Latest handoff/stderr regression fixture: `C:/Users/steve/AppData/Local/Temp/updater-handoff-test-0119b651812644e291e241cad1cf895e`. Its two positive children reach preflight despite stderr; its negative child's stderr and nonzero exit remain observable.
 - Reset-error fixture: `C:/Users/steve/AppData/Local/Temp/updater-reset-test-55f69da2cdd7472b9e30c4687aafd142`.
 - Cleanup/report integration fixture after reset caller update: `C:/Users/steve/AppData/Local/Temp/updater-diagnostics-test-bc89eb7863e9488dbfde05b3c6716a41`.
+- Fail-closed non-log reset fixture: `C:/Users/steve/AppData/Local/Temp/updater-reset-test-8340c3462ae043f784555bf0abc519e9`.
 - Fresh scratch directory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be`.
 - Copy inventory: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261105-01a1a8be/artifact-copy.json`, including source/copy SHA-256 values for seven files. This is file identity evidence, not new cryptographic signature verification or installed acceptance.
 - Corrected-attempt evidence directory: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261105-handoff-fixed`. It contains the finalized `updater-smoke-auto.json`, `updater-smoke-auto-before-cleanup.json`, collected log snapshots, `updater-smoke-run.log` and `terminal-summary.json`. No manifest or installer log was created in the scratch during this attempt.

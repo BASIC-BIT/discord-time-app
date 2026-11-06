@@ -47,7 +47,37 @@ try {
     $failure = $null
     try { Reset-SmokeData $report } catch { $failure = $_.Exception.Message }
     Check ($failure -eq 'Smoke log directory is empty before the leg.' -and @($report.resetErrors).Count -eq 0) 'Stale content bypassed the guard or produced fabricated errors.'
-    Write-Host "PASS: exact reset errors retained, two-root scope unchanged, empty-log guard preserved, no fixture deletion. Fixtures: $fixture"
+
+    foreach ($mode in @('denied','noop')) {
+        $Identifier = "fixture-updater-reset-nonlog-$mode"
+        $stateLocal = Join-Path $env:LOCALAPPDATA $Identifier
+        $stateRoaming = Join-Path $env:APPDATA $Identifier
+        New-Item -ItemType Directory -Path $stateLocal,$stateRoaming | Out-Null
+        [IO.File]::WriteAllText((Join-Path $stateLocal 'updater.json'), '{"install_attempted":"fixture"}')
+        [IO.File]::WriteAllText((Join-Path $stateRoaming 'settings.json'), '{"fixture":true}')
+        function Remove-Item {
+            [CmdletBinding()]
+            param([string]$LiteralPath,[switch]$Recurse,[switch]$Force)
+            if ($mode -eq 'denied') { Write-Error -Message 'fixture nonlog access denied' -ErrorId FixtureStateDenied -Category PermissionDenied -TargetObject $LiteralPath }
+        }
+        $report = [ordered]@{}
+        $failure = $null
+        $legReached = $false
+        try { Reset-SmokeData $report; $legReached = $true } catch { $failure = $_.Exception.Message }
+        Check (-not $legReached -and $failure) "Dirty non-log baseline reached the leg marker for $mode reset."
+        Check (@($report.resetRoots | Where-Object existsAfter).Count -eq 2) "$mode reset lost remaining-root evidence."
+        if ($mode -eq 'denied') {
+            Check ($failure -eq 'Smoke data reset completed without removal errors.' -and @($report.resetErrors).Count -eq 2) 'Denied non-log reset was not stopped by its errors.'
+        } else {
+            Check ($failure -eq 'Smoke data roots are absent before the leg.' -and @($report.resetErrors).Count -eq 0) 'Silent non-log reset was not stopped by remaining roots.'
+        }
+        Check ((Test-Path -LiteralPath (Join-Path $stateLocal 'updater.json')) -and (Test-Path -LiteralPath (Join-Path $stateRoaming 'settings.json'))) 'Non-log fixture evidence was deleted.'
+    }
+    $Identifier = 'fixture-updater-reset-absent'
+    $report = [ordered]@{}
+    Reset-SmokeData $report
+    Check (@($report.resetErrors).Count -eq 0 -and @($report.resetRoots | Where-Object existsAfter).Count -eq 0) 'An already absent baseline failed reset.'
+    Write-Host "PASS: exact errors retained, two-root scope unchanged, original log guard preserved, non-log errors/remaining roots fail closed, absent baseline passes. Fixtures: $fixture"
 } finally {
     $env:LOCALAPPDATA = $savedLocal
     $env:APPDATA = $savedRoaming

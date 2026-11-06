@@ -641,6 +641,8 @@ function Reset-SmokeData {
     $script:logArchive = ''
     $script:logLast = ''
     Assert-True ((Get-SmokeLog) -eq '') 'Smoke log directory is empty before the leg.'
+    Assert-True ($Report.resetErrors.Count -eq 0) 'Smoke data reset completed without removal errors.'
+    Assert-True (@($Report.resetRoots | Where-Object existsAfter).Count -eq 0) 'Smoke data roots are absent before the leg.'
 }
 
 function Start-ManifestServer {
