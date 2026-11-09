@@ -1,6 +1,10 @@
 # Diagnostic runner candidate for PR #29
 
-The corrected runner reached the smoke leg in the separately approved attempt, but failed its preparation check because old smoke log content remained after reset. It finalized diagnostics and cleanup, then stopped. No installation or app launch was reached. Application code and the frozen installer pair are unchanged. Both one-run approvals have been consumed; another elevated attempt is not authorized.
+November 9 follow-up: [saved-evidence investigation](2026-11-09-updater-saved-evidence-findings.md) independently proves successful uninstall and places Codex's host shutdown before that uninstall returned. It also corrects the earlier permission-change explanation and separates the missing new-process log from a proven updater failure. No new installed attempt was made for that investigation.
+
+Capture preparation is now in [the log-path/stderr packet and standalone command](2026-11-09-updater-log-capture-command.md). It is a separate runner-only candidate with actual open-handle evidence and explicit stderr limitations. That command has not been executed and needs approval for any installed attempt.
+
+The latest separately approved attempt on November 9 passed reset, installed and relaunched 0.0.2, then failed the final up-to-date log assertion. It captured 14 passing checks out of 15 and High integrity for both the relaunched app and sidecar. The launch tool was interrupted during a permissions change; the report remains incomplete before cleanup finalization. Recovery found no runner, registered smoke product or smoke install directory. No second attempt was started. Application code and frozen installer files are unchanged; another elevated attempt is not authorized.
 
 The latest coordinator instruction permits this preparation under standing source authority. It preserves the frozen application checkout and artifacts, and keeps application P2 changes separate. No additional runner-preparation approval is requested. The elevated retry still requires BASIC's explicit approval after this instrumentation is reviewed.
 
@@ -109,7 +113,19 @@ Follow-up review identified that merely recording reset errors was insufficient:
 
 The smallest source correction adds two assertions immediately after the unchanged empty-log assertion: reset must report no removal errors, and neither intended smoke root may remain. Deletion targets and removal flags are unchanged. The fixture now covers denied and silent no-op resets with stale non-log state, verifies that the leg marker is never reached, preserves both fixture files, and verifies that already absent roots still pass. It passed in Windows PowerShell 5.1. No real profile deletion, elevated retry, app change or installer action was performed. The historical reset cause remains UNKNOWN.
 
-## Executed corrected command, retained for traceability
+## November 9 approved reset-diagnostic attempt
+
+BASIC's direct `yup go for it` authorized one new diagnostic auto attempt after the reset fix. Runner `84dcb06` was clean and its hash and all seven copied artifact hashes were verified. A fresh scratch and evidence directory were used, preserving the November 4/5 evidence. No rebuild or signing occurred.
+
+The attempt started at 11:46:23 AM Eastern. All three reset checks passed with zero removal errors and both roots absent afterward. The initial MSI install returned 0; the unreachable-endpoint check passed. The app then installed 0.0.2 and relaunched in 172.9 seconds, with one healthy 0.0.2 sidecar/listener. The final `Relaunched 0.0.2 checks again and reports up to date (no install loop).` assertion failed. Captured checks total 14 passed, 1 failed.
+
+The manifest server recorded a completed HTTP 200 response after relaunch at 11:50:39 AM. The collected app log still ended at the pre-install watchdog line at 11:47:47 AM; the diagnostic did not prove the relaunch's runtime-resolved log path. The relaunched app and sidecar both reported **High integrity**, the elevated-token behavior tracked by #30. Do not claim a medium-integrity production relaunch from this run.
+
+The tool call was interrupted while permissions changed, but the elevated attempt had started and continued. Recovery therefore inspected its existing state rather than starting again. The report is `status=failed`, `incomplete=true`, `stage=before-cleanup`; there is no finishedAt or captured final process exit. Recovery found the original runner PID gone, zero registered smoke products and no smoke install directory. The remaining msiexec was in session 0 and was left untouched. Final cleanup-report completion and real-app isolation remain UNKNOWN, even though product removal was observed. The primary report was preserved without rewriting it into a finalized result.
+
+`recovered-terminal-observation.json` records this distinction. No other installed leg, elevated retry, application/P2 change, merge or release followed the failure. The reset failure did not reproduce on November 9; that does not retrospectively prove its November 5 cause. The remaining problem is the post-relaunch result/log observation, plus the incomplete cleanup record.
+
+## Executed November 5 corrected command, retained for traceability
 
 Review preparation is complete. The runner source is committed, and all three frozen MSIs, their signatures and `new.commit` have been copied into a fresh scratch directory. Every copied file's SHA-256 equals its source; the three MSI hashes also equal the recorded baseline, and the application stamp still matches the frozen application. The evidence destination does not yet exist. Copy inventory and exact identities are in the appendix below.
 
@@ -130,6 +146,9 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 - Corrected runner/handoff regression commit: `a04b420ae2a9bcea96e88832a98c770d938ac90d`, the production runner used by the corrected attempt.
 - Attempted runner file SHA-256: `202592ED03CD6F9E4547D043855A383F694B797B12D8D77AA78CE8FA0F4BFB2D`.
 - New reset-diagnostic source/fixture commit: `18e512948330b536aacba80094fce60f74d64385`; runner file SHA-256 `846A1FB9FBD09A2A607C8C4E5F10913E8C8A1938F88319337F5EB956760E9EA8`. This source has not been installed-tested.
+- November 9 runner head: `84dcb06d031c4db552a2b8ac8c13d143711112c8`; script SHA-256 `9463BFCF47409AFEDF2F4C7D956D2A9FD4B3675FAFBACF388F44B91A5C4B7C47`.
+- November 9 scratch: `C:/Users/steve/AppData/Local/Temp/hammer-updater-diagnostic-20261109-reset`, containing hash-verified copied artifacts, copy inventory, initial installer log and request/response evidence.
+- November 9 evidence: `C:/Users/steve/.codex/worktrees/updater-smoke-diagnostics/discord-time-app/api/reports/temporal-ml/updater-smoke-diagnostic-20261109-reset`, containing the incomplete primary report, independent stage reports/log snapshots, transcript and `recovered-terminal-observation.json`.
 - Frozen application/MSI stamp: `f3fd60975b718b4d8fb22193166de603789ad136`.
 - Frozen checkout: `D:/bench/discord-time-app/.claude/worktrees/awesome-swirles-2408a1`.
 - Earlier diagnosis and artifact hashes remain in that checkout's `docs/handoffs/2026-11-05-updater-smoke-diagnosis.md`.
@@ -146,3 +165,5 @@ Application P2 fixes, the remaining four installed legs, exact-candidate accepta
 - Corrected-attempt runner head: `e73eb09205c74a307a5c16664e53813e92e8165a`; runner script SHA-256 remained `202592ED03CD6F9E4547D043855A383F694B797B12D8D77AA78CE8FA0F4BFB2D`.
 
 Preparation performed no remote post, push, merge, BuildOnly, MSI rebuild, signing, install, elevation or relaunch. Two separately approved single elevated attempts are recorded above: the first failed its child-mode guard, the corrected one failed reset before installation or app launch. No approval was reused. The previously rejected status message to Steward was not retried.
+
+The subsequent November 9 attempt was separately approved and is recorded above. Its approval was consumed by that single run; recovery did not relaunch it.
