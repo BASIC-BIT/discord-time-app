@@ -25,9 +25,13 @@ $ArtifactDir = Join-Path $fixture 'artifacts'
 New-Item -ItemType Directory -Path $ArtifactDir | Out-Null
 $script:checks = New-Object Collections.ArrayList
 $script:requestLog = $null
-function Get-SmokeProcessEvidence { [ordered]@{ pid = 123; owner = 'fixture'; integrity = 'unknown'; profilePath = $fixture; resolvedLogPath = $null } }
+function Get-SmokeProcessEvidence {
+    [ordered]@{ pid = 123; owner = 'fixture'; integrity = 'unknown'; profilePath = $fixture; resolvedLogPath = $null;
+        nativeCapture = [pscustomobject]@{ LogPaths = @($actualLog); StandardError = [pscustomobject]@{ Kind = 'file'; Path = $actualStderr }; Errors = @() } }
+}
 function Get-SmokeLog { 'fixture log: no installer was started' }
 function Get-SmokeAppProcess { $script:fixtureProcess }
+function Get-SmokeNativeCapture { [pscustomobject]@{ LogPaths = @(); StandardError = [pscustomobject]@{ Kind = 'absent'; Path = $null }; Errors = @() } }
 function Get-InstalledVersion { '0.0.2' }
 function Get-ProcessIntegrityLevel { 'unknown' }
 function Get-ListenerPids { @() }
@@ -58,6 +62,10 @@ $AllowStaleArtifacts = $false
 $fixtureLogs = Join-Path $fixture "AppData\Local\$Identifier\logs"
 New-Item -ItemType Directory -Path $fixtureLogs -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $fixtureLogs 'fixture.log'), 'owner-profile fixture log')
+$actualLog = Join-Path $fixture 'actual-process.log'
+$actualStderr = Join-Path $fixture 'actual-process-stderr.log'
+[IO.File]::WriteAllText($actualLog, 'actual process fixture log')
+[IO.File]::WriteAllText($actualStderr, 'actual process fixture stderr')
 Invoke-ElevatedLegs
 $saved = Get-Content -Raw -LiteralPath (Join-Path $Output 'updater-smoke-auto.json') | ConvertFrom-Json
 Check $script:checkpointSeenDuringCleanup 'No durable failure checkpoint existed before cleanup.'
@@ -69,6 +77,8 @@ Check ($saved.newMsisBuiltFrom -eq 'frozen-app' -and $saved.runnerCommit -eq 'ru
 Check ((Get-Content -Raw -LiteralPath (Join-Path $Output 'updater-smoke-auto-before-cleanup.log')) -match 'fixture log') 'Durable log snapshot is missing.'
 Check ($saved.logFiles.Count -eq 1 -and (Get-Content -Raw -LiteralPath $saved.logFiles[0].snapshot) -eq 'owner-profile fixture log') 'Owner-profile file snapshot is missing.'
 Check ($null -eq $saved.processEvidence.resolvedLogPath) 'An inferred log path was claimed as resolved.'
+Check ($saved.openLogFiles.Count -eq 1 -and $saved.openLogFiles[0].source -eq 'process-open-handle' -and (Get-Content -Raw -LiteralPath $saved.openLogFiles[0].snapshot) -eq 'actual process fixture log') 'Observed process log was not separately preserved.'
+Check ($saved.stderrCapture.kind -eq 'file' -and (Get-Content -Raw -LiteralPath $saved.stderrCapture.snapshot) -eq 'actual process fixture stderr') 'Observed stderr was not separately preserved.'
 Check (Test-Path -LiteralPath (Join-Path $Output 'updater-smoke-auto-before-cleanup.json')) 'Stage checkpoint was not retained independently of the final report.'
 
 $script:fixtureProcess = [pscustomobject]@{ ProcessId = 123; ParentProcessId = 45; ExecutablePath = 'fixture.exe' }
@@ -124,6 +134,21 @@ $passedAuto = Get-Content -Raw -LiteralPath (Join-Path $Output 'updater-smoke-au
 $passedTray = Get-Content -Raw -LiteralPath (Join-Path $Output 'updater-smoke-tray.json') | ConvertFrom-Json
 Check ($script:failed -eq 0 -and $passedAuto.status -eq 'passed' -and $passedTray.status -eq 'passed') 'Successful legs failed to continue and finalize.'
 Check (-not $passedAuto.incomplete -and -not $passedTray.incomplete) 'Passing reports were left incomplete.'
+
+$validLog = $actualLog
+$validStderr = $actualStderr
+$actualLog = Join-Path $fixture 'missing-process.log'
+$captureFailure = [ordered]@{ leg='capture-log-failure'; status='running'; incomplete=$true }
+Save-SmokeCheckpoint $captureFailure 'fixture'
+Check ($captureFailure.openLogFiles[0].error -and $captureFailure.diagnosticError) 'Open-log read failure was not preserved.'
+Check ((Get-Content -Raw -LiteralPath $captureFailure.stderrCapture.snapshot) -eq 'actual process fixture stderr') 'A log read failure skipped stderr capture.'
+$actualLog = $validLog
+$actualStderr = Join-Path $fixture 'missing-stderr.log'
+$captureFailure = [ordered]@{ leg='capture-stderr-failure'; status='running'; incomplete=$true }
+Save-SmokeCheckpoint $captureFailure 'fixture'
+Check ($captureFailure.stderrCapture.error -and $captureFailure.diagnosticError -and -not $captureFailure.stderrCapture.snapshot) 'stderr read failure was lost or marked captured.'
+Check ((Get-Content -Raw -LiteralPath $captureFailure.openLogFiles[0].snapshot) -eq 'actual process fixture log') 'A stderr read failure lost the open-log snapshot.'
+$actualStderr = $validStderr
 
 # Execute the same self-contained response function embedded in the server child.
 . ([scriptblock]::Create('function Send-SmokeResponse {' + ${function:Send-SmokeResponse}.ToString() + '}'))

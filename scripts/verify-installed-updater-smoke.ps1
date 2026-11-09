@@ -363,6 +363,7 @@ function Get-SmokeAppProcess { Get-ProcessesUnder $InstallRoot 'hammer-overlay.e
 # HAMMER_RELAUNCH_EXE, that later starts it with --minimized. Only watchdogs whose parent is
 # a smoke app process this run has seen count, so the real HammerOverlay's are never touched.
 $script:smokeAppPids = @()
+$script:launchOutput = @()
 function Get-WatchdogProcesses {
     @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
         $_.CommandLine -and $_.CommandLine.Contains('HAMMER_RELAUNCH_EXE') -and $_.CommandLine.Contains('--minimized') -and
@@ -402,8 +403,11 @@ function Start-SmokeApp {
     $saved = @{}
     foreach ($k in $ExtraEnv.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $ExtraEnv[$k]) }
     try {
-        $p = Start-Process -FilePath $Exe -WorkingDirectory $InstallRoot -PassThru
+        New-Item -ItemType Directory -Path $Output -Force | Out-Null
+        $stem = Join-Path $Output "smoke-launch-$($script:launchOutput.Count + 1)"
+        $p = Start-Process -FilePath $Exe -WorkingDirectory $InstallRoot -PassThru -RedirectStandardError "$stem.stderr.log"
         $script:smokeAppPids += $p.Id
+        $script:launchOutput += [ordered]@{ pid = $p.Id; stderr = "$stem.stderr.log" }
         return $p
     } finally {
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
@@ -527,6 +531,14 @@ function Get-SmokeLog {
 }
 
 # The relaunch can use another token/profile. Candidate paths are not a resolved app path.
+function Get-SmokeNativeCapture {
+    param([int]$Id)
+    if (-not ('UpdaterProcessCapture' -as [type])) {
+        Add-Type -Path (Join-Path (Split-Path $runnerScriptPath) 'updater-process-capture.cs')
+    }
+    [UpdaterProcessCapture]::Inspect($Id)
+}
+
 function Get-SmokeProcessEvidence {
     $evidence = [ordered]@{ pid = $null; parentPid = $null; executablePath = $null; owner = 'unknown'; profilePath = $null; integrity = 'unknown'; resolvedLogPath = $null }
     $process = Get-SmokeAppProcess
@@ -544,7 +556,21 @@ function Get-SmokeProcessEvidence {
             $evidence.profilePath = $profile.LocalPath
         }
     } catch { $evidence.ownerQueryError = $_.Exception.Message }
+    try {
+        $evidence.nativeCapture = Get-SmokeNativeCapture $process.ProcessId
+        $paths = @($evidence.nativeCapture.LogPaths)
+        if ($paths.Count -eq 1) { $evidence.resolvedLogPath = $paths[0] }
+    } catch { $evidence.nativeCaptureError = $_.Exception.Message }
     return $evidence
+}
+
+function Copy-SmokeDiagnosticFile {
+    param([string]$Source, [string]$Destination)
+    $stream = New-Object IO.FileStream($Source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
+    try {
+        $target = [IO.File]::Open($Destination, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        try { $stream.CopyTo($target) } finally { $target.Dispose() }
+    } finally { $stream.Dispose() }
 }
 
 function Save-SmokeCheckpoint {
@@ -560,6 +586,26 @@ function Save-SmokeCheckpoint {
         $Report.observedInstalledVersion = Get-InstalledVersion
         $evidence = Get-SmokeProcessEvidence
         if ($evidence.pid -or -not $Report.Contains('processEvidence')) { $Report.processEvidence = $evidence }
+        $Report.launchOutput = @($script:launchOutput | Where-Object { $_ })
+        $Report.openLogFiles = @()
+        foreach ($path in @($evidence.nativeCapture.LogPaths | Where-Object { $_ })) {
+            $snapshot = Join-Path $Output "updater-smoke-$($Report.leg)-$Stage-open-log-$($Report.openLogFiles.Count).log"
+            $fileEvidence = [ordered]@{ pid = $evidence.pid; path = $path; source = 'process-open-handle'; snapshot = $null; error = $null }
+            $Report.openLogFiles += $fileEvidence
+            try { Copy-SmokeDiagnosticFile $path $snapshot; $fileEvidence.snapshot = $snapshot } catch {
+                $fileEvidence.error = $_.Exception.Message
+                $Report.diagnosticError = $_.Exception.Message
+            }
+        }
+        $destination = $evidence.nativeCapture.StandardError
+        $Report.stderrCapture = [ordered]@{ pid = $evidence.pid; kind = $(if ($destination) { $destination.Kind } else { 'unknown' }); path = $destination.Path; snapshot = $null; error = $null }
+        if ($destination.Kind -eq 'file' -and $destination.Path) {
+            $snapshot = Join-Path $Output "updater-smoke-$($Report.leg)-$Stage-native-stderr.log"
+            try { Copy-SmokeDiagnosticFile $destination.Path $snapshot; $Report.stderrCapture.snapshot = $snapshot } catch {
+                $Report.stderrCapture.error = $_.Exception.Message
+                $Report.diagnosticError = $_.Exception.Message
+            }
+        }
         $listeners = @(Get-ListenerPids $ParserPort)
         Save-ProcessIntegrity $Report $listeners
         $Report.parserListenerPids = $listeners
@@ -577,8 +623,7 @@ function Save-SmokeCheckpoint {
             if (-not (Test-Path -LiteralPath $directory)) { continue }
             foreach ($file in @(Get-ChildItem -LiteralPath $directory -Filter '*.log' -File)) {
                 $snapshot = Join-Path $Output "updater-smoke-$($Report.leg)-$Stage-file-$($Report.logFiles.Count).log"
-                $stream = New-Object IO.FileStream($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
-                try { Write-Utf8 $snapshot ((New-Object IO.StreamReader($stream)).ReadToEnd()) } finally { $stream.Dispose() }
+                Copy-SmokeDiagnosticFile $file.FullName $snapshot
                 $Report.logFiles += [ordered]@{ path = $file.FullName; bytes = $file.Length; modifiedAt = $file.LastWriteTimeUtc.ToString('o'); snapshot = $snapshot }
             }
         }
@@ -1000,7 +1045,7 @@ function Get-ArtifactFreshness {
     }
     $runnerDirty = git -C $repoRoot status --porcelain
     if ($LASTEXITCODE -ne 0) { throw 'Could not verify runner tree state.' }
-    [pscustomobject]@{ BuiltFrom = $builtFrom; Head = $head; ApplicationCommit = $expected; RunnerScriptSha256 = (Get-FileHash -LiteralPath $runnerScriptPath -Algorithm SHA256).Hash; RunnerDirty = [bool]$runnerDirty }
+    [pscustomobject]@{ BuiltFrom = $builtFrom; Head = $head; ApplicationCommit = $expected; RunnerScriptSha256 = (Get-FileHash -LiteralPath $runnerScriptPath -Algorithm SHA256).Hash; CaptureHelperSha256 = (Get-FileHash -LiteralPath (Join-Path (Split-Path $runnerScriptPath) 'updater-process-capture.cs') -Algorithm SHA256).Hash; RunnerDirty = [bool]$runnerDirty }
 }
 
 function Assert-FreshSmokeEvidence {
@@ -1027,6 +1072,7 @@ function Invoke-ElevatedLegs {
         $report.headTreeState = $freshness.Head
         $report.runnerCommit = $freshness.Head
         $report.runnerScriptSha256 = $freshness.RunnerScriptSha256
+        $report.captureHelperSha256 = $freshness.CaptureHelperSha256
         $report.runnerDirty = $freshness.RunnerDirty
         if ($AllowStaleArtifacts) { $report.staleArtifactsAllowed = $true }
         $report.artifactSha256 = [ordered]@{}
