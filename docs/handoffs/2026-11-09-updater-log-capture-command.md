@@ -1,5 +1,7 @@
 # Prepared log-path and stderr capture
 
+Historical command packet: this destination was consumed by the successful November 13 `auto` run. Do not run the command below again. See [current acceptance](2026-11-13-updater-acceptance.md) and use fresh scratch/output paths for any subsequent authorized attempt.
+
 The runner now captures the relaunched smoke process's actual open log paths and stderr destination, rather than relying only on profile guesses. It also saves stderr from each app launch performed by the runner. The frozen application and MSI files are unchanged.
 
 This is prepared and fixture-tested, **not an installed test result**. The command below has not been executed. Review the capture limitations before approving another single `auto` attempt. Preparation did not authorize or start one.

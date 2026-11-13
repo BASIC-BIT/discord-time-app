@@ -1,5 +1,7 @@
 # Auto-updater handoff (PR #29), 2026-11-04
 
+Historical handoff. See [November 13 acceptance](2026-11-13-updater-acceptance.md) for current installed evidence and remaining gates. The instructions and results below describe the earlier handoff, not current approval or completion.
+
 Written at BASIC's wrap-up request. A fresh agent continues from here; the original session stays open but idle.
 
 ## State

@@ -1,5 +1,7 @@
 # Diagnostic runner candidate for PR #29
 
+Historical investigation and preparation record. The [November 13 acceptance record](2026-11-13-updater-acceptance.md) supersedes status and approval language below. The separately launched `auto` attempt has now passed and finalized cleanup.
+
 November 9 follow-up: [saved-evidence investigation](2026-11-09-updater-saved-evidence-findings.md) independently proves successful uninstall and places Codex's host shutdown before that uninstall returned. It also corrects the earlier permission-change explanation and separates the missing new-process log from a proven updater failure. No new installed attempt was made for that investigation.
 
 Capture preparation is now in [the log-path/stderr packet and standalone command](2026-11-09-updater-log-capture-command.md). It is a separate runner-only candidate with actual open-handle evidence and explicit stderr limitations. That command has not been executed and needs approval for any installed attempt.
