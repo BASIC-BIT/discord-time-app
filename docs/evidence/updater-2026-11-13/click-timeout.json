@@ -1,0 +1,91 @@
+{
+  "scenario": "click",
+  "sourceReport": "D:\\bench\\discord-time-app\\.cache\\worktrees\\updater-merge-ready\\api\\reports\\temporal-ml\\updater-remaining-20261113\\updater-smoke-click.json",
+  "sourceReportSha256": "0000D6F81562A70198E35B7163A51E16E228DBFAC7AEB7FA791B44DE4CBEC53D",
+  "applicationCommit": "f3fd60975b718b4d8fb22193166de603789ad136",
+  "runnerCommit": "c12fc8e476fcaabc22f07e5c313be511e07e04e1",
+  "runnerScriptSha256": "09984B12407B2E529B95FD79102B272E1A62DF4A81378C08C6AB0D79A9E4612A",
+  "captureHelperSha256": "51128C6673848A6E43A526126459C3A3AEF4EE97A0A9A6FBD6E8195434CE7A69",
+  "artifactSha256": {
+    "new-0.0.1.msi": "1ECF5A3B18F873536E40B41ADF4C5ED871F97929A48FC201B11A78450F6E11B3",
+    "new-0.0.2.msi": "F8DC02D8CC63188ECB34BA65E4EF3C02FA920314E8DB8064354002648A228F5D",
+    "old-0.0.1.msi": "250706949A2D42F1ECA9FE5B640B9D7D7445554004B90C512C44C6221647A78B"
+  },
+  "startedAt": "2026-11-13T03:01:18.2078745-05:00",
+  "finishedAt": "2026-11-13T03:07:29.6667839-05:00",
+  "status": "failed",
+  "incomplete": false,
+  "stage": "complete",
+  "checks": [
+    {
+      "check": "Smoke log directory is empty before the leg.",
+      "passed": true
+    },
+    {
+      "check": "Smoke data reset completed without removal errors.",
+      "passed": true
+    },
+    {
+      "check": "Smoke data roots are absent before the leg.",
+      "passed": true
+    },
+    {
+      "check": "msiexec /i new-0.0.1.msi /qn exit code.",
+      "passed": true,
+      "expected": "0",
+      "actual": "0"
+    },
+    {
+      "check": "Installed version before the update.",
+      "passed": true,
+      "expected": "0.0.1",
+      "actual": "0.0.1"
+    },
+    {
+      "check": "Manifest server answers on port 8859.",
+      "passed": true
+    },
+    {
+      "check": "Log has 'Update 0.0.2 ready; restart to update' within 120 s.",
+      "passed": true
+    },
+    {
+      "check": "Installed version stays 0.0.1 until the click.",
+      "passed": true,
+      "expected": "0.0.1",
+      "actual": "0.0.1"
+    },
+    {
+      "check": "Operator clicked 'Restart to update 0.0.2' within 180 s of the prompt.",
+      "passed": false
+    }
+  ],
+  "secondsToReady": null,
+  "nextLaunchSeconds": null,
+  "nextLaunchUpToDate": null,
+  "nextLaunchDiagnosticError": null,
+  "msiexecExitCode": null,
+  "oldCommit": null,
+  "sidecarCase": null,
+  "staleSidecarPid": null,
+  "parserListenerPids": [
+    118792
+  ],
+  "restartLogLine": null,
+  "appIntegrity": "High",
+  "sidecarIntegrity": "High",
+  "actualLogPath": "C:\\Users\\steve\\AppData\\Local\\com.hammer-overlay.updater-smoke\\logs\\HammerOverlay Updater Smoke.log",
+  "nativeCaptureErrors": [],
+  "stderrKind": "file",
+  "stderrSnapshotError": null,
+  "secondsPromptToClick": 180.1,
+  "error": "Operator clicked 'Restart to update 0.0.2' within 180 s of the prompt.",
+  "diagnosticError": null,
+  "cleanupError": null,
+  "realAppPidsUnchanged": true,
+  "limitations": [
+    "RunAs harness; ordinary-user relaunch token and declining UAC untested.",
+    "Sanitized extraction omits raw configuration and full logs; source reports retained locally.",
+    "Installed run used c12fc8e, before the runner-only parent-checkpoint correction."
+  ]
+}

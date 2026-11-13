@@ -183,6 +183,51 @@ $notFound = Get-Content -LiteralPath $responseLog -Tail 1 | ConvertFrom-Json
 Check ($notFound.attemptedStatus -eq 404 -and $notFound.completed -and $notFound.path -eq 'unrecognized') 'Unknown request was served or query details were logged.'
 $notFoundContext.Response.OutputStream.Dispose()
 
+# A nested next-launch check must persist its parent leg and fail it on capture errors.
+foreach ($injectCaptureError in @($false, $true)) {
+    & {
+        $Output = Join-Path $fixture "nested-launch-$injectCaptureError"
+        $Legs = @('tray', 'oldhop')
+        $Exe = 'fixture.exe'
+        $script:nestedCaptureCalls = 0
+        $script:nestedLaterCalls = 0
+        $script:nestedLaunchCalls = 0
+        function Install-SmokeMsi { }
+        function Start-ManifestServer { }
+        function Stop-SmokeApp { }
+        function Start-SmokeApp { $script:nestedLaunchCalls++; [pscustomobject]@{ Id=$script:nestedLaunchCalls; HasExited=($script:nestedLaunchCalls -gt 1) } }
+        function Get-InstalledVersion { if ($script:nestedLaunchCalls -lt 2) { '0.0.1' } else { '0.0.2' } }
+        function Get-SmokeAppProcess { [pscustomobject]@{ ProcessId=3; ExecutablePath=$Exe } }
+        function Get-CimInstance { @() }
+        function Save-Watchdogs { }
+        function Wait-Until($Condition, $Seconds) { & $Condition }
+        function Assert-SingleAppProcess { }
+        function Find-LogLine($Text) { if ($script:nestedLaunchCalls -gt 1 -or $Text -notmatch '^Installing update') { $Text } }
+        function Get-ListenerPids { @(2) }
+        function Remove-SmokeInstall { }
+        function Get-SmokeProcessEvidence {
+            $script:nestedCaptureCalls++
+            $destination = if ($injectCaptureError -and $script:nestedCaptureCalls -eq 1) {
+                [pscustomobject]@{ Kind='file'; Path=(Join-Path $fixture 'missing-nested-stderr') }
+            } else { [pscustomobject]@{ Kind='absent'; Path=$null } }
+            [ordered]@{ pid=2; profilePath=$null; nativeCapture=[pscustomobject]@{ LogPaths=@(); StandardError=$destination; Errors=@() } }
+        }
+        $trayDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-TrayLeg' }, $true)
+        . ([scriptblock]::Create($trayDefinition.Extent.Text))
+        function Invoke-OldHopLeg { $script:nestedLaterCalls++ }
+        Invoke-ElevatedLegs
+        $parent = Get-Content -Raw -LiteralPath (Join-Path $Output 'updater-smoke-tray.json') | ConvertFrom-Json
+        Check (Test-Path -LiteralPath (Join-Path $Output 'updater-smoke-tray-before-final-check.json')) 'Nested launch did not checkpoint the named parent leg.'
+        Check (-not (Test-Path -LiteralPath (Join-Path $Output 'updater-smoke-.json'))) 'Nested launch wrote an anonymous report.'
+        Check ($parent.nextLaunch.upToDateLogLine -and -not $parent.incomplete) 'Nested result or finalized parent was lost.'
+        if ($injectCaptureError) {
+            Check ($parent.status -eq 'failed' -and $parent.diagnosticError -and $script:nestedLaterCalls -eq 0) 'Nested capture failure did not fail the parent and stop the sequence.'
+        } else {
+            Check ($parent.status -eq 'passed' -and $script:nestedLaterCalls -eq 1) 'Successful nested launch did not allow the next leg.'
+        }
+    }
+}
+
 # Provenance checks use a new local fixture repository, with no real MSI or baseline writes.
 . ([scriptblock]::Create('function Get-ArtifactFreshness {' + $freshnessFunction.ToString() + '}'))
 $repoRoot = Join-Path $fixture 'repository'

@@ -788,7 +788,7 @@ function Assert-NoSmokeRunning {
 # Launches the installed 0.0.1 with the 0.0.2 manifest served and expects it to install
 # 0.0.2 itself and come back as 0.0.2 with exactly one 0.0.2 sidecar.
 function Test-AutoInstallOnLaunch {
-    param([System.Collections.IDictionary]$Report)
+    param([System.Collections.IDictionary]$Report, [System.Collections.IDictionary]$CheckpointReport = $Report)
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $original = Start-SmokeApp
     $script:installerCommand = $null
@@ -819,10 +819,10 @@ function Test-AutoInstallOnLaunch {
     $Report.parserListenerPids = $listeners
     Save-ProcessIntegrity $Report $listeners
     Assert-Equal $listeners.Count 1 "Exactly one listener on port $ParserPort."
-    Save-SmokeCheckpoint $Report 'before-final-check'
+    Save-SmokeCheckpoint $CheckpointReport 'before-final-check'
     $upToDate = Wait-Until { [bool](Find-LogLine 'Up to date (0.0.2)') } 60
     $Report.upToDateLogLine = Find-LogLine 'Up to date (0.0.2)'
-    Save-SmokeCheckpoint $Report 'after-final-check'
+    Save-SmokeCheckpoint $CheckpointReport 'after-final-check'
     Assert-True $upToDate 'Relaunched 0.0.2 checks again and reports up to date (no install loop).'
     $Report.versionFlipSeconds = $Report.elapsedSecondsLaunchToRelaunched
 }
@@ -866,7 +866,7 @@ function Invoke-TrayLeg {
     Stop-SmokeApp
 
     $Report.nextLaunch = [ordered]@{}
-    Test-AutoInstallOnLaunch $Report.nextLaunch
+    Test-AutoInstallOnLaunch $Report.nextLaunch $Report
 }
 
 function Invoke-OldHopLeg {

@@ -1,0 +1,125 @@
+{
+  "scenario": "tray",
+  "sourceReport": "D:\\bench\\discord-time-app\\.cache\\worktrees\\updater-merge-ready\\api\\reports\\temporal-ml\\updater-remaining-20261113\\updater-smoke-tray.json",
+  "sourceReportSha256": "D87904A701C29C8C22577684A23B33C8B44391F56B24311ADAC3EE5ECF4540DC",
+  "applicationCommit": "f3fd60975b718b4d8fb22193166de603789ad136",
+  "runnerCommit": "c12fc8e476fcaabc22f07e5c313be511e07e04e1",
+  "runnerScriptSha256": "09984B12407B2E529B95FD79102B272E1A62DF4A81378C08C6AB0D79A9E4612A",
+  "captureHelperSha256": "51128C6673848A6E43A526126459C3A3AEF4EE97A0A9A6FBD6E8195434CE7A69",
+  "artifactSha256": {
+    "new-0.0.1.msi": "1ECF5A3B18F873536E40B41ADF4C5ED871F97929A48FC201B11A78450F6E11B3",
+    "new-0.0.2.msi": "F8DC02D8CC63188ECB34BA65E4EF3C02FA920314E8DB8064354002648A228F5D",
+    "old-0.0.1.msi": "250706949A2D42F1ECA9FE5B640B9D7D7445554004B90C512C44C6221647A78B"
+  },
+  "startedAt": "2026-11-13T02:42:43.3868259-05:00",
+  "finishedAt": "2026-11-13T02:50:30.6117504-05:00",
+  "status": "passed",
+  "incomplete": false,
+  "stage": "complete",
+  "checks": [
+    {
+      "check": "Smoke log directory is empty before the leg.",
+      "passed": true
+    },
+    {
+      "check": "Smoke data reset completed without removal errors.",
+      "passed": true
+    },
+    {
+      "check": "Smoke data roots are absent before the leg.",
+      "passed": true
+    },
+    {
+      "check": "msiexec /i new-0.0.1.msi /qn exit code.",
+      "passed": true,
+      "expected": "0",
+      "actual": "0"
+    },
+    {
+      "check": "Manifest server answers on port 8859.",
+      "passed": true
+    },
+    {
+      "check": "Log has 'Update 0.0.2 ready; restart to update' within 120 s.",
+      "passed": true
+    },
+    {
+      "check": "App is still running with the update deferred.",
+      "passed": true
+    },
+    {
+      "check": "Installed version stays 0.0.1 while deferred.",
+      "passed": true,
+      "expected": "0.0.1",
+      "actual": "0.0.1"
+    },
+    {
+      "check": "No install was started while the overlay was visible.",
+      "passed": true
+    },
+    {
+      "check": "No install-attempt marker was written.",
+      "passed": true
+    },
+    {
+      "check": "Within 600 s the original process exited, 0.0.2 is installed and the app is running again.",
+      "passed": true
+    },
+    {
+      "check": "Exactly one app process from the install path within 15 s.",
+      "passed": true
+    },
+    {
+      "check": "Relaunched process runs from the install path.",
+      "passed": true,
+      "expected": "C:\\Program Files\\HammerOverlay Updater Smoke\\hammer-overlay.exe",
+      "actual": "C:\\Program Files\\HammerOverlay Updater Smoke\\hammer-overlay.exe"
+    },
+    {
+      "check": "Log has 'Installing update 0.0.2 on launch'.",
+      "passed": true
+    },
+    {
+      "check": "Sidecar /health reports appVersion 0.0.2.",
+      "passed": true
+    },
+    {
+      "check": "Exactly one listener on port 8858.",
+      "passed": true,
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "check": "Relaunched 0.0.2 checks again and reports up to date (no install loop).",
+      "passed": true
+    }
+  ],
+  "secondsToReady": 7.1,
+  "nextLaunchSeconds": 232.6,
+  "nextLaunchUpToDate": "[2026-11-13][07:48:04][hammer_overlay_lib::updater][INFO] Up to date (0.0.2)",
+  "nextLaunchDiagnosticError": null,
+  "msiexecExitCode": null,
+  "oldCommit": null,
+  "sidecarCase": null,
+  "staleSidecarPid": null,
+  "parserListenerPids": [
+    119408
+  ],
+  "restartLogLine": null,
+  "appIntegrity": "High",
+  "sidecarIntegrity": "High",
+  "actualLogPath": "C:\\Users\\steve\\AppData\\Local\\com.hammer-overlay.updater-smoke\\logs\\HammerOverlay Updater Smoke.log",
+  "nativeCaptureErrors": [],
+  "stderrKind": "absent",
+  "stderrSnapshotError": null,
+  "secondsPromptToClick": null,
+  "error": null,
+  "diagnosticError": null,
+  "cleanupError": null,
+  "realAppPidsUnchanged": true,
+  "limitations": [
+    "RunAs harness; ordinary-user relaunch token and declining UAC untested.",
+    "Sanitized extraction omits raw configuration and full logs; source reports retained locally.",
+    "Installed run used c12fc8e, before the runner-only parent-checkpoint correction."
+  ]
+}
