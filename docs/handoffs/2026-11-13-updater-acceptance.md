@@ -26,6 +26,8 @@ Retain the scoped provenance checks, fail-closed reset, actual parent-handoff co
 
 The five harmless PowerShell fixture suites now run in Windows CI. Local Windows PowerShell 5.1 runs passed for diagnostics, actual serialized HTTP, parent handoff, reset and real process metadata capture. The HTTP fixture failed to construct `HttpListener` inside the restricted network sandbox, then passed outside that sandbox. The sandbox failure is retained as an environment limitation, not an application failure.
 
+The first CI run found that the handoff fixture hardcoded a historical application commit missing from GitHub's shallow checkout. A fresh depth-one local clone reproduced the failure. The fixture now takes its checkout's own `HEAD` as the artifact baseline; shallow and full-checkout fixtures both pass, including the negative missing-`SkipBuild` case. Production provenance checks and the frozen application were unchanged.
+
 Independent standards review found no blocking defect in the diagnostic delta. Independent spec review identified the remaining installed scenarios and the bounded window issue below. Neither review ran or substitutes for installed tests.
 
 The prior four P2 items stay in #30: on-demand probe cost, blocking startup probe, `AlreadyReady` race and replacement-download memory. The additional update-window issue also belongs there: during a background manifest check, a cached update remains installable from the tray but the window temporarily shows a disabled check button. The check is bounded at 60 seconds. This limitation must remain disclosed until fixed; the frozen MSI does not include that future fix.

@@ -77,11 +77,13 @@ function powershell.exe {
     Set-Variable -Name LASTEXITCODE -Scope 1 -Value $childExit
 }
 
+$fixtureApplicationCommit = git -C $repoRoot rev-parse --verify HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the fixture application baseline.' }
 foreach ($isAdmin in @($false, $true)) {
     $caseName = if ($isAdmin) { 'already-admin' } else { 'runas' }
     $WorkDir = Join-Path $fixture $caseName
     New-Item -ItemType Directory -Path (Join-Path $WorkDir 'artifacts') -Force | Out-Null
-    $ApplicationCommit = 'f3fd60975b718b4d8fb22193166de603789ad136'
+    $ApplicationCommit = $fixtureApplicationCommit
     [IO.File]::WriteAllText((Join-Path $WorkDir 'artifacts/new.commit'), $ApplicationCommit)
     $Output = Join-Path $WorkDir 'unused-output'
     $Leg = 'auto'
