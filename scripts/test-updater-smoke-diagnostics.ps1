@@ -9,6 +9,10 @@ foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automa
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 function Check($Condition, $Message) { if (-not $Condition) { throw $Message } }
+$repo = Split-Path $PSScriptRoot
+$trayId = [regex]::Match([IO.File]::ReadAllText((Join-Path $repo 'src-tauri/src/lib.rs')), 'const TRAY_ID: &str = "([^"]+)";')
+$config = Get-Content -Raw -LiteralPath (Join-Path $repo 'src-tauri/tauri.conf.json') | ConvertFrom-Json
+Check ($trayId.Success -and $config.app.trayIcon.id -eq $trayId.Groups[1].Value) 'Configured tray id must match the Rust TRAY_ID used by its menu.'
 Check ([bool](Get-Command Save-SmokeCheckpoint -ErrorAction SilentlyContinue)) 'Missing durable diagnostic checkpoint helper.'
 $freshnessFunction = ${function:Get-ArtifactFreshness}
 $processEvidenceFunction = ${function:Get-SmokeProcessEvidence}

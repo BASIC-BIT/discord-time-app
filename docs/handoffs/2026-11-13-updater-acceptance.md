@@ -30,6 +30,8 @@ The first CI run found that the handoff fixture hardcoded a historical applicati
 
 Independent standards review found no blocking defect in the diagnostic delta. Independent spec review identified the remaining installed scenarios and the bounded window issue below. Neither review ran or substitutes for installed tests.
 
+The diagnostic fixture also checks that the configured tray icon ID matches the Rust `TRAY_ID` used to attach its menu. An injected mismatch in a disposable checkout fails before smoke setup; the real configuration passes. This guards the string coupling identified by the PR review without changing the frozen application.
+
 The prior four P2 items stay in #30: on-demand probe cost, blocking startup probe, `AlreadyReady` race and replacement-download memory. The additional update-window issue also belongs there: during a background manifest check, a cached update remains installable from the tray but the window temporarily shows a disabled check button. The check is bounded at 60 seconds. This limitation must remain disclosed until fixed; the frozen MSI does not include that future fix.
 
 Signing-key custody outside GitHub remains an owner check before release. This validation does not inspect or copy private signing material, change signing, publish a release or deploy anything.
