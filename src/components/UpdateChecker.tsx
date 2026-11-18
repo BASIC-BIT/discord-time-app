@@ -1,18 +1,88 @@
-import { useState, useEffect, useLayoutEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 interface UpdateCheckerProps {
   onClose: () => void;
 }
 
+interface UpdateStatus {
+  currentVersion: string;
+  phase: 'idle' | 'checking' | 'upToDate' | 'downloading' | 'ready' | 'installing' | 'failed';
+  availableVersion: string | null;
+  message: string | null;
+  previousAttemptFailed: boolean;
+}
+
+function statusText(status: UpdateStatus): string | null {
+  switch (status.phase) {
+    case 'idle':
+      return 'Not checked yet.';
+    case 'upToDate':
+      return 'You are running the latest version.';
+    case 'checking':
+      return 'Checking…';
+    case 'downloading':
+      return `Downloading ${status.availableVersion}…`;
+    case 'ready':
+      return status.previousAttemptFailed
+        ? status.message
+        : `${status.availableVersion} is ready. Restart to update.`;
+    case 'installing':
+      return 'Installing…';
+    case 'failed':
+      return status.message;
+  }
+}
+
+// Refusals from `install_refusal` in updater.rs, mapped to user copy; null hides the toast
+function installErrorText(err: string, phase: UpdateStatus['phase'] | undefined): string | null {
+  if (err === 'Update is still downloading') return 'The update is still downloading.';
+  if (err === 'The update is already installing') return 'The update is already installing.';
+  if (err === 'No update is ready') {
+    // The body already says the latest version is running
+    return phase === 'upToDate' ? null : 'No update is ready yet.';
+  }
+  return err;
+}
+
 export function UpdateChecker({ onClose }: UpdateCheckerProps) {
-  const [checking, setChecking] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [hasUpdate, setHasUpdate] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [fallbackVersion, setFallbackVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  
+  // Phase of the last status read from the backend. A toast stays until that phase
+  // changes or the user starts another action, so the poll cannot wipe it unread.
+  const lastPhase = useRef<UpdateStatus['phase'] | null>(null);
+
+  const refreshStatus = async (): Promise<UpdateStatus | null> => {
+    try {
+      const next = await invoke<UpdateStatus>('get_update_status');
+      if (lastPhase.current !== null && lastPhase.current !== next.phase) setError(null);
+      lastPhase.current = next.phase;
+      setStatus(next);
+      return next;
+    } catch (err) {
+      setError(String(err));
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    getVersion().then(setFallbackVersion).catch(() => {});
+    refreshStatus();
+  }, []);
+
+  const phase = status?.phase;
+  const busy = phase === 'checking' || phase === 'downloading';
+
+  // Poll so a background check that finishes while the window is open shows up;
+  // faster while a check or download is running
+  useEffect(() => {
+    const id = setInterval(refreshStatus, busy ? 2000 : 10000);
+    return () => clearInterval(id);
+  }, [busy]);
+
   // Auto-resize window height based on content (only for updater window)
   useLayoutEffect(() => {
     const window = getCurrentWindow();
@@ -42,48 +112,31 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
     return () => {
       resizeObserver.disconnect();
     };
-  }, [checking, hasUpdate, error, success]); // Resize when state changes
+  }, [status]); // Resize when state changes
 
   const checkForUpdates = async () => {
+    setError(null);
+    // Show "Checking…" while the manual cycle runs; polling picks up progress
+    setStatus(s => (s ? { ...s, phase: 'checking' } : s));
     try {
-      setChecking(true);
-      setError(null);
-      setSuccess(null);
-      
-      const updateAvailable = await invoke<boolean>('check_for_updates');
-      setHasUpdate(updateAvailable);
-      
-      if (updateAvailable) {
-        setSuccess('Update available! Click "Install Update" to upgrade.');
-      } else {
-        setSuccess('You are running the latest version.');
-      }
+      const next = await invoke<UpdateStatus>('check_for_updates_now');
+      lastPhase.current = next.phase;
+      setStatus(next);
     } catch (err) {
-      console.error('Failed to check for updates:', err);
-      setError('Failed to check for updates. Please check your internet connection.');
-      setHasUpdate(null);
-    } finally {
-      setChecking(false);
+      await refreshStatus();
+      setError(String(err));
     }
   };
 
   const installUpdate = async () => {
+    setError(null);
+    setStatus(s => (s ? { ...s, phase: 'installing' } : s));
     try {
-      setInstalling(true);
-      setError(null);
-      
-      await invoke('install_update');
-      setSuccess('Update installed successfully! The application will restart.');
-      
-      // Close the checker after a short delay
-      setTimeout(() => {
-        onClose();
-      }, 2000);
+      // On success the app exits into the installer, so this normally never returns
+      await invoke('install_update_now');
     } catch (err) {
-      console.error('Failed to install update:', err);
-      setError('Failed to install update. Please try again or download manually.');
-    } finally {
-      setInstalling(false);
+      const next = await refreshStatus();
+      setError(installErrorText(String(err), next?.phase));
     }
   };
 
@@ -92,6 +145,9 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
       onClose();
     }
   };
+
+  const installing = phase === 'installing';
+  const version = status?.currentVersion ?? fallbackVersion;
 
   return (
     <div className="settings-container" style={{ width: '400px', maxHeight: '300px' }} onKeyDown={handleKeyDown} tabIndex={-1}>
@@ -104,22 +160,8 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
 
         <div className="settings-content">
           <div className="update-info">
-            <p>Current version: <strong>0.1.0</strong></p>
-            
-            {hasUpdate === null && (
-              <p>Click "Check for Updates" to see if a newer version is available.</p>
-            )}
-            
-            {hasUpdate === false && (
-              <p>You are running the latest version of HammerOverlay.</p>
-            )}
-            
-            {hasUpdate === true && (
-              <div>
-                <p><strong>A new version is available!</strong></p>
-                <p>Click "Install Update" to download and install the latest version. The application will restart automatically.</p>
-              </div>
-            )}
+            <p>Current version: <strong>{version ?? '…'}</strong></p>
+            {status && <p>{statusText(status)}</p>}
           </div>
         </div>
 
@@ -127,36 +169,30 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
           <button
             className="cancel-button"
             onClick={onClose}
-            disabled={checking || installing}
+            disabled={installing}
           >
             Close
           </button>
           
-          {hasUpdate === true ? (
+          {phase === 'ready' ? (
             <button
               className="save-button"
               onClick={installUpdate}
-              disabled={installing}
             >
-              {installing ? 'Installing...' : 'Install Update'}
+              Restart to update
             </button>
           ) : (
             <button
               className="save-button"
               onClick={checkForUpdates}
-              disabled={checking}
+              disabled={busy || installing}
             >
-              {checking ? 'Checking...' : 'Check for Updates'}
+              Check for Updates
             </button>
           )}
         </div>
 
         {/* Toast Messages */}
-        {success && (
-          <div className="toast toast-success">
-            {success}
-          </div>
-        )}
         {error && (
           <div className="toast toast-error">
             {error}
@@ -164,4 +200,4 @@ export function UpdateChecker({ onClose }: UpdateCheckerProps) {
         )}
     </div>
   );
-} 
+}

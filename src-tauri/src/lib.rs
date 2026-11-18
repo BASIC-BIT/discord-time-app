@@ -7,18 +7,21 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
     AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tauri_plugin_store::StoreBuilder;
-use tauri_plugin_updater::UpdaterExt;
+
+mod updater;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -78,7 +81,7 @@ const HOSTED_SLM_DEFAULT_API_KEY: &str = match option_env!("HOSTED_SLM_DEFAULT_A
 const HOSTED_SLM_DEFAULT_MODEL: &str = LOCAL_SLM_DEFAULT_MODEL;
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FormatStats {
@@ -155,6 +158,9 @@ pub struct TimeParserServiceState {
 
 pub struct LocalSlmServiceState {
     starting: Mutex<bool>,
+    /// Model downloads, runtime installs and image pulls under way; the updater
+    /// treats a non-zero count as busy.
+    in_flight: AtomicUsize,
 }
 
 impl TimeParserServiceState {
@@ -267,8 +273,36 @@ impl LocalSlmServiceState {
     fn new() -> Self {
         Self {
             starting: Mutex::new(false),
+            in_flight: AtomicUsize::new(0),
         }
     }
+}
+
+/// Counts one long-running Local SLM job for as long as it is alive.
+struct LocalSlmWork(AppHandle);
+
+impl LocalSlmWork {
+    fn start(app: &AppHandle) -> Self {
+        app.state::<LocalSlmServiceState>()
+            .in_flight
+            .fetch_add(1, Ordering::SeqCst);
+        Self(app.clone())
+    }
+}
+
+impl Drop for LocalSlmWork {
+    fn drop(&mut self) {
+        self.0
+            .state::<LocalSlmServiceState>()
+            .in_flight
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn local_slm_in_flight(app: &AppHandle) -> usize {
+    app.state::<LocalSlmServiceState>()
+        .in_flight
+        .load(Ordering::SeqCst)
 }
 
 fn explicit_time_parser_api_key() -> Option<String> {
@@ -1471,12 +1505,29 @@ fn trigger_local_slm_start(app: &AppHandle) {
 }
 
 fn time_parser_health_check() -> bool {
+    time_parser_health_check_within(Duration::from_millis(500))
+}
+
+/// `/health` reads the database and nudges the endpoint, so a busy sidecar can take
+/// this long; the version probe and its "port answers" check share this deadline.
+const HEALTH_PROBE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Whole-response bound on the version probe's read: a peer that trickles bytes
+/// cannot hold `setup()` or the parse path past this.
+const HEALTH_PROBE_TOTAL_DEADLINE: Duration = Duration::from_secs(3);
+/// `/health` answers with a few hundred bytes; anything past this is not our sidecar.
+const HEALTH_PROBE_MAX_RESPONSE: usize = 64 * 1024;
+
+/// True when `/health` returns a 200 status line within `read_timeout`. It makes
+/// exactly one `read`, so the read itself never outlasts `read_timeout` (at most
+/// 250 ms connect + 500 ms write + `read_timeout` in all).
+fn time_parser_health_check_within(read_timeout: Duration) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(250)) else {
         return false;
     };
 
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
 
     let request = format!(
@@ -1496,6 +1547,176 @@ fn time_parser_health_check() -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+enum SidecarAction {
+    Spawn,
+    Adopt,
+    KillThenSpawn,
+}
+
+/// Who asked for the sidecar. Only `Startup` may kill a mismatched listener; every
+/// on-demand start (parse path, config, restart) adopts it with a warning so a user
+/// request never waits on PowerShell or the post-kill poll.
+#[derive(Clone, Copy)]
+enum SidecarStart {
+    Startup,
+    OnDemand,
+}
+
+impl SidecarStart {
+    /// Version probes, 500 ms apart: 3 at startup, 1 on demand (never sleeps).
+    fn probe_attempts(self) -> usize {
+        match self {
+            SidecarStart::Startup => 3,
+            SidecarStart::OnDemand => 1,
+        }
+    }
+}
+
+/// A healthy sidecar is only adopted when it was spawned by this exact app version;
+/// otherwise an MSI upgrade would keep talking to the previous version's node.exe.
+/// `port_answers` (a `/health` 200 status line within `HEALTH_PROBE_READ_TIMEOUT`)
+/// covers a body that could not be read or parsed: a child spawned then could not
+/// bind the port, so the listener is adopted.
+fn sidecar_action(
+    health_app_version: Option<&str>,
+    port_answers: bool,
+    app_version: &str,
+    start: SidecarStart,
+) -> SidecarAction {
+    match health_app_version {
+        None if port_answers => SidecarAction::Adopt,
+        None => SidecarAction::Spawn,
+        Some(version) if version == app_version => SidecarAction::Adopt,
+        Some(_) => match start {
+            SidecarStart::Startup => SidecarAction::KillThenSpawn,
+            SidecarStart::OnDemand => SidecarAction::Adopt,
+        },
+    }
+}
+
+/// While the port answers (a `/health` 200 status line within 2 s), keep probing
+/// until one attempt reads a version or `attempts` runs out; only then is the port
+/// adopted without a version. A port whose status line takes longer than 2 s counts
+/// as silent: one attempt, then `Spawn`. `attempts` is lazy: nothing after the first
+/// `Some` (or after the first attempt when the port is silent) is run.
+fn resolve_probe<I: Iterator<Item = Option<String>>>(
+    mut attempts: I,
+    port_answers: bool,
+) -> Option<String> {
+    if port_answers {
+        attempts.find_map(|version| version)
+    } else {
+        attempts.next().flatten()
+    }
+}
+
+/// `None` when nothing healthy answers, `Some("")` when healthy but no `appVersion`.
+/// Bounded in total: 250 ms connect, 500 ms write, then the whole response must
+/// arrive within `HEALTH_PROBE_TOTAL_DEADLINE` and `HEALTH_PROBE_MAX_RESPONSE`
+/// bytes, or the probe returns `None`.
+pub(crate) fn time_parser_health_app_version() -> Option<String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], TIME_PARSER_PORT));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).ok()?;
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+
+    let request = format!(
+        "GET /health HTTP/1.1\r\nHost: localhost:{TIME_PARSER_PORT}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+
+    let deadline = Instant::now() + HEALTH_PROBE_TOTAL_DEADLINE;
+    let response = read_bounded(
+        &mut stream,
+        deadline,
+        HEALTH_PROBE_MAX_RESPONSE,
+        |stream, wait| stream.set_read_timeout(Some(wait)).is_ok(),
+    )?;
+    parse_health_app_version(&String::from_utf8(response).ok()?)
+}
+
+/// Reads to EOF, or `None` once `deadline` passes or more than `cap` bytes arrive.
+/// Before each read, `set_timeout` caps that read at the per-read timeout or the
+/// time left, whichever is shorter, so no single read can overrun the deadline.
+fn read_bounded<R: Read>(
+    reader: &mut R,
+    deadline: Instant,
+    cap: usize,
+    mut set_timeout: impl FnMut(&mut R, Duration) -> bool,
+) -> Option<Vec<u8>> {
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let left = deadline.checked_duration_since(Instant::now())?;
+        if left.is_zero() || !set_timeout(reader, left.min(HEALTH_PROBE_READ_TIMEOUT)) {
+            return None;
+        }
+        match reader.read(&mut buffer).ok()? {
+            0 => return Some(response),
+            n => {
+                response.extend_from_slice(&buffer[..n]);
+                if response.len() > cap {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+/// Only a 200 whose JSON body says `status: "healthy"` counts as our sidecar, so an
+/// unrelated process that owns the port is never treated as one (and never killed).
+fn parse_health_app_version(response: &str) -> Option<String> {
+    if !(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")) {
+        return None;
+    }
+    let (_, body) = response.split_once("\r\n\r\n")?;
+    let json = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    if json.get("status")?.as_str()? != "healthy" {
+        return None;
+    }
+    Some(
+        json.get("appVersion")
+            .and_then(|version| version.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    )
+}
+
+/// Kills whatever process listens on the parser port and waits up to 5 s for it to go away.
+pub(crate) fn kill_time_parser_listener() {
+    #[cfg(windows)]
+    {
+        // Listeners are matched by RemotePort 0 rather than `-State Listen`: on some
+        // Windows 11 builds listening sockets report State 0, so `-State Listen` matches nothing.
+        let script = format!(
+            "Get-NetTCPConnection -LocalPort {TIME_PARSER_PORT} -ErrorAction SilentlyContinue | Where-Object {{ $_.RemotePort -eq 0 -and $_.OwningProcess -ne 0 }} | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}"
+        );
+        let mut command = Command::new("powershell.exe");
+        command
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
+        if let Err(e) = command.status() {
+            log::warn!("Failed to stop the stale local time parser service: {e}");
+        }
+
+        for _ in 0..20 {
+            if !time_parser_health_check() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        log::warn!("Stale local time parser service still answers after kill attempt");
+    }
+
+    #[cfg(not(windows))]
+    log::warn!("Killing a stale local time parser service is only supported on Windows");
 }
 
 static LAST_ENDPOINT_WARM: Mutex<Option<Instant>> = Mutex::new(None);
@@ -1824,7 +2045,7 @@ fn time_parser_log_stdio(app: &AppHandle) -> (Stdio, Stdio) {
     (stdout, stderr)
 }
 
-fn start_time_parser_service(app: &AppHandle) {
+fn start_time_parser_service(app: &AppHandle, start: SidecarStart) {
     if supervised_time_parser_disabled() {
         log::info!("Supervised local time parser service is disabled for this session");
         return;
@@ -1832,9 +2053,56 @@ fn start_time_parser_service(app: &AppHandle) {
 
     log_ignored_dev_api_overrides();
 
-    if time_parser_health_check() {
-        log::info!("Local time parser service is already healthy");
-        return;
+    let app_version = env!("CARGO_PKG_VERSION");
+    let probe_attempts = start.probe_attempts();
+    let first_probe = time_parser_health_app_version();
+    let port_answers =
+        first_probe.is_some() || time_parser_health_check_within(HEALTH_PROBE_READ_TIMEOUT);
+    let probes = std::iter::once(first_probe).chain(
+        std::iter::repeat_with(|| {
+            std::thread::sleep(Duration::from_millis(500));
+            time_parser_health_app_version()
+        })
+        .take(probe_attempts.saturating_sub(1)),
+    );
+    let running_version = resolve_probe(probes, port_answers);
+    match sidecar_action(running_version.as_deref(), port_answers, app_version, start) {
+        SidecarAction::Adopt if running_version.is_none() => {
+            log::warn!("Port {TIME_PARSER_PORT} answers /health but its version could not be read after {probe_attempts} attempt(s); adopting it");
+            return;
+        }
+        SidecarAction::Adopt if running_version.as_deref() != Some(app_version) => {
+            log::warn!(
+                "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; on-demand start adopts it (only startup restarts it)",
+                running_version.unwrap_or_default()
+            );
+            return;
+        }
+        SidecarAction::Adopt => {
+            log::info!("Local time parser service is already healthy");
+            return;
+        }
+        // Debug builds never kill: `tauri dev` would otherwise take out an installed
+        // release's sidecar on the same port.
+        SidecarAction::KillThenSpawn if cfg!(debug_assertions) => {
+            log::warn!(
+                "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; debug build adopts it instead of restarting",
+                running_version.unwrap_or_default()
+            );
+            return;
+        }
+        SidecarAction::KillThenSpawn => {
+            log::warn!(
+                "Local time parser service on port {TIME_PARSER_PORT} reports app version {:?}, expected {app_version}; restarting it",
+                running_version.unwrap_or_default()
+            );
+            kill_time_parser_listener();
+            if time_parser_health_check() {
+                log::error!("Local time parser service on port {TIME_PARSER_PORT} survived the kill; not spawning a child that cannot bind");
+                return;
+            }
+        }
+        SidecarAction::Spawn => {}
     }
 
     let Some(entrypoint) = find_time_parser_entrypoint(app) else {
@@ -1881,6 +2149,7 @@ fn start_time_parser_service(app: &AppHandle) {
         .env("PORT", TIME_PARSER_PORT.to_string())
         .env("STATIC_API_KEY", &api_key)
         .env("NODE_ENV", "production")
+        .env("HAMMER_APP_VERSION", env!("CARGO_PKG_VERSION"))
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(stderr);
@@ -1938,7 +2207,7 @@ async fn get_time_parser_config(app: AppHandle) -> Result<TimeParserServiceConfi
     let mut available = time_parser_health_check_blocking().await?;
 
     if !available && !supervised && !supervised_time_parser_disabled() {
-        start_time_parser_service(&app);
+        start_time_parser_service(&app, SidecarStart::OnDemand);
         supervised = parser_child_is_running(&state)?;
         available = time_parser_health_check_blocking().await?;
     }
@@ -1968,7 +2237,7 @@ async fn parse_time_with_local_service(
     request: NativeTimeParserRequest,
 ) -> Result<NativeTimeParserResponse, String> {
     if !time_parser_health_check_blocking().await? && !supervised_time_parser_disabled() {
-        start_time_parser_service(&app);
+        start_time_parser_service(&app, SidecarStart::OnDemand);
         if !wait_for_time_parser_service_blocking(Duration::from_secs(8)).await? {
             return Err("The local time parser service is still starting.".to_string());
         }
@@ -2072,6 +2341,226 @@ fn migrate_schema_1_local_slm_defaults(
 }
 
 #[cfg(test)]
+mod sidecar_adoption_tests {
+    use super::*;
+
+    #[test]
+    fn unhealthy_port_spawns() {
+        assert!(matches!(
+            sidecar_action(None, false, "0.1.7", SidecarStart::Startup),
+            SidecarAction::Spawn
+        ));
+    }
+
+    #[test]
+    fn unreadable_health_body_on_a_live_port_is_adopted() {
+        assert!(matches!(
+            sidecar_action(None, true, "0.1.7", SidecarStart::Startup),
+            SidecarAction::Adopt
+        ));
+    }
+
+    #[test]
+    fn same_version_is_adopted() {
+        assert!(matches!(
+            sidecar_action(Some("0.1.7"), true, "0.1.7", SidecarStart::Startup),
+            SidecarAction::Adopt
+        ));
+    }
+
+    #[test]
+    fn old_sidecar_without_version_is_killed() {
+        assert!(matches!(
+            sidecar_action(Some(""), true, "0.1.7", SidecarStart::Startup),
+            SidecarAction::KillThenSpawn
+        ));
+    }
+
+    const OK: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn healthy_body_with_app_version_parses() {
+        let response = format!("{OK}{{\"status\":\"healthy\",\"appVersion\":\"0.1.7\"}}");
+        assert_eq!(
+            parse_health_app_version(&response),
+            Some("0.1.7".to_string())
+        );
+    }
+
+    #[test]
+    fn healthy_body_without_app_version_is_empty() {
+        let response = format!("{OK}{{\"status\":\"healthy\",\"version\":\"1\"}}");
+        assert_eq!(parse_health_app_version(&response), Some(String::new()));
+    }
+
+    #[test]
+    fn non_sidecar_200_is_not_a_sidecar() {
+        assert_eq!(
+            parse_health_app_version(&format!("{OK}{{\"ok\":true}}")),
+            None
+        );
+        assert_eq!(parse_health_app_version(&format!("{OK}hello")), None);
+    }
+
+    #[test]
+    fn non_200_is_not_a_sidecar() {
+        let response =
+            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"healthy\",\"appVersion\":\"0.1.7\"}";
+        assert_eq!(parse_health_app_version(response), None);
+    }
+
+    /// Yields `chunk` bytes per read after `delay`, until `left` (if any) runs out.
+    struct Trickle {
+        left: Option<usize>,
+        chunk: usize,
+        delay: Duration,
+    }
+
+    impl Read for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(self.delay);
+            let n = self
+                .chunk
+                .min(buf.len())
+                .min(self.left.unwrap_or(usize::MAX));
+            if let Some(left) = &mut self.left {
+                *left -= n;
+            }
+            buf[..n].fill(b'x');
+            Ok(n)
+        }
+    }
+
+    fn read_trickle(trickle: &mut Trickle, deadline: Duration, cap: usize) -> Option<Vec<u8>> {
+        read_bounded(trickle, Instant::now() + deadline, cap, |_, _| true)
+    }
+
+    #[test]
+    fn bounded_read_returns_a_short_response() {
+        let mut ok = Trickle {
+            left: Some(300),
+            chunk: 100,
+            delay: Duration::ZERO,
+        };
+        assert_eq!(
+            read_trickle(&mut ok, Duration::from_secs(3), 1024).map(|r| r.len()),
+            Some(300)
+        );
+    }
+
+    #[test]
+    fn bounded_read_gives_up_on_a_trickling_peer_at_the_deadline() {
+        let mut slow = Trickle {
+            left: None,
+            chunk: 1,
+            delay: Duration::from_millis(10),
+        };
+        let started = Instant::now();
+        assert_eq!(
+            read_trickle(&mut slow, Duration::from_millis(100), 1024),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn bounded_read_gives_up_past_the_size_cap() {
+        let mut flood = Trickle {
+            left: None,
+            chunk: 4096,
+            delay: Duration::ZERO,
+        };
+        assert_eq!(
+            read_trickle(
+                &mut flood,
+                Duration::from_secs(3),
+                HEALTH_PROBE_MAX_RESPONSE
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn bounded_read_caps_each_read_at_the_time_left() {
+        let mut eof = Trickle {
+            left: Some(0),
+            chunk: 1,
+            delay: Duration::ZERO,
+        };
+        let mut waits = Vec::new();
+        let deadline = Instant::now() + Duration::from_millis(500);
+        read_bounded(&mut eof, deadline, 1024, |_, wait| {
+            waits.push(wait);
+            true
+        });
+        assert_eq!(waits.len(), 1);
+        assert!(waits[0] <= Duration::from_millis(500));
+    }
+
+    #[test]
+    fn probe_returns_the_first_version_without_more_attempts() {
+        let mut attempts = vec![Some("0.1.7".to_string()), None, None].into_iter();
+        assert_eq!(
+            resolve_probe(attempts.by_ref(), true),
+            Some("0.1.7".to_string())
+        );
+        assert_eq!(attempts.len(), 2);
+    }
+
+    #[test]
+    fn probe_retries_until_a_version_is_read() {
+        let attempts = vec![None, None, Some("0.1.7".to_string())].into_iter();
+        assert_eq!(resolve_probe(attempts, true), Some("0.1.7".to_string()));
+    }
+
+    #[test]
+    fn probe_gives_up_after_three_unreadable_attempts() {
+        assert_eq!(
+            resolve_probe(vec![None, None, None].into_iter(), true),
+            None
+        );
+    }
+
+    #[test]
+    fn single_attempt_probe_of_an_answering_port_adopts_without_a_version() {
+        let version = resolve_probe(std::iter::once(None), true);
+        assert_eq!(version, None);
+        assert!(matches!(
+            sidecar_action(version.as_deref(), true, "0.1.7", SidecarStart::Startup),
+            SidecarAction::Adopt
+        ));
+    }
+
+    #[test]
+    fn probe_of_a_silent_port_makes_one_attempt() {
+        let mut attempts = vec![None, Some("0.1.7".to_string())].into_iter();
+        assert_eq!(resolve_probe(attempts.by_ref(), false), None);
+        assert_eq!(attempts.len(), 1);
+    }
+
+    #[test]
+    fn different_version_is_killed() {
+        assert!(matches!(
+            sidecar_action(Some("0.1.6"), true, "0.1.7", SidecarStart::Startup),
+            SidecarAction::KillThenSpawn
+        ));
+    }
+
+    #[test]
+    fn on_demand_start_adopts_a_different_version_instead_of_killing() {
+        assert!(matches!(
+            sidecar_action(Some("0.1.6"), true, "0.1.7", SidecarStart::OnDemand),
+            SidecarAction::Adopt
+        ));
+        assert!(matches!(
+            sidecar_action(None, false, "0.1.7", SidecarStart::OnDemand),
+            SidecarAction::Spawn
+        ));
+    }
+}
+
+#[cfg(test)]
 mod hosted_slm_endpoint_tests {
     use super::*;
 
@@ -2104,6 +2593,7 @@ mod hosted_slm_endpoint_tests {
     }
 
     #[test]
+    #[allow(clippy::const_is_empty)]
     fn unavailable_hosted_endpoint_keeps_parsing_deterministic() {
         let settings = hosted_settings("   ", "");
         let endpoint = hosted_slm_endpoint(&settings);
@@ -2553,7 +3043,7 @@ fn parser_child_is_running(state: &TimeParserServiceState) -> Result<bool, Strin
     }
 }
 
-fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<TimeParserServiceState>();
     let mut child_slot = state
         .child
@@ -2570,7 +3060,7 @@ fn stop_time_parser_service(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn restart_time_parser_service(app: AppHandle) -> Result<TimeParserServiceConfig, String> {
     stop_time_parser_service(&app)?;
-    start_time_parser_service(&app);
+    start_time_parser_service(&app, SidecarStart::OnDemand);
     let _ = wait_for_time_parser_service_blocking(Duration::from_secs(8)).await?;
     get_time_parser_config(app).await
 }
@@ -2596,23 +3086,38 @@ async fn stop_local_slm(app: AppHandle) -> Result<LocalSlmStatus, String> {
 
 #[tauri::command]
 async fn install_local_slm_runtime_files(app: AppHandle) -> Result<LocalSlmStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || install_local_slm_runtime_files_sync(&app))
-        .await
-        .map_err(|e| format!("Failed to join Local SLM runtime install task: {e}"))?
+    // Moved into the task, so the count drops when the work ends, panics included.
+    let work = LocalSlmWork::start(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
+        install_local_slm_runtime_files_sync(&app)
+    })
+    .await
+    .map_err(|e| format!("Failed to join Local SLM runtime install task: {e}"))?
 }
 
 #[tauri::command]
 async fn download_local_slm_model(app: AppHandle) -> Result<LocalSlmStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || download_local_slm_model_sync(&app))
-        .await
-        .map_err(|e| format!("Failed to join Local SLM model download task: {e}"))?
+    // Moved into the task, so the count drops when the work ends, panics included.
+    let work = LocalSlmWork::start(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
+        download_local_slm_model_sync(&app)
+    })
+    .await
+    .map_err(|e| format!("Failed to join Local SLM model download task: {e}"))?
 }
 
 #[tauri::command]
 async fn pull_local_slm_docker_image(app: AppHandle) -> Result<LocalSlmStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || pull_local_slm_docker_image_sync(&app))
-        .await
-        .map_err(|e| format!("Failed to join Local SLM Docker image pull task: {e}"))?
+    // Moved into the task, so the count drops when the work ends, panics included.
+    let work = LocalSlmWork::start(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
+        pull_local_slm_docker_image_sync(&app)
+    })
+    .await
+    .map_err(|e| format!("Failed to join Local SLM Docker image pull task: {e}"))?
 }
 
 #[tauri::command]
@@ -2720,64 +3225,6 @@ async fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
 #[tauri::command]
 async fn save_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     save_app_settings(&app, &settings)
-}
-
-#[tauri::command]
-async fn check_for_updates(app: AppHandle) -> Result<bool, String> {
-    log::info!("Checking for updates");
-
-    match app.updater() {
-        Ok(updater) => match updater.check().await {
-            Ok(Some(update)) => {
-                log::info!("Update available: {}", update.version);
-                Ok(true)
-            }
-            Ok(None) => {
-                log::info!("No updates available");
-                Ok(false)
-            }
-            Err(e) => {
-                log::error!("Error checking for updates: {e}");
-                Err(format!("Failed to check for updates: {e}"))
-            }
-        },
-        Err(e) => {
-            log::error!("Updater not available: {e}");
-            Err(format!("Updater not available: {e}"))
-        }
-    }
-}
-
-#[tauri::command]
-async fn install_update(app: AppHandle) -> Result<(), String> {
-    match app.updater() {
-        Ok(updater) => match updater.check().await {
-            Ok(Some(update)) => {
-                match update
-                    .download_and_install(|_chunk_length, _content_length| {}, || {})
-                    .await
-                {
-                    Ok(_) => {
-                        log::info!("Update installed successfully");
-                        Ok(())
-                    }
-                    Err(e) => {
-                        log::error!("Error installing update: {e}");
-                        Err(format!("Failed to install update: {e}"))
-                    }
-                }
-            }
-            Ok(None) => {
-                log::info!("No update available to install");
-                Err("No update available".to_string())
-            }
-            Err(e) => {
-                log::error!("Error checking for update: {e}");
-                Err(format!("Failed to check for update: {e}"))
-            }
-        },
-        Err(e) => Err(format!("Updater not available: {e}")),
-    }
 }
 
 #[tauri::command]
@@ -2898,7 +3345,10 @@ async fn debug_store_location(app: AppHandle) -> Result<String, String> {
     Ok(debug_info)
 }
 
-fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
+pub(crate) fn create_system_tray_menu(
+    app: &AppHandle,
+    update_item: updater::TrayUpdateItem,
+) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     let show_item = MenuItemBuilder::with_id("show", "Show HammerOverlay")
         .enabled(true)
         .build(app)?;
@@ -2912,12 +3362,23 @@ fn create_system_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::W
         .enabled(true)
         .build(app)?;
 
-    MenuBuilder::new(app)
-        .item(&show_item)
-        .item(&settings_item)
-        .item(&check_updates_item)
-        .item(&quit_item)
-        .build()
+    let mut menu = MenuBuilder::new(app).item(&show_item).item(&settings_item);
+    let restart_item = match update_item {
+        updater::TrayUpdateItem::None => None,
+        updater::TrayUpdateItem::Ready(version) => {
+            Some((format!("Restart to update {version}"), true))
+        }
+        updater::TrayUpdateItem::Downloading(version) => {
+            Some((format!("Downloading {version}…"), false))
+        }
+    };
+    if let Some((text, enabled)) = restart_item {
+        let restart_item = MenuItemBuilder::with_id("restart_to_update", text)
+            .enabled(enabled)
+            .build(app)?;
+        menu = menu.item(&restart_item);
+    }
+    menu.item(&check_updates_item).item(&quit_item).build()
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -2946,98 +3407,119 @@ fn maybe_trigger_local_slm_for_overlay(app: &AppHandle) {
     trigger_local_slm_start(app);
 }
 
+/// Must equal `app.trayIcon.id` in `tauri.conf.json`: Tauri builds that single tray
+/// icon (icon + tooltip) before `setup` runs, and `setup_system_tray` attaches the
+/// menu to it rather than building a second icon.
+pub(crate) const TRAY_ID: &str = "hammer-overlay-tray";
+
 fn setup_system_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Setting up system tray");
 
-    let menu = create_system_tray_menu(app)?;
+    let menu = create_system_tray_menu(app, updater::TrayUpdateItem::None)?;
 
-    let _tray = TrayIconBuilder::new()
-        .menu(&menu)
-        .tooltip("HammerOverlay - Discord Timestamp Converter")
-        .on_menu_event(|app, event| {
-            log::debug!("System tray menu event: {}", event.id.as_ref());
+    let tray = app.tray_by_id(TRAY_ID).ok_or_else(|| {
+        format!("No tray icon with id {TRAY_ID}; check app.trayIcon.id in tauri.conf.json")
+    })?;
+    tray.set_menu(Some(menu))?;
+    tray.on_menu_event(|app, event| {
+        log::debug!("System tray menu event: {}", event.id.as_ref());
 
-            match event.id.as_ref() {
-                "show" => {
-                    log::info!("Show window requested from system tray");
-                    show_main_window(app);
-                }
-                "settings" => {
-                    log::info!("Settings requested from system tray");
+        match event.id.as_ref() {
+            "show" => {
+                log::info!("Show window requested from system tray");
+                show_main_window(app);
+            }
+            "settings" => {
+                log::info!("Settings requested from system tray");
 
-                    // Check if settings window already exists
-                    if let Some(settings_window) = app.get_webview_window("settings") {
-                        // If it exists, just show and focus it
-                        let _ = settings_window.show();
-                        let _ = settings_window.set_focus();
-                    } else {
-                        // Create a new settings window
-                        match tauri::WebviewWindowBuilder::new(
-                            app,
-                            "settings",
-                            tauri::WebviewUrl::App("index.html".into()),
-                        )
-                        .title("HammerOverlay Settings")
-                        .inner_size(500.0, 400.0) // Start with reasonable height
-                        .resizable(false)
-                        .decorations(false) // No title bar
-                        .always_on_top(true) // Keep on top like main window
-                        .center()
-                        .build()
-                        {
-                            Ok(window) => {
-                                // Emit event to the new window to show settings
-                                let _ = window.emit("show-settings-view", ());
-                            }
-                            Err(e) => {
-                                log::error!("Failed to create settings window: {e}");
-                            }
+                // Check if settings window already exists
+                if let Some(settings_window) = app.get_webview_window("settings") {
+                    // If it exists, just show and focus it
+                    let _ = settings_window.show();
+                    let _ = settings_window.set_focus();
+                } else {
+                    // Create a new settings window
+                    match tauri::WebviewWindowBuilder::new(
+                        app,
+                        "settings",
+                        tauri::WebviewUrl::App("index.html".into()),
+                    )
+                    .title("HammerOverlay Settings")
+                    .inner_size(500.0, 400.0) // Start with reasonable height
+                    .resizable(false)
+                    .decorations(false) // No title bar
+                    .always_on_top(true) // Keep on top like main window
+                    .center()
+                    .build()
+                    {
+                        Ok(window) => {
+                            // Emit event to the new window to show settings
+                            let _ = window.emit("show-settings-view", ());
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create settings window: {e}");
                         }
                     }
-                }
-                "check_updates" => {
-                    log::info!("Update check requested from system tray");
-
-                    // Check if update checker window already exists
-                    if let Some(update_window) = app.get_webview_window("updater") {
-                        // If it exists, just show and focus it
-                        let _ = update_window.show();
-                        let _ = update_window.set_focus();
-                    } else {
-                        // Create a new update checker window
-                        match tauri::WebviewWindowBuilder::new(
-                            app,
-                            "updater",
-                            tauri::WebviewUrl::App("index.html".into()),
-                        )
-                        .title("Check for Updates")
-                        .inner_size(400.0, 300.0) // Smaller window for update checker
-                        .resizable(false)
-                        .decorations(false) // No title bar
-                        .always_on_top(true)
-                        .center()
-                        .build()
-                        {
-                            Ok(window) => {
-                                // Emit event to the new window to show update checker
-                                let _ = window.emit("show-update-checker-view", ());
-                            }
-                            Err(e) => {
-                                log::error!("Failed to create update checker window: {e}");
-                            }
-                        }
-                    }
-                }
-                "quit" => {
-                    log::info!("Application exit requested from system tray");
-                    app.exit(0);
-                }
-                _ => {
-                    log::warn!("Unknown system tray menu event: {}", event.id.as_ref());
                 }
             }
-        })
-        .build(app)?;
+            "check_updates" => {
+                log::info!("Update check requested from system tray");
+
+                // Check if update checker window already exists
+                if let Some(update_window) = app.get_webview_window("updater") {
+                    // If it exists, just show and focus it
+                    let _ = update_window.show();
+                    let _ = update_window.set_focus();
+                } else {
+                    // Create a new update checker window
+                    match tauri::WebviewWindowBuilder::new(
+                        app,
+                        "updater",
+                        tauri::WebviewUrl::App("index.html".into()),
+                    )
+                    .title("Check for Updates")
+                    .inner_size(400.0, 300.0) // Smaller window for update checker
+                    .resizable(false)
+                    .decorations(false) // No title bar
+                    .always_on_top(true)
+                    .center()
+                    .build()
+                    {
+                        Ok(window) => {
+                            // Emit event to the new window to show update checker
+                            let _ = window.emit("show-update-checker-view", ());
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create update checker window: {e}");
+                        }
+                    }
+                }
+            }
+            "restart_to_update" => {
+                log::info!("Restart to update requested from system tray");
+                if let Err(e) = updater::install_ready_update(app, updater::HandOff::User) {
+                    log::error!("Failed to install update: {e}");
+                    use tauri_plugin_notification::NotificationExt;
+                    if let Err(e) = app
+                        .notification()
+                        .builder()
+                        .title("HammerOverlay")
+                        .body(updater::install_error_copy(&e))
+                        .show()
+                    {
+                        log::warn!("Failed to show the install error notification: {e}");
+                    }
+                }
+            }
+            "quit" => {
+                log::info!("Application exit requested from system tray");
+                app.exit(0);
+            }
+            _ => {
+                log::warn!("Unknown system tray menu event: {}", event.id.as_ref());
+            }
+        }
+    });
 
     log::info!("System tray setup completed");
     Ok(())
@@ -3110,7 +3592,16 @@ fn setup_global_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Err
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Check for single instance
-    let instance = SingleInstance::new(APP_INSTANCE_ID).unwrap();
+    // A medium-integrity duplicate cannot open an elevated instance's mutex;
+    // treat that like another instance and exit quietly instead of panicking.
+    let instance = match SingleInstance::new(APP_INSTANCE_ID) {
+        Ok(instance) => instance,
+        Err(e) => {
+            log::warn!("Another instance of HammerOverlay is already running ({e})");
+            eprintln!("HammerOverlay is already running!");
+            std::process::exit(1);
+        }
+    };
     if !instance.is_single() {
         log::warn!("Another instance of HammerOverlay is already running");
         eprintln!("HammerOverlay is already running!");
@@ -3126,6 +3617,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(TimeParserServiceState::new())
         .manage(LocalSlmServiceState::new())
+        .manage(updater::UpdaterState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
@@ -3143,8 +3635,9 @@ pub fn run() {
             increment_format_usage,
             get_settings,
             save_settings,
-            check_for_updates,
-            install_update,
+            updater::get_update_status,
+            updater::check_for_updates_now,
+            updater::install_update_now,
             toggle_autostart,
             is_autostart_enabled,
             reload_global_shortcuts,
@@ -3183,7 +3676,8 @@ pub fn run() {
                 }
             }
 
-            start_time_parser_service(app.handle());
+            start_time_parser_service(app.handle(), SidecarStart::Startup);
+            updater::spawn_update_loop(app.handle().clone());
 
             // Initialize auto-start based on user settings
             let app_handle = app.handle().clone();

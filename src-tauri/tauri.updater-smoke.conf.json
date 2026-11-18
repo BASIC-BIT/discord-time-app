@@ -1,0 +1,13 @@
+{
+  "productName": "HammerOverlay Updater Smoke",
+  "version": "0.0.0",
+  "identifier": "com.hammer-overlay.updater-smoke",
+  "bundle": { "createUpdaterArtifacts": true },
+  "plugins": {
+    "updater": {
+      "endpoints": ["http://127.0.0.1:8859/latest.json"],
+      "dangerousInsecureTransportProtocol": true,
+      "pubkey": "REPLACED_BY_SMOKE_SCRIPT"
+    }
+  }
+}

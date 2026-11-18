@@ -366,6 +366,7 @@ server.get('/health', async (_request, reply) => {
     timestamp: new Date().toISOString(),
     version: API_VERSION,
     runtime: apiRuntime,
+    appVersion: process.env['HAMMER_APP_VERSION'] ?? null,
     database: {
       connected: true,
       size: dbInfo.size,
