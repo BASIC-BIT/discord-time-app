@@ -1,292 +1,56 @@
-name: 'Build and Release'
-
+name: Private installed RunPod verification build
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g., v1.0.0)'
-        required: true
-        default: 'v0.1.0'
-
-env:
-  CARGO_TERM_COLOR: always
-
+permissions:
+  contents: read
 jobs:
-  build-and-release:
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest]
-        
-    runs-on: ${{ matrix.platform }}
-    
+  build:
+    runs-on: windows-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: |
             package-lock.json
             api/package-lock.json
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Install API dependencies
-        working-directory: api
-        run: npm ci
-
-      - name: Check API build
-        working-directory: api
-        run: npm run build
-
-      - name: Run API temporal tests
-        working-directory: api
-        env:
-          DB_PATH: ${{ runner.temp }}/hammer-overlay-api-ci.db
-        run: npm test
-
-      - name: Run live temporal smoke tests if configured
-        working-directory: api
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: gpt-5.5
-          OPENAI_REASONING_EFFORT: low
-          LANGFUSE_ENABLED: 'false'
-        run: npm run test:temporal:live
-
-      - name: Run temporal model evals if configured
-        working-directory: api
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LANGFUSE_ENABLED: 'false'
-          TEMPORAL_EVAL_MODELS: ${{ vars.TEMPORAL_EVAL_MODELS }}
-          TEMPORAL_EVAL_REQUIRE_OPENAI: ${{ vars.TEMPORAL_EVAL_REQUIRE_OPENAI }}
-        run: npm run eval:temporal
-
-      - name: Extract version from tag
-        shell: bash
+      - run: npm ci
+      - run: npm ci --prefix api
+      - name: Set private install version
+        shell: pwsh
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_ENV
-          echo "Building version: $VERSION"
-
-      - name: Update version in files
-        shell: bash
-        run: |
-          # Update package.json
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '${{ env.VERSION_NUMBER }}';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-          
-          # Update Cargo.toml
-          sed -i 's/^version = ".*"/version = "${{ env.VERSION_NUMBER }}"/' src-tauri/Cargo.toml
-          
-          # Update tauri.conf.json
-          node -e "
-            const fs = require('fs');
-            const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
-            config.version = '${{ env.VERSION_NUMBER }}';
-            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2));
-          "
-
-      - name: Require the hosted SLM key for releases
+          $p = Get-Content package.json -Raw | ConvertFrom-Json
+          $p.version = '0.1.7'
+          $p | ConvertTo-Json -Depth 20 | Set-Content package.json
+          $c = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $c.version = '0.1.7'
+          $c.bundle.createUpdaterArtifacts = $false
+          $c | ConvertTo-Json -Depth 30 | Set-Content src-tauri/tauri.conf.json
+          $cargo = Get-Content src-tauri/Cargo.toml -Raw
+          $cargo.Replace('version = "0.1.5"', 'version = "0.1.7"') | Set-Content src-tauri/Cargo.toml
+      - name: Build private MSI with existing restricted invoke key
         env:
           HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -z "$HOSTED_SLM_DEFAULT_API_KEY" ]; then
-            echo "::error::HOSTED_SLM_API_KEY secret is empty; a release built now would ship with SLM parsing off."
-            exit 1
-          fi
-
-      - name: Build Tauri application
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
-        run: |
+          if ([string]::IsNullOrWhiteSpace($env:HOSTED_SLM_DEFAULT_API_KEY)) { throw 'Existing hosted SLM secret is missing' }
           npm run tauri build
-
-      - name: Code sign (Windows)
-        id: code_sign
-        if: matrix.platform == 'windows-latest'
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        shell: powershell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record MSI identity
+        shell: pwsh
         run: |
-          # Only sign if certificate is available
-          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
-            Write-Host "No signing certificate provided - skipping code signing"
-            "did_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            exit 0
-          }
-          
-          # Decode certificate
-          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-          [IO.File]::WriteAllBytes("certificate.p12", $bytes)
-
-          $signTool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -like "*\x64\signtool.exe" } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-
-          if ($null -eq $signTool) {
-            throw "signtool.exe was not found in the Windows SDK."
-          }
-
-          $signToolPath = $signTool.FullName
-
-          # Sign the MSI before regenerating its Tauri updater signature.
-          $installers = @(Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Filter "*.msi" -ErrorAction SilentlyContinue)
-
-          if ($installers.Count -eq 0) {
-            throw "No MSI installers were found to sign."
-          }
-
-          foreach ($installer in $installers) {
-            & $signToolPath sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $installer.FullName
-            Write-Host "Signed: $($installer.FullName)"
-          }
-
-          "did_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          
-          # Clean up certificate
-          Remove-Item certificate.p12
-
-      - name: Regenerate updater signatures
-        if: steps.code_sign.outputs.did_sign == 'true'
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-
-          if [ ! -f "$MSI_PATH" ]; then
-            echo "Missing MSI artifact."
-            exit 1
-          fi
-
-          npx tauri signer sign "$MSI_PATH"
-
-      - name: Generate update manifest
-        shell: bash
-        run: |
-          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-          MSI_SIG_PATH="$MSI_PATH.sig"
-
-          if [ ! -f "$MSI_PATH" ]; then
-            echo "No MSI file found"
-            exit 1
-          fi
-
-          if [ ! -f "$MSI_SIG_PATH" ]; then
-            echo "Missing updater signature files. Check TAURI_SIGNING_PRIVATE_KEY and createUpdaterArtifacts."
-            exit 1
-          fi
-
-          MSI_NAME=$(basename "$MSI_PATH")
-          SIGNATURE=$(tr -d '\r\n' < "$MSI_SIG_PATH")
-
-          cat > updater/latest.json << EOF
-          {
-            "version": "${{ env.VERSION_NUMBER }}",
-            "notes": "Release ${{ env.VERSION }}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "$SIGNATURE",
-                "url": "https://github.com/BASIC-BIT/discord-time-app/releases/download/${{ env.VERSION }}/$MSI_NAME"
-              }
-            }
-          }
-          EOF
-
-          echo "MSI_PATH=$MSI_PATH" >> $GITHUB_ENV
-          echo "MSI_SIG_PATH=$MSI_SIG_PATH" >> $GITHUB_ENV
-
-      - name: Create release notes
-        shell: bash
-        run: |
-          cat > release-notes.md << EOF
-          ## HammerOverlay ${{ env.VERSION }}
-
-          ### What's New
-          - Discord timestamps now participate in semantic time arithmetic instead of silently discarding meaningful surrounding language.
-          - Ambiguous clock composition can return selectable AM/PM alternatives in the overlay.
-          - Superseded parse requests are cancelled through the desktop and backend path to avoid wasted local-model work.
-          - The promoted Qwen3.5-0.8B V22 Temporal Plan-IR adapter adds broader timestamp, shift, clock-order, typo, clarification, range-format, and infix coverage.
-
-          ### Installation
-          1. Download the MSI installer below.
-          2. Run the installer. Unsigned builds may show a Windows SmartScreen warning.
-          3. Launch HammerOverlay and use Ctrl+Shift+H to open the overlay.
-
-          ### Update Metadata
-          This release includes Tauri v2 updater metadata in latest.json.
-          EOF
-
-      - name: Create GitHub release
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ env.VERSION }}" \
-            "$MSI_PATH" \
-            "$MSI_SIG_PATH" \
-            updater/latest.json \
-            --repo BASIC-BIT/discord-time-app \
-            --target "$GITHUB_SHA" \
-            --title "HammerOverlay ${{ env.VERSION }}" \
-            --notes-file release-notes.md \
-            --latest
-
-      - name: Print build summary
-        shell: bash
-        run: |
-          echo "🎉 Build completed successfully!"
-          echo "📦 Version: ${{ env.VERSION }}"
-          echo "🏠 Repository: BASIC-BIT/discord-time-app"
-          echo "🔗 Release: https://github.com/BASIC-BIT/discord-time-app/releases/tag/${{ env.VERSION }}"
-          echo ""
-          echo "📝 Next steps:"
-          echo "1. Verify the release assets were uploaded correctly"
-          echo "2. Test the auto-updater with the new version"
-          echo "3. Announce the release to users"
-          
-          # List uploaded files
-          echo ""
-          echo "📁 Uploaded files:"
-          find src-tauri/target/release/bundle/ -name "*.msi" -exec basename {} \;
-          find src-tauri/target/release/bundle/ -name "*.sig" -exec basename {} \;
-          echo "latest.json"
+          Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | Get-FileHash -Algorithm SHA256 | Format-List | Out-File msi-sha256.txt
+          git rev-parse HEAD | Out-File source-head.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HammerOverlay-private-0.1.7
+          retention-days: 7
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            msi-sha256.txt
+            source-head.txt
