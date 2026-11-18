@@ -21,18 +21,32 @@ jobs:
           workspaces: './src-tauri -> target'
       - run: npm ci
       - run: npm ci --prefix api
+      - name: Capture standalone clock diagnostic
+        env:
+          TEMPORAL_EVAL_BASELINES: endpoint-plan
+          TEMPORAL_EVAL_CASE_IDS: diagnostic-standalone-5pm-installed-runpod
+          TEMPORAL_EVAL_ENDPOINT_BASE_URL: https://lvddpcgo2rizu8.api.runpod.ai/v1
+          TEMPORAL_EVAL_ENDPOINT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
+          TEMPORAL_EVAL_ENDPOINT_MODEL: qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22
+          TEMPORAL_EVAL_ENDPOINT_API: chat
+          TEMPORAL_EVAL_ENDPOINT_PROMPT_FORMAT: chat
+          TEMPORAL_EVAL_ENDPOINT_INSTRUCTION_PRESET: minimal
+          TEMPORAL_EVAL_ENDPOINT_MAX_TOKENS: '512'
+          TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS: '180000'
+          TEMPORAL_EVAL_OUTPUT: ../5pm-hosted-diagnostic.json
+        run: npm --prefix api run eval:temporal
       - name: Set private install version
         shell: pwsh
         run: |
           $p = Get-Content package.json -Raw | ConvertFrom-Json
-          $p.version = '0.1.7'
+          $p.version = '0.1.8'
           $p | ConvertTo-Json -Depth 20 | Set-Content package.json
           $c = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $c.version = '0.1.7'
+          $c.version = '0.1.8'
           $c.bundle.createUpdaterArtifacts = $false
           $c | ConvertTo-Json -Depth 30 | Set-Content src-tauri/tauri.conf.json
           $cargo = Get-Content src-tauri/Cargo.toml -Raw
-          $cargo.Replace('version = "0.1.5"', 'version = "0.1.7"') | Set-Content src-tauri/Cargo.toml
+          $cargo.Replace('version = "0.1.5"', 'version = "0.1.8"') | Set-Content src-tauri/Cargo.toml
       - name: Build private MSI with existing restricted invoke key
         env:
           HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
@@ -48,9 +62,10 @@ jobs:
           git rev-parse HEAD | Out-File source-head.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: HammerOverlay-private-0.1.7
+          name: HammerOverlay-private-0.1.8
           retention-days: 7
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             msi-sha256.txt
             source-head.txt
+            5pm-hosted-diagnostic.json
