@@ -1,10 +1,10 @@
-name: Private installed RunPod verification build
+name: Private standalone clock diagnostic
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  build:
+  diagnose:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,16 +15,13 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             api/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
       - run: npm ci
       - run: npm ci --prefix api
-      - name: Capture standalone clock diagnostic
+      - name: Capture the synthetic failure and raw Plan-IR
         env:
           TEMPORAL_EVAL_BASELINES: endpoint-plan
           TEMPORAL_EVAL_CASE_IDS: diagnostic-standalone-5pm-installed-runpod
+          TEMPORAL_EVAL_DEBUG_CASE: diagnostic-standalone-5pm-installed-runpod
           TEMPORAL_EVAL_ENDPOINT_BASE_URL: https://lvddpcgo2rizu8.api.runpod.ai/v1
           TEMPORAL_EVAL_ENDPOINT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
           TEMPORAL_EVAL_ENDPOINT_MODEL: qwen-temporal-ir-qwen35-08b-bf16-chat-range-format-infix-v22
@@ -34,38 +31,15 @@ jobs:
           TEMPORAL_EVAL_ENDPOINT_MAX_TOKENS: '512'
           TEMPORAL_EVAL_ENDPOINT_TIMEOUT_MS: '180000'
           TEMPORAL_EVAL_OUTPUT: ../5pm-hosted-diagnostic.json
-        run: npm --prefix api run eval:temporal
-      - name: Set private install version
         shell: pwsh
         run: |
-          $p = Get-Content package.json -Raw | ConvertFrom-Json
-          $p.version = '0.1.8'
-          $p | ConvertTo-Json -Depth 20 | Set-Content package.json
-          $c = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $c.version = '0.1.8'
-          $c.bundle.createUpdaterArtifacts = $false
-          $c | ConvertTo-Json -Depth 30 | Set-Content src-tauri/tauri.conf.json
-          $cargo = Get-Content src-tauri/Cargo.toml -Raw
-          $cargo.Replace('version = "0.1.5"', 'version = "0.1.8"') | Set-Content src-tauri/Cargo.toml
-      - name: Build private MSI with existing restricted invoke key
-        env:
-          HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:HOSTED_SLM_DEFAULT_API_KEY)) { throw 'Existing hosted SLM secret is missing' }
-          npm run tauri build
+          npm --prefix api run eval:temporal 2>&1 | Tee-Object -FilePath 5pm-trace.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Record MSI identity
-        shell: pwsh
-        run: |
-          Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | Get-FileHash -Algorithm SHA256 | Format-List | Out-File msi-sha256.txt
-          git rev-parse HEAD | Out-File source-head.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: HammerOverlay-private-0.1.8
+          name: standalone-5pm-diagnostic
           retention-days: 7
           path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            msi-sha256.txt
-            source-head.txt
             5pm-hosted-diagnostic.json
+            5pm-trace.log
