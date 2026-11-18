@@ -21,6 +21,14 @@ $legSetup = @($statements | Where-Object { $_.Extent.Text.StartsWith('$Legs =') 
 $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) | Where-Object { $_.Name -in @('Get-TreeState','Get-ArtifactFreshness','Assert-FreshSmokeEvidence','Assert-True') })
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('updater-handoff-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture | Out-Null
+$repoRoot = Join-Path $fixture 'repository'
+New-Item -ItemType Directory -Path (Join-Path $repoRoot 'src') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $repoRoot 'src/application.txt'), 'fixture application')
+git -C $repoRoot init --quiet
+if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the handoff fixture repository.' }
+git -C $repoRoot add src/application.txt
+git -C $repoRoot -c commit.gpgsign=false -c core.hooksPath="$fixture/no-hooks" -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m 'fixture application'
+if ($LASTEXITCODE -ne 0) { throw 'Could not commit the handoff fixture baseline.' }
 $stubPath = Join-Path $fixture 'preflight-child.ps1'
 $childScript = $ast.ParamBlock.Extent.Text + "`n" + @'
 $ErrorActionPreference = 'Stop'

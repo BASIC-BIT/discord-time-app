@@ -44,6 +44,14 @@ The prior four P2 items stay in #30: on-demand probe cost, blocking startup prob
 
 Signing-key custody outside GitHub remains an owner check before release. This validation does not inspect or copy private signing material, change signing, publish a release or deploy anything.
 
+## November 18 review corrections
+
+The automated review of `72e68a4` cited the preserved November 13 click timeout as an open installed gate. The separate November 16 [successful click report](../evidence/updater-2026-11-13/click.json), present in that same head, records all 16 checks passing. Its retained log records the tray request, 0.0.2 startup and up-to-date result. Both independent reviewers verified its raw-report hash and provenance. The timeout remains historical evidence, not the current outcome.
+
+Two CI/fixture findings were valid. Rust format, clippy and test steps now fail the Windows job when they fail. The handoff regression now creates its own temporary Git repository and application baseline while still executing the real frozen-mode guard and child preflight. A dirty shallow caller checkout reproduced the earlier failure, then passed after isolation. The ordinary checkout also passed, including the negative missing-`SkipBuild` case. Production frozen-artifact checks were unchanged. All five harmless fixture suites passed after these corrections.
+
+The Local SLM finding assumed a managed server running from Program Files. Source inspection instead shows `local_slm_install_root` using `app_data_dir()/local-slm-runtime`; bundled resource files are copy sources, and runtime installation stores the copied launcher in AppData (`src-tauri/src/lib.rs:567-594,1216-1282`). The canonical launcher delegates to Docker, whose workspace is the launcher's parent directory; managed mounts are therefore under AppData, with model/compiler caches in Docker volumes (`scripts/start-temporal-peft-server-container.ps1:41,141-152`). Runtime install/download/pull work already blocks automatic updates through `local_slm_in_flight`. Keeping the managed Docker runtime running follows the approved design. An explicitly configured custom launcher under Program Files is possible; its file-lock behavior remains UNKNOWN and was not experimentally tested. No runtime shutdown or busy-state code change was justified by this finding.
+
 ## Evidence appendix
 
 - Frozen application: `f3fd60975b718b4d8fb22193166de603789ad136`.

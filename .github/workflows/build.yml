@@ -99,17 +99,14 @@ jobs:
       - name: Check Rust formatting
         working-directory: src-tauri
         run: cargo fmt --all -- --check
-        continue-on-error: true
 
       - name: Run Rust clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features -- -D warnings
-        continue-on-error: true
 
       - name: Run Rust tests
         working-directory: src-tauri
         run: cargo test
-        continue-on-error: true
 
       - name: Build Tauri application (Debug)
         env:
