@@ -1,0 +1,116 @@
+{
+  "scenario": "click",
+  "sourceReport": "D:\\bench\\discord-time-app\\.cache\\worktrees\\updater-checkpoint-fix\\api\\reports\\temporal-ml\\updater-click-20261113-02\\updater-smoke-click.json",
+  "sourceReportSha256": "2689E7DA89A68DFEDBDFF1F61670BE29DFC3108185287F470E4AE74B05B27755",
+  "applicationCommit": "f3fd60975b718b4d8fb22193166de603789ad136",
+  "runnerCommit": "880e556459e9cb96587585218b8d8b4b632b730b",
+  "runnerScriptSha256": "9B917B316C25AEE27C5B4140D13FB52AB114B10E3250AB11B79F11BB26124F16",
+  "captureHelperSha256": "51128C6673848A6E43A526126459C3A3AEF4EE97A0A9A6FBD6E8195434CE7A69",
+  "runnerDirty": false,
+  "artifactSha256": {
+    "new-0.0.1.msi": "1ECF5A3B18F873536E40B41ADF4C5ED871F97929A48FC201B11A78450F6E11B3",
+    "new-0.0.2.msi": "F8DC02D8CC63188ECB34BA65E4EF3C02FA920314E8DB8064354002648A228F5D"
+  },
+  "startedAt": "2026-11-16T22:08:19.6768872-05:00",
+  "finishedAt": "2026-11-16T22:21:42.1416409-05:00",
+  "status": "passed",
+  "incomplete": false,
+  "stage": "complete",
+  "checks": [
+    {
+      "check": "Smoke log directory is empty before the leg.",
+      "passed": true
+    },
+    {
+      "check": "Smoke data reset completed without removal errors.",
+      "passed": true
+    },
+    {
+      "check": "Smoke data roots are absent before the leg.",
+      "passed": true
+    },
+    {
+      "check": "msiexec /i new-0.0.1.msi /qn exit code.",
+      "passed": true,
+      "expected": "0",
+      "actual": "0"
+    },
+    {
+      "check": "Installed version before the update.",
+      "passed": true,
+      "expected": "0.0.1",
+      "actual": "0.0.1"
+    },
+    {
+      "check": "Manifest server answers on port 8859.",
+      "passed": true
+    },
+    {
+      "check": "Log has 'Update 0.0.2 ready; restart to update' within 120 s.",
+      "passed": true
+    },
+    {
+      "check": "Installed version stays 0.0.1 until the click.",
+      "passed": true,
+      "expected": "0.0.1",
+      "actual": "0.0.1"
+    },
+    {
+      "check": "Operator clicked 'Restart to update 0.0.2' within 180 s of the prompt.",
+      "passed": true
+    },
+    {
+      "check": "Within 600 s of the click the original process exited, a process from the install path is running and 0.0.2 is installed.",
+      "passed": true
+    },
+    {
+      "check": "Exactly one app process from the install path within 15 s.",
+      "passed": true
+    },
+    {
+      "check": "Log has 'Restart to update requested from system tray'.",
+      "passed": true
+    },
+    {
+      "check": "Relaunched process runs from the install path.",
+      "passed": true,
+      "expected": "C:\\Program Files\\HammerOverlay Updater Smoke\\hammer-overlay.exe",
+      "actual": "C:\\Program Files\\HammerOverlay Updater Smoke\\hammer-overlay.exe"
+    },
+    {
+      "check": "Sidecar /health reports appVersion 0.0.2.",
+      "passed": true
+    },
+    {
+      "check": "Exactly one listener on port 8858.",
+      "passed": true,
+      "expected": "1",
+      "actual": "1"
+    },
+    {
+      "check": "Relaunched 0.0.2 checks again and reports up to date (no install loop).",
+      "passed": true
+    }
+  ],
+  "clickedBy": "operator",
+  "secondsPromptToClick": 137.1,
+  "clickToRelaunchSeconds": 397,
+  "trayClickLogLine": "[2026-11-17][03:11:53][hammer_overlay_lib][INFO] Restart to update requested from system tray",
+  "upToDateLogLine": "[2026-11-17][03:18:31][hammer_overlay_lib::updater][INFO] Up to date (0.0.2)",
+  "appIntegrity": "High",
+  "sidecarIntegrity": "High",
+  "actualLogPath": "C:\\Users\\steve\\AppData\\Local\\com.hammer-overlay.updater-smoke\\logs\\HammerOverlay Updater Smoke.log",
+  "processOwner": "unknown",
+  "ownerQueryError": "Timed out ",
+  "nativeCaptureErrors": [],
+  "stderrKind": "absent",
+  "stderrSnapshotError": null,
+  "diagnosticError": null,
+  "cleanupError": null,
+  "realAppPidsUnchanged": true,
+  "limitations": [
+    "RunAs harness; ordinary-user relaunch token and declining UAC untested.",
+    "Owner query timed out; owner remains UNKNOWN. Native log destination was independently captured without error.",
+    "Sanitized extraction omits configuration and full logs. Original timeout and this successful report remain preserved."
+  ]
+}
