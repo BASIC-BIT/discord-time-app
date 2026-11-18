@@ -1540,6 +1540,15 @@ function buildTemporalEvalCases(): TemporalEvalCase[] {
     expected: { status: 'resolved', epoch: 1788487200, suggestedFormatIndex: 4 },
   },
   {
+    id: 'diagnostic-standalone-5pm-installed-runpod',
+    text: '5pm',
+    category: 'diagnostic-standalone-clock',
+    required: false,
+    referenceInstant: '2026-11-18T21:18:11.689Z',
+    timeZone: 'America/Indianapolis',
+    expected: { status: 'resolved', epoch: 1795039200 },
+  },
+  {
     id: 'diagnostic-month-typo-suffix-bare-minute-clarification',
     text: 'first of Febuarysdf 2:30',
     category: 'diagnostic-month-typo-bare-minute',
