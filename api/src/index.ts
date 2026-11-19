@@ -189,6 +189,7 @@ const parseResponseSchema = {
       properties: {
         endpointWarming: { type: 'boolean' },
         llmFallbackAttempted: { type: 'boolean' },
+        ambiguousTimeZone: { type: 'boolean' },
         shortCircuitReason: { type: 'string' },
       }
     }
@@ -439,7 +440,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
   request.raw.once('aborted', abortOnDisconnect);
   reply.raw.once('close', abortOnPrematureClose);
   const startedAt = performance.now();
-  let warmupBudgetSignal: AbortSignal | undefined;
+  class WarmupFallbackTimeoutError extends Error {}
 
   try {
     if (now !== undefined && !isValidIsoInstant(now)) {
@@ -494,13 +495,22 @@ server.post<{ Body: ParseRequest }>('/parse', {
     let parsed = await parseTemporalExpression(endpointWarming ? withoutLlm : parseInput);
     if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
       llmFallbackAttempted = true;
-      warmupBudgetSignal = AbortSignal.timeout(30_000);
-      parsed = await parseTemporalExpression({ ...parseInput,
-        signal: AbortSignal.any([controller.signal, warmupBudgetSignal]),
-        deadlineMs: Date.now() + 30_000,
-        features: { ...parseInput.features, planIr: true },
-      });
-      warmupBudgetSignal.throwIfAborted();
+      const warmupBudgetSignal = AbortSignal.timeout(30_000);
+      try {
+        parsed = await parseTemporalExpression({ ...parseInput,
+          signal: AbortSignal.any([controller.signal, warmupBudgetSignal]),
+          deadlineMs: Date.now() + 30_000,
+          features: { ...parseInput.features, planIr: true },
+        });
+        warmupBudgetSignal.throwIfAborted();
+      } catch (error) {
+        if (warmupBudgetSignal.aborted && !controller.signal.aborted &&
+            (error === warmupBudgetSignal.reason || error instanceof TemporalCancellationError ||
+             (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)))) {
+          throw new WarmupFallbackTimeoutError();
+        }
+        throw error;
+      }
     }
     if (endpointWarming) {
       parsed.debug = { ...parsed.debug, endpointWarming: true, llmFallbackAttempted, shortCircuitReason: 'plan_ir_endpoint_warming' };
@@ -541,7 +551,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
         error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,
-        ...(endpointWarming ? { debug: { endpointWarming: true, llmFallbackAttempted } } : {}),
+        debug: { ambiguousTimeZone: parsed.debug?.ambiguousTimeZone === true, ...(endpointWarming ? { endpointWarming: true, llmFallbackAttempted } : {}) },
         alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
           label: alternative.label,
           kind: alternative.kind,
@@ -577,7 +587,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
     };
 
   } catch (error) {
-    if (warmupBudgetSignal?.aborted && !controller.signal.aborted) {
+    if (error instanceof WarmupFallbackTimeoutError) {
       request.log.warn({ requestId, status: 'parse_timeout', durationMs: Math.round(performance.now() - startedAt) }, 'warmup fallback timed out');
       return reply.status(504).send({ error: 'parse_timeout', message: 'Smart parsing took too long. Please try again.' });
     }

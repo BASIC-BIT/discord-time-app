@@ -108,13 +108,13 @@ test('cancelling during token refresh never starts a model call', async () => {
 });
 
 test('native and HTTP errors do not trigger a second hosted attempt after local LLM work', async () => {
-  const body = {error:'parse_failed',debug:{endpointWarming:true,llmFallbackAttempted:true}};
+  const body = {error:'parse_failed',debug:{endpointWarming:true,llmFallbackAttempted:true,ambiguousTimeZone:true}};
   fake.invoke.mockResolvedValue({ok:false,status:400,body});
   const native = new TimeParserAPIClient('http://127.0.0.1:8857','test-local-key');
-  await expect(native.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && !canUseHostedFallback(error));
+  await expect(native.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && error.ambiguousTimeZone && !canUseHostedFallback(error));
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify(body),{status:400})));
   const http = new TimeParserAPIClient('http://127.0.0.1:8857','test-local-key','unavailable',false);
-  await expect(http.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && !canUseHostedFallback(error));
+  await expect(http.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && error.ambiguousTimeZone && !canUseHostedFallback(error));
 });
 
 test('preserves a server deadline as parse_timeout instead of a generic provider outage', async()=>{

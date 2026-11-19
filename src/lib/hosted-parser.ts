@@ -39,7 +39,7 @@ export async function parseHostedTime(text: string, tz: string, now: string, req
   const hasResult = result.kind === 'time_range' ? result.range !== undefined : result.epoch !== undefined;
   if (result.status !== 'resolved' || !hasResult || !result.validation.passed) {
     throw new TimeParserAPIError(result.clarificationQuestion ?? 'Could not verify that time. Try adding a date or AM/PM.', 400,
-      result.status === 'needs_clarification' ? 'needs_clarification' : 'parse_failed', result.clarificationAlternatives, requestId);
+      result.status === 'needs_clarification' ? 'needs_clarification' : 'parse_failed', result.clarificationAlternatives, requestId, false, false, result.debug?.ambiguousTimeZone);
   }
   return {
     generationId: requestId, kind: result.kind ?? 'instant', epoch: result.epoch ?? result.range!.start.epoch,

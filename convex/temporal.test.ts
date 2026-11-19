@@ -32,7 +32,7 @@ test('uses Luna low, strips traces, and tracks usage separately for each user', 
   });
   const a = t.withIdentity({ subject: 'user-a', issuer: 'https://clerk.example' });
   const result = await a.action(api.temporal.parse, args);
-  expect(parseTemporalExpression).toHaveBeenCalledWith(expect.objectContaining({ openaiModel: 'gpt-6-luna', openaiReasoningEffort: 'low', features: expect.objectContaining({ planIr: true }) }));
+  expect(parseTemporalExpression).toHaveBeenCalledWith(expect.objectContaining({ openaiModel: 'gpt-6-luna', openaiReasoningEffort: 'low', features: expect.objectContaining({ planIr: true, deterministicPreflight: false, discordReferenceRouting: true }) }));
   expect(result.debug?.trace).toBeUndefined();
   expect(await a.query(api.usage.mine, {})).toEqual({ requests: 1, inputTokens: 100, outputTokens: 30 });
   const b = t.withIdentity({ subject: 'user-b', issuer: 'https://clerk.example' });
@@ -181,4 +181,16 @@ test.each([false, true])('reports the server deadline distinctly, including late
     expect(await user.query(api.usage.mine,{})).toEqual({requests:1,inputTokens:10,outputTokens:2});
     await t.run(async ctx=>{const [usage]=await ctx.db.query('usage').collect();expect(usage.status).toBe('timeout');});
   } finally {timeout.mockRestore();}
+});
+
+test('new parser fields and nested diagnostics stay private by default',async()=>{
+  const t=convexTest(schema,modules);rateLimiter.register(t);
+  const canonical={isoInstant:'2026-01-01T00:00:00Z',zonedDateTime:'2026-01-01T00:00:00+00:00[UTC]',timeZone:'UTC',precision:'datetime' as const,privateField:'private-diagnostic'};
+  const range={start:{epoch:1,suggestedFormatIndex:4,canonical,privateField:'private-diagnostic'},end:{epoch:2,suggestedFormatIndex:4,canonical},discord:'<t:1:f> - <t:2:f>',privateField:'private-diagnostic'};
+  const raw={status:'resolved' as const,kind:'time_range' as const,range,confidence:1,method:'agent+plan' as const,assumptions:['private-diagnostic'],ambiguity:[],validation:{passed:true,warnings:[],checks:['private-diagnostic']},privateField:'private-diagnostic'};
+  vi.mocked(parseTemporalExpression).mockResolvedValue(raw);
+  const result=await t.withIdentity({subject:'allowlist-user'}).action(api.temporal.parse,args);
+  expect(result.range?.start.epoch).toBe(1);expect(result.range?.end.epoch).toBe(2);
+  expect(result.assumptions).toEqual([]);expect(result.validation.checks).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain('private-diagnostic');
 });

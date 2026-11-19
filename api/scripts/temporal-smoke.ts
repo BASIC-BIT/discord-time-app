@@ -194,6 +194,17 @@ async function main() {
   assert.equal(incompleteChoices.epoch, undefined);
   assert.match(incompleteChoices.validation.warnings.join(' '), /requires query/);
 
+  for (const text of ['friday pst', '9/15/2027 est', 'tuesday mt']) {
+    const dateZoneContext = {referenceInstant:'2026-05-24T12:00:00Z',timeZone:'UTC'};
+    const lower = await parseExpression({text,calendarContext:dateZoneContext});
+    const upper = await parseExpression({text:text.replace(/\S+$/,zone=>zone.toUpperCase()),calendarContext:dateZoneContext});
+    assert.equal(lower.candidates.length,1,text);
+    assert.equal(lower.candidates[0]!.isoInstant,upper.candidates[0]!.isoInstant,text);
+    assert.equal(lower.candidates[0]!.timeZone,upper.candidates[0]!.timeZone,text);
+    assert.equal(hasContextualTimeZoneAbbreviation(text),false,text);
+  }
+  assert.equal(hasContextualTimeZoneAbbreviation('the Mt Hood trip Friday 7pm'),true);
+
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
   const epochZeroWithPreflightDisabled = await parseTemporalExpression({

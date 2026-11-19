@@ -12,7 +12,7 @@ export interface ParseResponse {
   confidence: number;
   method: string;
   canonical?: ParseCanonical;
-  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean; shortCircuitReason?: string; serverValidated?: boolean };
+  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean; ambiguousTimeZone?: boolean; shortCircuitReason?: string; serverValidated?: boolean };
 }
 
 export interface PlanIrEndpointStatus {
@@ -59,7 +59,7 @@ export interface ParseError {
   message?: string;
   generationId?: string;
   alternatives?: ParseAlternative[];
-  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean };
+  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean; ambiguousTimeZone?: boolean };
 }
 
 export interface ParseOptions {
@@ -120,6 +120,7 @@ export class TimeParserAPIError extends Error {
     public readonly generationId?: string,
     public readonly endpointWarming = false,
     public readonly llmFallbackAttempted = false,
+    public readonly ambiguousTimeZone = false,
   ) {
     super(message);
     this.name = 'TimeParserAPIError';
@@ -218,7 +219,7 @@ export class TimeParserAPIClient {
 
       if (!response.ok) {
         const errorData = await response.json() as ParseError;
-        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId, errorData.debug?.endpointWarming, errorData.debug?.llmFallbackAttempted);
+        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId, errorData.debug?.endpointWarming, errorData.debug?.llmFallbackAttempted, errorData.debug?.ambiguousTimeZone);
       }
 
       const data = await response.json() as ParseResponse;
@@ -300,6 +301,7 @@ export class TimeParserAPIClient {
         errorData.generationId,
         errorData.debug?.endpointWarming,
         errorData.debug?.llmFallbackAttempted,
+        errorData.debug?.ambiguousTimeZone,
       );
     }
 

@@ -1,0 +1,31 @@
+// @vitest-environment jsdom
+import {act} from 'react';
+import {createRoot} from 'react-dom/client';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+const fake=vi.hoisted(()=>({invoke:vi.fn(),open:vi.fn(),changed:()=>{},window:{label:'main',setAlwaysOnTop:vi.fn(async()=>{}),setFocus:vi.fn(async()=>{}),hide:vi.fn(async()=>{}),onFocusChanged:vi.fn(async()=>()=>{})}}));
+vi.mock('@tauri-apps/api/core',()=>({invoke:fake.invoke}));
+vi.mock('@tauri-apps/api/window',()=>({getCurrentWindow:()=>fake.window}));
+vi.mock('@tauri-apps/api/event',()=>({listen:vi.fn(async(name:string,callback:()=>void)=>{if(name==='hosted-auth-changed')fake.changed=callback;return()=>{};})}));
+vi.mock('@tauri-apps/plugin-opener',()=>({openUrl:fake.open}));
+vi.mock('./components/Overlay',()=>({Overlay:({onClose}:{onClose:()=>void})=><button onClick={onClose}>Close overlay</button>}));
+vi.mock('./components/Settings',()=>({Settings:()=>null}));
+vi.mock('./components/UpdateChecker',()=>({UpdateChecker:()=>null}));
+import App from './App';
+import {openHostedSignInBrowser,restoreHostedSignInWindow} from './lib/hosted-auth';
+let container:HTMLDivElement;let root:ReturnType<typeof createRoot>;
+beforeEach(()=>{vi.clearAllMocks();vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);fake.invoke.mockResolvedValue({configured:true,phase:'signed_out',error:null});fake.open.mockResolvedValue(undefined);container=document.createElement('div');document.body.append(container);root=createRoot(container);});
+afterEach(async()=>{await act(async()=>root.unmount());await restoreHostedSignInWindow();container.remove();});
+it('restores the main window after approval ends while the account panel is unmounted',async()=>{
+  await act(async()=>root.render(<App/>));
+  await openHostedSignInBrowser({configured:true,phase:'pending',userCode:'ABCD-EFGH',verificationUri:'https://accounts.example/device',verificationUriComplete:null,expiresIn:600,error:null});
+  expect(fake.window.setAlwaysOnTop).toHaveBeenLastCalledWith(false);
+  await act(async()=>container.querySelector('button')!.click());
+  expect(container.querySelector('button')).toBeNull();
+  fake.invoke.mockResolvedValue({configured:true,phase:'pending',error:null});
+  await act(async()=>fake.changed());
+  expect(fake.window.setAlwaysOnTop).toHaveBeenLastCalledWith(false);
+  fake.invoke.mockResolvedValue({configured:true,phase:'signed_out',error:null});
+  await act(async()=>fake.changed());
+  expect(fake.window.setAlwaysOnTop).toHaveBeenLastCalledWith(true);
+  expect(container.querySelector('button')).toBeNull();
+});

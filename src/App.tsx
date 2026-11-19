@@ -5,10 +5,16 @@ import { Overlay } from "./components/Overlay";
 import { Settings } from "./components/Settings";
 import { UpdateChecker } from "./components/UpdateChecker";
 import "./App.css";
-import { getHostedAuthToken } from './lib/hosted-auth';
+import { getHostedAuthStatus, getHostedAuthToken } from './lib/hosted-auth';
 
 function App() {
-  useEffect(() => { void getHostedAuthToken().catch(() => {}); }, []);
+  useEffect(() => {
+    void getHostedAuthToken().catch(() => {});
+    const unlisten = listen('hosted-auth-changed', () => {
+      void getHostedAuthStatus().catch(() => console.warn('Could not refresh sign-in window state.'));
+    }).catch(() => undefined);
+    return () => { void unlisten.then(stop => stop?.()); };
+  }, []);
   const [showOverlay, setShowOverlay] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateChecker, setShowUpdateChecker] = useState(false);

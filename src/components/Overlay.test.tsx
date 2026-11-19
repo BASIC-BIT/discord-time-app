@@ -124,7 +124,7 @@ it('requires an explicit action before sending auto-loaded clipboard text to the
 });
 it('lets the user clarify a timezone before parsing a timestamp', async () => {
   fake.eligible = false;
-  fake.parse.mockRejectedValue(new TimeParserAPIError('Which timezone did you mean by CST?', 400, 'needs_clarification', []));
+  fake.parse.mockRejectedValue(new TimeParserAPIError('Which timezone did you mean by CST?', 400, 'needs_clarification', [], undefined, false, false, true));
   await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
   const input = container.querySelector('textarea')!;
   await act(async () => {
@@ -149,15 +149,16 @@ it('shows a relay clarification without prepending the local failure', async () 
   await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
   const input = container.querySelector('textarea')!;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '5pma');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '5pm cst a');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await act(async () => vi.advanceTimersByTimeAsync(1100));
   expect(container.querySelector('.clarification-title')?.textContent).toBe('Did you mean AM or PM?');
+  expect(container.querySelector('[aria-label="Choose timezone"]')).toBeNull();
   expect(container.querySelector('.status-line')).toBeNull();
 });
 it('can use the model for a fuzzy clock after the user clarifies its timezone', async () => {
-  fake.parse.mockRejectedValueOnce(new TimeParserAPIError('Which timezone did you mean by CST?', 400, 'needs_clarification', []))
+  fake.parse.mockRejectedValueOnce(new TimeParserAPIError('Which timezone did you mean by CST?', 400, 'needs_clarification', [], undefined, false, false, true))
     .mockRejectedValue(new Error('cold endpoint'));
   fake.hosted.mockResolvedValue({ epoch: 1795125600, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } });
   await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));

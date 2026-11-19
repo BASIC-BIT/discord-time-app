@@ -124,6 +124,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [error, setError] = useState<string | null>(null);
   const [signInRequired, setSignInRequired] = useState(false);
   const [canRetryFallback, setCanRetryFallback] = useState(false);
+  const [ambiguousTimeZone, setAmbiguousTimeZone] = useState(false);
   const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
   const [clarificationAlternatives, setClarificationAlternatives] = useState<ParseAlternative[]>([]);
   const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
@@ -337,6 +338,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setRange(null);
         setConfidence(1);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         setGenerationId(clientGenerationId);
@@ -353,6 +355,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setRange(directRange);
         setConfidence(1);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
@@ -369,6 +372,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setRange(null);
         setConfidence(1);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
@@ -386,6 +390,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setConfidence(1);
         setError(null);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         setGenerationId(null);
@@ -404,6 +409,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       setRange(null);
       setError(null);
       setClarificationQuestion(null);
+      setAmbiguousTimeZone(false);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
       setGenerationId(null);
@@ -535,6 +541,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setError(null);
     setRange(null);
     setClarificationQuestion(null);
+    setAmbiguousTimeZone(false);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
     setGenerationId(null);
@@ -619,7 +626,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
               if (hostedError instanceof Error && hostedError.name === 'AbortError') throw hostedError;
               const failure = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
               const message = failure.code === 'needs_clarification' ? failure.message : failure.code === 'sign_in_required' ? localMessage ?? failure.message : [localMessage, failure.message].filter(Boolean).join(' ');
-              error = new TimeParserAPIError(message, failure.status, failure.code, failure.alternatives, failure.generationId, failure.endpointWarming);
+              error = new TimeParserAPIError(message, failure.status, failure.code, failure.alternatives, failure.generationId, failure.endpointWarming, failure.llmFallbackAttempted, failure.ambiguousTimeZone);
               setCanRetryFallback(failure.code !== 'parse_timeout' && (failure.status === 429 || (failure.status ?? 0) >= 500));
             }
           }
@@ -647,6 +654,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setSelectedIndex(0);
         setConfidence(result.confidence);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
       } else if (result && typeof result.epoch === 'number') {
@@ -658,6 +666,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         }
         setConfidence(result.confidence);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         void verifyDisplayedResult(apiClient, text, timezone, result, revision);
@@ -674,6 +683,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             setError(useLlmParsing && canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
             setClarificationQuestion(apiError.message);
+            setAmbiguousTimeZone(apiError.ambiguousTimeZone);
             setClarificationAlternatives(apiError.alternatives ?? []);
             setSelectedAlternativeIndex(0);
             setError(null);
@@ -739,6 +749,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setConfidence(1);
         setError('I could not verify that timestamp. Try adding AM/PM, a date, or more context.');
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
       }
@@ -760,7 +771,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
   const hasClarification = clarificationQuestion !== null;
   const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
-  const clarificationZones = hasClarification ? resolveTimeZone({ text: inputText, calendarContext: { referenceInstant: new Date().toISOString(), timeZone: getUserTimezone() } }) : null;
+  const clarificationZones = hasClarification && ambiguousTimeZone ? resolveTimeZone({ text: inputText, calendarContext: { referenceInstant: new Date().toISOString(), timeZone: getUserTimezone() } }) : null;
   const timeZoneChoices = clarificationZones?.status === 'ambiguous' && new Set(clarificationZones.candidates.map(zone => zone.matchedText.toLowerCase())).size === 1 ? clarificationZones.candidates : [];
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
@@ -815,6 +826,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setConfidence(alternative.confidence);
     setError(null);
     setClarificationQuestion(null);
+    setAmbiguousTimeZone(false);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
   };
@@ -946,6 +958,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       setIsClipboardText(false);
       setRange(null);
       setClarificationQuestion(null);
+      setAmbiguousTimeZone(false);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
     }
@@ -983,6 +996,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setConfidence(1);
     setError(null);
     setClarificationQuestion(null);
+    setAmbiguousTimeZone(false);
     setClarificationAlternatives([]);
     setLoading(false);
     setVerifying(false);

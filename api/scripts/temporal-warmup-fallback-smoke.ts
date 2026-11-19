@@ -159,6 +159,9 @@ async function main() {
           assert.equal(llmCalls, before, 'the normal RunPod path must not invoke the LLM');
           continue;
         }
+        const timezoneQuestion = await parse('tomorrow 5pm CST');
+        assert.equal(timezoneQuestion.status, 400);
+        assert.equal((await timezoneQuestion.json()).debug?.ambiguousTimeZone, true);
         const clarification = await parse('tomorrow at 3');
         assert.equal(clarification.status, 400);
         assert.equal((await clarification.json()).error, 'needs_clarification');
