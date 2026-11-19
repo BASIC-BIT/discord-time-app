@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ readText: vi.fn(), writ
 vi.mock('@tauri-apps/plugin-notification', () => ({ sendNotification: vi.fn() }));
 vi.mock('../lib/stats', () => ({ initStats: vi.fn(), getFormatStats: vi.fn(async () => []), getMostUsedFormatIndex: () => 0, incrementFormatUsage: vi.fn() }));
 vi.mock('../lib/hosted-parser', () => ({ canUseHostedFallback: (error: unknown) => fake.eligible && !(error && typeof error === 'object' && 'code' in error && error.code === 'needs_clarification'), parseHostedTime: fake.hosted }));
-vi.mock('./HostedAccount', () => ({ HostedAccount: () => null }));
+vi.mock('./HostedAccount', () => ({ HostedAccount: () => <section aria-label="Account">Browser approval</section> }));
 vi.mock('../lib/api-client', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/api-client')>(),
   createAPIClient: async () => ({ parseTime: fake.parse, getPlanIrEndpointStatus: async () => ({ warmupEnabled: true, state: 'warming' }) }),
@@ -245,4 +245,17 @@ it('waits for the AI preference and then parses the latest typed text without cl
   expect(fake.hosted).toHaveBeenCalledOnce();
   expect(fake.hosted.mock.calls[0][0]).toBe('5pms');
   expect(vi.mocked(invoke).mock.calls.filter(call=>call[0]==='get_settings')).toHaveLength(1);
+});
+
+it('keeps the browser sign-in panel mounted while another parse is in flight', async () => {
+  fake.hosted.mockRejectedValue(new TimeParserAPIError('Sign in.',401,'sign_in_required'));
+  await act(async()=>root.render(<Overlay openToken={0} onClose={()=>{}} />));
+  const input=container.querySelector('textarea')!;
+  const type=async(text:string)=>act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,text);input.dispatchEvent(new Event('input',{bubbles:true}));});
+  await type('5pms'); await act(async()=>vi.advanceTimersByTimeAsync(1200));
+  const account=container.querySelector('[aria-label="Account"]');
+  expect(account).not.toBeNull();
+  fake.parse.mockImplementation(()=>new Promise(()=>{}));
+  await type('6pms'); await act(async()=>vi.advanceTimersByTimeAsync(400));
+  expect(container.querySelector('[aria-label="Account"]')).toBe(account);
 });

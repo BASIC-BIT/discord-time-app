@@ -29,7 +29,7 @@ export function HostedAccount({ compact = false, onSignedIn }: { compact?: boole
     return () => {
       active = false; operationRef.current += 1;
       void unlisten.then(stop => stop());
-      void restoreHostedSignInWindow().catch(() => console.warn('Could not restore the sign-in window.'));
+      if (phaseRef.current !== 'pending') void restoreHostedSignInWindow().catch(() => console.warn('Could not restore the sign-in window.'));
     };
   }, []);
 

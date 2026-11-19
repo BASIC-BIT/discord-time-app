@@ -88,8 +88,6 @@ test('bounds deployment-wide model calls even across distinct admitted identitie
   const rejected = t.withIdentity({subject: 'one-more-account'});
   await rejected.run(async ctx => {
     const identity = await ctx.auth.getUserIdentity();
-    const personal = await limits.getValue(ctx, 'fallbackUserDaily', {key: identity!.tokenIdentifier});
-    expect(personal.value).toBe(20);
     const burst = await limits.getValue(ctx, 'fallback', {key: identity!.tokenIdentifier});
     expect(burst.value).toBe(3);
   });
@@ -117,7 +115,7 @@ test('keeps completed usage when a later provider call fails', async () => {
   });
 });
 
-test('one account cannot consume the entire shared daily allowance', async () => {
+test('one account can continue beyond twenty spaced attempts without a personal day-long lockout', async () => {
   const t = convexTest(schema, modules); rateLimiter.register(t);
   let now = new Date('2026-11-19T12:00:00Z').getTime();
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -125,10 +123,10 @@ test('one account cannot consume the entire shared daily allowance', async () =>
   try {
     const user = t.withIdentity({subject: 'daily-user'});
     for (let index=0; index<20; index++) { await user.action(api.temporal.parse, args); now += 60_000; }
-    await expect(user.action(api.temporal.parse, args)).rejects.toThrow('your daily');
-    expect(parseTemporalExpression).toHaveBeenCalledTimes(20);
-    await t.withIdentity({subject: 'another-user'}).action(api.temporal.parse, args);
+    await user.action(api.temporal.parse, args);
     expect(parseTemporalExpression).toHaveBeenCalledTimes(21);
+    await t.withIdentity({subject: 'another-user'}).action(api.temporal.parse, args);
+    expect(parseTemporalExpression).toHaveBeenCalledTimes(22);
   } finally { clock.mockRestore(); }
 });
 

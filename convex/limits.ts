@@ -7,7 +7,6 @@ export const SHARED_REQUESTS_PER_DAY = 100;
 
 export const rateLimiter = new RateLimiter(components.rateLimiter, {
   fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 3 },
-  fallbackUserDaily: { kind: 'fixed window', rate: 20, period: DAY },
   fallbackDaily: { kind: 'token bucket', rate: SHARED_REQUESTS_PER_DAY, period: DAY, capacity: SHARED_REQUESTS_PER_DAY },
 });
 
@@ -20,8 +19,6 @@ export const admit = internalMutation({
     // Throwing rolls back all limiter debits, including component mutations.
     const limit = await rateLimiter.limit(ctx, 'fallback', { key: identity.tokenIdentifier });
     if (!limit.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing is busy. Wait a few seconds, then try again.' });
-    const userDaily = await rateLimiter.limit(ctx, 'fallbackUserDaily', { key: identity.tokenIdentifier });
-    if (!userDaily.ok) throw new ConvexError({ code: 'rate_limited', message: 'You have reached your daily smart parsing limit. Try again tomorrow.' });
     const daily = await rateLimiter.limit(ctx, 'fallbackDaily');
     if (!daily.ok) {
       console.warn('shared_daily_limit_reached');

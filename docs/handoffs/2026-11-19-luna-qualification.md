@@ -48,7 +48,7 @@ A guard-rejected or unexecutable plan can receive one error-guided repair. Indep
 
 ## Limits and remaining acceptance
 
-All offline suites, 46 related frontend/relay tests, API/frontend/Convex strict typechecks, and the production frontend build pass. The daily rate-limit regression uses distinct identities and proves the 101st admitted request cannot call the model. Failed or timed-out attempts still consume the 100-request shared fixed-window allowance.
+All offline suites, 53 related frontend/relay tests, API/frontend/Convex strict typechecks, and the production frontend build pass. Admission uses a shared token bucket refilling at 100 requests/day with capacity 100, plus a per-user 10/minute bucket with burst three. There is no additional per-user daily cap. Failed or timed-out admitted attempts still consume quota; rejected admissions roll back every debit.
 
 The passing run had median final latency 3,050 ms, P95 13,281 ms, and maximum 24,878 ms with four workers. Of 207 cases, 78 exceeded five seconds and none exceeded thirty seconds. This misses the five-second product SLO. Correctness evals do not impose the relay deadline; latency and deadline behaviour are separate measurements. Dollar cost estimates are unconfigured. Earlier snapshots omitted deterministic-validation token usage; current accounting includes accepted/rejected validation and repair, but provider usage may be unavailable on errors. Token totals are not a billing ledger, and daily enforcement does not depend on them.
 

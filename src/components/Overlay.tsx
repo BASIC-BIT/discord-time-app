@@ -525,7 +525,6 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   }, []);
 
   const parseInput = async (text: string, isFromClipboard: boolean, revision: number) => {
-    setSignInRequired(false);
     setCanRetryFallback(false);
     if (revisionRef.current !== revision) return;
     // Create new abort controller for this request
@@ -670,7 +669,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setEpoch(null);
           setRange(null);
           setConfidence(1);
-          setSignInRequired(apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required');
+          if (apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required') setSignInRequired(true);
           if (isFromClipboard && !hasDiscordReference) {
             setError(useLlmParsing && canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
@@ -766,7 +765,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
   const statusTone = error && !signInRequired && !(isClipboardText && canRetryFallback) ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
-  const hasInlineStatus = error || hasClarification || showLowConfidence;
+  const hasInlineStatus = signInRequired || error || hasClarification || showLowConfidence;
   const isBusy = loading || verifying;
   const showVerifyingTab = isBusy && !hasClarification && !error;
   const progressText = verifying ? 'Verifying' : parseProgressMessage ?? (hasResolvedResult ? 'Checking' : 'Parsing');

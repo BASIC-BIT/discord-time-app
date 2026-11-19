@@ -55,10 +55,10 @@ it('does not resume parsing merely because an already signed-in account panel mo
   await act(async () => fake.changed());
   expect(resumed).not.toHaveBeenCalled();
 });
-it('restores the initiating window if the pending panel is removed', async () => {
+it('keeps the browser above the overlay if the pending panel is removed', async () => {
   await render(); await click('Sign in with browser');
   await act(async () => root.render(null));
-  expect(fake.restore).toHaveBeenCalledOnce();
+  expect(fake.restore).not.toHaveBeenCalled();
 });
 it('keeps the code and browser retry available if opening the browser fails', async () => {
   fake.open.mockRejectedValue(new Error('unavailable')); await render(); await click('Sign in with browser');
