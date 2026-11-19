@@ -8,7 +8,7 @@ This follows the user's decision to keep the relay simple. The earlier Lambda st
 
 The hotkey immediately prewarms RunPod. While it warms, deterministic parsing runs first. A failure can use the hosted fallback if the user is signed in. Successful deterministic results and clarifications make no fallback call. Every model answer still passes Plan-IR execution and independent validation.
 
-Cloud fallback waits for one second of idle input, discards superseded text before making a request, and is unavailable when the build has no relay URL. Convex's maintained rate-limiter component allows ten calls per minute per identity, with capacity for one immediate call. This bounds rapid repeats without a budget ledger. Client cancellation still cannot cancel work already running in Convex.
+Cloud fallback waits for at least one second of idle input, discards superseded text before making a request, and is unavailable when the build has no relay URL. Convex's maintained rate-limiter component allows ten calls per minute per identity, with capacity for three immediate calls so an early prefix cannot consume the only token. Throttle and outage states retain the local diagnosis and offer an explicit retry. This bounds rapid repeats without a budget ledger. Client cancellation still cannot cancel work already running in Convex.
 
 Settings and the inline fallback prompt offer Sign in with browser. Clerk's public OAuth device grant opens the default browser, where Google and other configured sign-in methods work. The overlay shows the confirmation code and supports cancellation and retry. Approval automatically resumes the original parse. Local parsing works without an account.
 
@@ -49,6 +49,8 @@ flowchart TD
 - The desktop preserves the reference time across local parsing and fallback, discards cancelled results, and skips redundant post-display LLM verification for server-validated results.
 - A 30-second server timeout bounds stalled requests. It is a safety guard, not the five-second product SLO. Client cancellation cannot stop a running Convex action.
 - Provider failures log diagnostic name/status without raw prompts or credentials. Usage tracking is best effort and cannot replace a successful parse. Structured auth and throttle failures retain their actionable client messages. Deployment requires both Clerk issuer and OAuth audience configuration.
+- Planner and final semantic validation use separate calls to the same Luna model, alongside deterministic schema/executor checks. No claim of consensus between different models is made.
+- Clipboard preload remains off if its saved preference cannot be loaded, so a settings failure cannot override a user's disabled preference. This is deliberate; it does not change the Rust default for a new profile.
 
 ## Development setup
 

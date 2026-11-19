@@ -3021,6 +3021,10 @@ async function main() {
   assert.equal(dateOnlyNoon.status, 'resolved');
   assert.equal(dateOnlyNoon.canonical?.zonedDateTime.startsWith('2026-05-16T12:00:00'), true);
 
+  const ambiguousTimeZone = await parseTemporalExpression({ text: 'tomorrow at 5pm CST', timeZone, referenceInstant, openaiApiKey: 'sk-test', features: { deterministicPreflight: true, planIr: true } });
+  assert.equal(ambiguousTimeZone.status, 'needs_clarification');
+  assert.equal(ambiguousTimeZone.debug?.modelCalls, undefined);
+
   const explicitDatedRange = await parseTemporalExpression({
     text: 'June 10 2026 3pm-5pm America/Los_Angeles',
     timeZone,
@@ -3031,6 +3035,17 @@ async function main() {
   assert.equal(explicitDatedRange.method, 'deterministic');
   assert.equal(explicitDatedRange.range?.start.epoch, 1781128800);
   assert.equal(explicitDatedRange.range?.end.epoch, 1781136000);
+
+  for (const text of ['tomorrow from 3pm to 5pm', 'Friday 8pm-10:30pm', 'May 29, 2026 8pm-10:30pm']) {
+    const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
+    assert.equal(result.status, 'resolved', text);
+    assert.equal(result.kind, 'time_range', text);
+    assert.ok(result.range!.end.epoch > result.range!.start.epoch, text);
+  }
+  for (const text of ['Tuesday through Thursday 3pm-5pm', 'Tuesday through Thursday', 'nextt fri 8pm']) {
+    const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
+    assert.notEqual(result.status, 'resolved', `Partial text must not finalize: ${text}`);
+  }
 
   const explicitDatedRangeWithConfiguredOpenAi = await parseTemporalExpression({
     text: 'June 10 2026 3pm-5pm America/Los_Angeles',

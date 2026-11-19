@@ -58,10 +58,12 @@ test('throttles duplicate bursts before model work and isolates accounts', async
   const b = t.withIdentity({ subject: 'burst-b' });
   vi.mocked(parseTemporalExpression).mockResolvedValue({ status: 'failed', confidence: 0, method: 'agent+plan', assumptions: [], ambiguity: [], validation: { passed: false, warnings: [], checks: [] } });
   await a.action(api.temporal.parse, args);
+  await a.action(api.temporal.parse, args);
+  await a.action(api.temporal.parse, args);
   await expect(a.action(api.temporal.parse, args)).rejects.toThrow('Wait a few seconds');
-  expect(parseTemporalExpression).toHaveBeenCalledTimes(1);
+  expect(parseTemporalExpression).toHaveBeenCalledTimes(3);
   await b.action(api.temporal.parse, args);
-  expect(parseTemporalExpression).toHaveBeenCalledTimes(2);
+  expect(parseTemporalExpression).toHaveBeenCalledTimes(4);
 });
 
 test('tracking failure cannot replace a successful validated result', async () => {

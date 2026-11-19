@@ -3,6 +3,9 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Overlay } from './Overlay';
+import { TimeParserAPIError } from '../lib/api-client';
+import { invoke } from '@tauri-apps/api/core';
+import { readText } from '@tauri-apps/plugin-clipboard-manager';
 const fake = vi.hoisted(() => ({ parse: vi.fn(), hosted: vi.fn(), eligible: true }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({ auto_load_clipboard: false })) }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'test', setFocus: vi.fn() }), LogicalSize: class {}, PhysicalPosition: class {}, currentMonitor: vi.fn() }));
@@ -75,4 +78,47 @@ it('discards superseded input before starting cloud work', async () => {
   expect(fake.hosted).not.toHaveBeenCalled();
   await act(async () => vi.advanceTimersByTimeAsync(400));
   expect(fake.hosted).toHaveBeenCalledOnce(); expect(fake.hosted.mock.calls[0][0]).toBe('6pms');
+});
+
+it('preserves the local diagnosis and offers a usable retry after throttling', async () => {
+  fake.hosted.mockRejectedValueOnce(new TimeParserAPIError('Wait a few seconds.', 429, 'rate_limited'))
+    .mockResolvedValue({ epoch: 1795125600, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } });
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '5pms');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(container.querySelector('.status-line')?.textContent).toContain('cold endpoint');
+  expect(container.querySelector('.status-line')?.textContent).toContain('Wait a few seconds');
+  const retry = [...container.querySelectorAll('button')].find(button => button.textContent === 'Try smart parsing again')!;
+  expect(retry).toBeDefined(); await act(async () => retry.click());
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(fake.hosted).toHaveBeenCalledTimes(2); expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
+  expect(container.querySelector('.status-line')).toBeNull();
+});
+
+it('does not read the clipboard when its saved preference cannot be loaded', async () => {
+  vi.mocked(invoke).mockRejectedValueOnce(new Error('settings unavailable'));
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  expect(readText).not.toHaveBeenCalled();
+});
+
+it('accepts finished input after a prefix call starts and ignores its late result', async () => {
+  let finishPrefix!: (value: unknown) => void;
+  fake.hosted.mockImplementationOnce(() => new Promise(resolve => { finishPrefix = resolve; }))
+    .mockResolvedValue({ epoch: 1795129200, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } });
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  const type = async (text: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await type('5pms'); await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(fake.hosted).toHaveBeenCalledOnce();
+  await type('6pms'); await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(fake.hosted).toHaveBeenCalledTimes(2); expect(container.textContent).toContain('1795129200');
+  await act(async () => finishPrefix({ epoch: 1795125600, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } }));
+  expect(container.textContent).toContain('1795129200'); expect(container.textContent).not.toContain('1795125600');
 });

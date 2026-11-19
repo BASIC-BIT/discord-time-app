@@ -21,3 +21,5 @@ npm run eval:temporal
 ```
 
 The next decision is whether to keep the new fallback off by default while it is qualified, or continue the parser experiment before landing it. Exact installed-MSI authentication acceptance also remains open: the isolated review MSI was built and hashed, but its UAC installation was canceled.
+
+The user selected continued parser research. The first targeted contract repair passed 43/59 required cases sampled from all original failures plus controls, leaving 16 failures. It exposed missing calendar-default instructions, a dropped OpenAI presentation-format argument, meridiem truncation in range syntax, premature single-candidate acceptance of ranges and unexplained residue, and stopping after rejected deterministic validation instead of attempting Plan-IR repair. Repairs preserve the original expected answers and deterministic execution checks. Full qualification is still pending; the model-only and repaired-preflight lanes are being compared rather than silently changing the relay default.

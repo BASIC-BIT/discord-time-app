@@ -121,6 +121,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signInRequired, setSignInRequired] = useState(false);
+  const [canRetryFallback, setCanRetryFallback] = useState(false);
   const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
   const [clarificationAlternatives, setClarificationAlternatives] = useState<ParseAlternative[]>([]);
   const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
@@ -245,7 +246,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setDiscordReferenceRouting(settings.discord_reference_routing);
           setDiscordReferenceShadow(settings.discord_reference_shadow);
         } catch (settingsError) {
-          console.log('Settings unavailable, using parser defaults:', settingsError);
+          console.log('Settings unavailable; clipboard preload skipped, using parser defaults:', settingsError);
         }
         
         // Load clipboard content (handle empty clipboard gracefully)
@@ -514,6 +515,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
   const parseInput = async (text: string, isFromClipboard: boolean, revision: number) => {
     setSignInRequired(false);
+    setCanRetryFallback(false);
     if (revisionRef.current !== revision) return;
     // Create new abort controller for this request
     const abortController = new AbortController();
@@ -587,6 +589,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             throw error; // Re-throw abort errors
           }
           if (canUseHostedFallback(error)) {
+            const localMessage = error instanceof Error ? error.message : null;
             clearProgressTimers();
             setParseProgressMessage('Preparing smart fallback');
             // Wait for a full second of idle input before starting uncancellable cloud work.
@@ -603,7 +606,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
               }
             } catch (hostedError) {
               if (hostedError instanceof Error && hostedError.name === 'AbortError') throw hostedError;
-              error = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
+              const failure = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
+              const message = failure.code === 'sign_in_required' ? localMessage ?? failure.message : [localMessage, failure.message].filter(Boolean).join(' ');
+              error = new TimeParserAPIError(message, failure.status, failure.code, failure.alternatives, failure.generationId, failure.endpointWarming);
+              setCanRetryFallback(failure.status === 429 || (failure.status ?? 0) >= 500);
             }
           }
           if (!result) {
@@ -1021,8 +1027,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         )}
         {draft === null && hasInlineStatus && (
           <div className={`status-card ${statusTone}`}>
-            {error && !signInRequired && <div className="status-line">{error}</div>}
+            {error && <div className="status-line">{error}</div>}
             {signInRequired && <HostedAccount compact onSignedIn={() => { setSignInRequired(false); setError(null); setParseRequest(value => value + 1); }} />}
+            {error && canRetryFallback && <button type="button" className="secondary-button account-button" disabled={loading} onClick={() => setParseRequest(value => value + 1)}>Try smart parsing again</button>}
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>

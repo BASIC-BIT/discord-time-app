@@ -897,6 +897,7 @@ button:focus-visible, .row:focus-visible, .manual-editor input:focus-visible {
 .footer { flex-shrink: 0; }
 
 .account-panel { color: #e5ebef; }
+.status-line + .account-panel, .status-line + .account-button { margin-top: 12px; }
 .account-card { padding: 16px; border: 1px solid #39434c; border-radius: 8px; background: #20262b; }
 .account-panel-compact .account-card { padding: 0; border: 0; background: transparent; }
 .account-summary { display: flex; align-items: flex-start; gap: 10px; }

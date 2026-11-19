@@ -11,7 +11,7 @@ import { Temporal } from '@js-temporal/polyfill';
 
 const MODEL = 'gpt-6-luna';
 const rateLimiter = new RateLimiter(components.rateLimiter, {
-  fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 1 },
+  fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 3 },
 });
 
 export const parse = action({

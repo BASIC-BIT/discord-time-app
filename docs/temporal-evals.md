@@ -8,6 +8,10 @@
 
 ## Persistent Test Lanes
 
+The planner and semantic validator must use the same existing executor conventions: date-only calendar-unit offsets use local noon; hour/minute offsets preserve the current clock; boundary wording snaps to whole boundaries. Bare zero is Unix epoch zero and bare 13-23 values are 24-hour clocks. Product shorthand includes tomorrow forms `tom`, `tmw`, and `tmrw`; `tu` requires clarification between relative-day and weekday interpretations. These meanings remain model interpretation, not a new deterministic typo-recovery rule.
+
+Plan-IR clock options have a specific executor contract. Discord-reference AM/PM alternatives use one plan with a grounded option-bearing clock step. Other clock alternatives use separate plans, which may each consume multiple weekday candidates. Planner-selected presentation formats must survive both endpoint and OpenAI execution paths. A rejected deterministic candidate may reach Plan-IR repair, whose result must pass validation again; rejected guesses cannot be returned as valid answers.
+
 - `api npm test` runs deterministic smoke coverage and should stay PR-safe.
 - `api npm run test:temporal:live` runs a small live smoke suite when `OPENAI_API_KEY` or `TEMPORAL_LIVE_API_URL` is configured.
 - `api npm run eval:temporal` runs multi-model live evals when `TEMPORAL_EVAL_MODELS` is configured.

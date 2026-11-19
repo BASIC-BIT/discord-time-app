@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
+import { parseTemporalExpression } from '../src/temporal';
 
 async function listen(server: ReturnType<typeof createServer>) {
   server.listen(0, '127.0.0.1');
@@ -32,10 +33,12 @@ async function main() {
   let slmCalls = 0;
   let verdict: 'accept' | 'reject' | 'unavailable' | 'pending' = 'accept';
   let slmReady = false;
+  let rejectNextValidation = false;
   const plan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic clock interpretation.', plans: [{
     label: '5 PM', confidence: 0.9, finalStep: 0,
     steps: [{ op: 'resolve_calendar_query', query: 'November 18 2026 5pm', precision: 'datetime' }],
   }] });
+  let providerPlan = plan;
   const llm = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
@@ -65,8 +68,9 @@ async function main() {
     });
     const planning = raw.includes('"outcome"');
     const args = planning
-      ? { ...plan, plans: plan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
-      : { accepted: verdict === 'accept', confidence: 0.9, reason: 'Synthetic independent validation.', missingOrContradictedSignals: [] };
+      ? { ...providerPlan, plans: providerPlan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
+      : { accepted: verdict === 'accept' && !rejectNextValidation, confidence: 0.9, reason: 'Synthetic independent validation.', missingOrContradictedSignals: [] };
+    if (!planning) rejectNextValidation = false;
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
       id: `test-${llmCalls}`, object: 'chat.completion', created: 1, model: 'test-llm',
@@ -174,6 +178,21 @@ async function main() {
       }
     }
     assert(slmCalls > 0, 'RunPod warming must continue alongside parsing');
+    const previousBase = process.env.OPENAI_BASE_URL;
+    try {
+      process.env.OPENAI_BASE_URL = `${llmUrl}/v1`;
+      verdict = 'accept'; rejectNextValidation = true;
+      providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Repair a rejected heuristic.', plans: [{ label: 'Six days later', rationale: 'Resolve tomorrow then shift five calendar days.', confidence: 1, finalStep: 1, steps: [{ op: 'resolve_calendar_query', query: 'tomorrow' }, { op: 'shift_datetime', baseStep: 0, delta: { days: 5 } }] }] });
+      const beforeRepair = llmCalls;
+      const repaired = await parseTemporalExpression({ text: 'the day after the day after the day after the day after the day after tomorrow', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: true }, langfuse: { enabled: false } });
+      assert.equal(repaired.status, 'resolved');
+      assert.equal(repaired.method, 'agent+plan');
+      assert.equal(repaired.canonical?.isoInstant, '2026-05-30T16:00:00Z');
+      assert.equal(llmCalls - beforeRepair, 3, 'reject heuristic, plan repair, independently validate repair');
+    } finally {
+      if (previousBase === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = previousBase;
+    }
     console.log('HTTP warmup fallback smoke passed: deterministic, clarification, LLM success/rejection/failure, cancellation, missing key, background warming, normal SLM route.');
   } finally {
     llm.closeAllConnections();
