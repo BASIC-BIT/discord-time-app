@@ -2,18 +2,23 @@
 
 import { v, ConvexError } from 'convex/values';
 import { action } from './_generated/server';
-import { internal } from './_generated/api';
+import { components, internal } from './_generated/api';
+import { RateLimiter, MINUTE } from '@convex-dev/rate-limiter';
 import { parseTemporalExpression } from '../api/src/temporal/index';
 import { DISCORD_TIMESTAMP_MAX_INPUT_CHARS } from '@hammer-overlay/discord-timestamp-routing';
 import type { TemporalParseResponse } from '../api/src/temporal/types';
 import { Temporal } from '@js-temporal/polyfill';
 
 const MODEL = 'gpt-6-luna';
+const rateLimiter = new RateLimiter(components.rateLimiter, {
+  fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 1 },
+});
 
 export const parse = action({
   args: { text: v.string(), tz: v.string(), now: v.string(), requestId: v.string() },
   handler: async (ctx, args): Promise<TemporalParseResponse> => {
-    if (!await ctx.auth.getUserIdentity()) throw new ConvexError('Sign in to use hosted parsing.');
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ code: 'sign_in_required', message: 'Sign in to use hosted parsing.' });
     if (!args.text.trim() || args.text.length > DISCORD_TIMESTAMP_MAX_INPUT_CHARS || !args.requestId || args.requestId.length > 128) {
       throw new ConvexError('Invalid temporal request.');
     }
@@ -23,6 +28,8 @@ export const parse = action({
     catch { throw new ConvexError('Invalid timezone.'); }
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new ConvexError('Hosted parsing is not configured yet.');
+    const limit = await rateLimiter.limit(ctx, 'fallback', { key: identity.tokenIdentifier });
+    if (!limit.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing is busy. Wait a few seconds, then try again.' });
     const started = Date.now();
     let result: TemporalParseResponse | undefined;
     try {
@@ -38,14 +45,17 @@ export const parse = action({
         model: MODEL, reasoningEffort: 'low',
         finalValidation: result.debug?.finalValidation,
       } };
-    } catch {
+    } catch (error) {
+      // Log diagnostic metadata without raw prompts, provider messages, or credentials.
+      console.error('Hosted parsing failed', { requestId: args.requestId, name: error instanceof Error ? error.name : 'UnknownError',
+        status: error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : null });
       throw new ConvexError('Hosted parsing is unavailable. Try again shortly.');
     } finally {
-      await ctx.runMutation(internal.usage.record, {
+      try { await ctx.runMutation(internal.usage.record, {
         requestId: args.requestId, model: MODEL, status: result?.status ?? 'error',
         durationMs: Date.now() - started, inputLength: args.text.length,
         inputTokens: result?.debug?.inputTokens ?? 0, outputTokens: result?.debug?.outputTokens ?? 0,
-      });
+      }); } catch { console.warn('Could not record parsing usage', { requestId: args.requestId }); }
     }
   },
 });

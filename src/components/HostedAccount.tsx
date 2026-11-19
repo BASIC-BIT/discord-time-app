@@ -63,7 +63,7 @@ export function HostedAccount({ compact = false, onSignedIn }: { compact?: boole
         <span className={`account-indicator ${signedIn ? 'connected' : ''}`} aria-hidden="true">{pending || busy ? <span className="account-spinner" /> : signedIn ? '✓' : '↗'}</span>
         <div>
           <div className="account-title">{signedIn ? 'You’re connected' : pending ? 'Finish in your browser' : 'Sign in for smart parsing'}</div>
-          <p className="account-description">{signedIn ? 'Your account is ready for smart parsing. You’ll stay signed in on this device.' : pending ? 'Approve HammerOverlay there. We’ll continue here automatically.' : 'Sign in securely in your browser. Your time expression stays here.'}</p>
+          <p className="account-description">{signedIn ? 'Your account is ready for smart parsing. You’ll stay signed in on this device.' : pending ? 'Approve HammerOverlay there. We’ll continue here automatically.' : 'Use your browser to sign in. While the model warms up, expressions basic parsing cannot resolve go to our cloud parser and OpenAI.'}</p>
         </div>
       </div>
       {pending && status.userCode && <div className="account-device">

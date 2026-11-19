@@ -8,6 +8,8 @@ This follows the user's decision to keep the relay simple. The earlier Lambda st
 
 The hotkey immediately prewarms RunPod. While it warms, deterministic parsing runs first. A failure can use the hosted fallback if the user is signed in. Successful deterministic results and clarifications make no fallback call. Every model answer still passes Plan-IR execution and independent validation.
 
+Cloud fallback waits for one second of idle input, discards superseded text before making a request, and is unavailable when the build has no relay URL. Convex's maintained rate-limiter component allows ten calls per minute per identity, with capacity for one immediate call. This bounds rapid repeats without a budget ledger. Client cancellation still cannot cancel work already running in Convex.
+
 Settings and the inline fallback prompt offer Sign in with browser. Clerk's public OAuth device grant opens the default browser, where Google and other configured sign-in methods work. The overlay shows the confirmation code and supports cancellation and retry. Approval automatically resumes the original parse. Local parsing works without an account.
 
 The Windows native process stores the refresh credential in Windows Credential Manager and keeps identity tokens in memory. Restarting silently refreshes the session. Credentials are isolated by app instance and OAuth client. Sign out removes the local credential and requests provider revocation when discovery advertises it. It does not sign the user out of their browser.
@@ -46,6 +48,7 @@ flowchart TD
 - An internal mutation records user identity, token counts, latency, input length, and outcome. It does not save temporal input text. Users can query only their own aggregate usage.
 - The desktop preserves the reference time across local parsing and fallback, discards cancelled results, and skips redundant post-display LLM verification for server-validated results.
 - A 30-second server timeout bounds stalled requests. It is a safety guard, not the five-second product SLO. Client cancellation cannot stop a running Convex action.
+- Provider failures log diagnostic name/status without raw prompts or credentials. Usage tracking is best effort and cannot replace a successful parse. Structured auth and throttle failures retain their actionable client messages. Deployment requires both Clerk issuer and OAuth audience configuration.
 
 ## Development setup
 
@@ -75,6 +78,8 @@ Luna correctly interpreted `5pm` and `5pms`, but initially emitted a clock-only 
 November 19 user verification: the user confirmed browser sign-in worked and supplied a screenshot of the local overlay resolving `5pms` to 5 PM. The waiting screenshot exposed a separate UI issue: the warmup notice suppressed active parsing progress. The overlay now gives active progress priority, identifies the smart fallback with a note that it may take a few seconds, and hides warmup messaging once a result is displayed. A delayed-request component regression verifies progress remains visible beyond six seconds and clears on completion. All 18 related UI/relay tests passed, along with the frontend typecheck using the existing unused-local exception and the local desktop build. Real-account persistence after restart and native inspection of this progress change remain unverified.
 
 ## References
+
+The [full Luna qualification](handoffs/2026-11-19-luna-qualification.md) failed at 148/202 required cases, with all failures preserved. CI passing and the successful standalone-clock diagnostics do not qualify this parser default for promotion. Exact installed-MSI authentication acceptance also remains open after the review install was canceled.
 
 The [sign-in visual review](screenshots/sign-in/README.md) contains before/after component previews, capture provenance, and the remaining native/browser capture gap. The visual polish adds an animated approval indicator, clearer handoff copy, copy confirmation, and an expandable recovery address. Authentication behavior is unchanged.
 

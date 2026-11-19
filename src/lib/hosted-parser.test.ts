@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { TimeParserAPIClient, TimeParserAPIError } from './api-client';
 import { canUseHostedFallback, parseHostedTime } from './hosted-parser';
+import { ConvexError } from 'convex/values';
 
-const fake = vi.hoisted(() => ({ action: vi.fn(), getToken: vi.fn(), setAuth: vi.fn(), invoke: vi.fn() }));
+const fake = vi.hoisted(() => ({ action: vi.fn(), getToken: vi.fn(), setAuth: vi.fn(), invoke: vi.fn(), configured: true }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: fake.invoke }));
-vi.mock('./hosted-auth', () => ({ getHostedAuthToken: fake.getToken }));
+vi.mock('./hosted-auth', () => ({ getHostedAuthToken: fake.getToken, get hostedConfigured() { return fake.configured; } }));
 vi.mock('convex/browser', () => ({ ConvexHttpClient: class { action = fake.action; setAuth = fake.setAuth; } }));
 const now = '2026-11-18T21:18:11.689Z';
 beforeEach(() => {
-  vi.clearAllMocks(); fake.getToken.mockResolvedValue('test-session-token');
+  vi.clearAllMocks(); fake.configured = true; fake.getToken.mockResolvedValue('test-session-token');
   fake.action.mockResolvedValue({ status: 'resolved', epoch: 1795125600, method: 'agent+plan', confidence: 0.9, validation: { passed: true } });
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -37,6 +38,20 @@ test('signed-out users receive an explicit sign-in error and make no cloud reque
   fake.getToken.mockResolvedValue(null);
   await expect(parseHostedTime('test', 'UTC', now, 'id', new AbortController().signal)).rejects.toMatchObject({ status: 401, code: 'sign_in_required' });
   expect(fake.action).not.toHaveBeenCalled();
+});
+
+test('unconfigured builds keep the original local failure and make no auth request', async () => {
+  fake.configured = false;
+  expect(canUseHostedFallback(new TimeParserAPIError('original failure', 400, 'parse_failed', undefined, undefined, true))).toBe(false);
+  await expect(parseHostedTime('test', 'UTC', now, 'id', new AbortController().signal)).rejects.toMatchObject({ status: 503 });
+  expect(fake.getToken).not.toHaveBeenCalled();
+});
+
+test('relay auth and throttle rejections remain actionable', async () => {
+  for (const [code, status] of [['sign_in_required', 401], ['rate_limited', 429]] as const) {
+    fake.action.mockRejectedValue(new ConvexError({ code, message: 'Actionable message' }));
+    await expect(parseHostedTime('test', 'UTC', now, 'id', new AbortController().signal)).rejects.toMatchObject({ code, status, message: 'Actionable message' });
+  }
 });
 
 test('validated results skip redundant overlay verification', async () => {

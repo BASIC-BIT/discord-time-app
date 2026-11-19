@@ -24,6 +24,7 @@
     "test:relay": "vitest run convex/temporal.test.ts src/lib/hosted-parser.test.ts src/lib/clipboard.test.ts src/components/HostedAccount.test.tsx src/components/Overlay.test.tsx"
   },
   "dependencies": {
+    "@convex-dev/rate-limiter": "0.4.3",
     "@hammer-overlay/discord-timestamp-routing": "file:shared/discord-timestamp-routing",
     "@js-temporal/polyfill": "0.5.1",
     "@tauri-apps/api": "2.11.0",

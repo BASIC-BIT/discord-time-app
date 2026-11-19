@@ -588,6 +588,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           }
           if (canUseHostedFallback(error)) {
             clearProgressTimers();
+            setParseProgressMessage('Preparing smart fallback');
+            // Wait for a full second of idle input before starting uncancellable cloud work.
+            await new Promise(resolve => window.setTimeout(resolve, 700));
+            if (!active()) return;
             setParseProgressMessage('Parsing with smart fallback. This may take a few seconds');
             try {
               result = await parseHostedTime(text, timezone, referenceInstant, requestId, abortController.signal);

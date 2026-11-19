@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { internalMutation, query } from './_generated/server';
 
 export const record = internalMutation({
+  returns: v.null(),
   args: {
     requestId: v.string(), model: v.string(), status: v.string(),
     durationMs: v.number(), inputLength: v.number(),
@@ -25,6 +26,7 @@ export const record = internalMutation({
 
 export const mine = query({
   args: {},
+  returns: v.union(v.null(), v.object({ requests: v.number(), inputTokens: v.number(), outputTokens: v.number() })),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
