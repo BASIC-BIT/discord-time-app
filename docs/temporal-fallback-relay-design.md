@@ -76,6 +76,8 @@ November 19 user verification: the user confirmed browser sign-in worked and sup
 
 ## References
 
+The [sign-in visual review](screenshots/sign-in/README.md) contains before/after component previews, capture provenance, and the remaining native/browser capture gap. The visual polish adds an animated approval indicator, clearer handoff copy, copy confirmation, and an expandable recovery address. Authentication behavior is unchanged.
+
 November 19 browser-flow replacement: the embedded Google login could stall in WebView2. It is replaced by the supported Clerk device grant and default-browser approval. The public client and live device-authorization endpoint were verified, and the development Convex audience configuration was deployed. The full offline suite, strict API build, frontend build, frontend typecheck with the existing unused-local exception, native compilation, and four native auth tests passed. Five account UI tests cover browser handoff, cancellation, late responses, expiry, automatic resume, and browser-open failure. A temporary synthetic Windows credential was restored from a fresh native state and deleted. Real browser approval, a real account's refresh after restart, and actual native visual inspection remain pending. No installer or release was created.
 
 - [Clerk and Convex authentication](https://docs.convex.dev/auth/clerk)
