@@ -4374,6 +4374,11 @@ async function validateFinalAnswer(
   signal?: AbortSignal,
   onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
 ): Promise<TemporalFinalValidation> {
+  const referenceDate = Temporal.Instant.from(request.calendarContext.referenceInstant)
+    .toZonedDateTimeISO(finalized.candidate.timeZone).toPlainDate();
+  const candidateDate = Temporal.Instant.from(finalized.candidate.isoInstant)
+    .toZonedDateTimeISO(finalized.candidate.timeZone).toPlainDate();
+  const calendarDayOffsetFromReference = referenceDate.until(candidateDate, { largestUnit: 'day' }).days;
   const validator = model.withStructuredOutput(FinalValidationSchema, { includeRaw: true });
   const { parsed: result, raw } = await validator.invoke([
     new SystemMessage(`You are an independent final validation pass for a temporal parser.
@@ -4384,6 +4389,7 @@ Validation rules:
 - An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
 - Unqualified holiday names use the holiday tool's configured regional calendar, selected from country/locale or timezone context. Validate the date against that calendar; do not reject solely because another religious or regional tradition exists elsewhere. Explicitly requested regions or traditions must still be preserved, and actual tool-reported ambiguity requires clarification.
 - Candidate facts (weekday, ISO date, timezone offset) come from deterministic calendar arithmetic. Use those computed facts to compare against the user's requested meaning; do not replace them with a mentally recomputed weekday or remembered calendar. If the user explicitly names a weekday, compare it with facts.weekday.
+- For nested relative modifiers, derive the innermost anchor first (today is day offset 0, tomorrow +1, yesterday -1), then apply every outer modifier separately. Compare the total with facts.calendarDayOffsetFromReference, computed from facts.referenceLocalDate in the candidate timezone. Do not infer the modifier count from the proposed date or accept its rationale as arithmetic proof.
 - Accept only if the candidate preserves every date and time signal in the input. Stating an assumption does not resolve competing temporal interpretations: reject if a materially different AM/PM, weekday, or timezone interpretation remains plausible.
 - Apply this product's calendar conventions: a date-only expression, including an offset in whole calendar days, weeks, months, or years without an explicit clock, is represented at 12:00 PM local time. Calendar-unit counts are not clock signals. Offsets in hours or minutes preserve the reference clock; an explicitly supplied clock must always be preserved.
 - Apply the executor's explicit numeric conventions: bare nonnegative integers of 10, 13, 16, or 19 digits are Unix timestamps in seconds, milliseconds, microseconds, or nanoseconds respectively; an all-zero bare integer is epoch zero. An epoch label is not required. A bare hour from 13 through 23 is an unambiguous 24-hour clock at minute zero. Reject unsupported numeric lengths instead of inventing another convention.
@@ -4399,7 +4405,7 @@ Validation rules:
       originalText: request.text,
       calendarContext: request.calendarContext,
       candidate: finalized.candidate,
-      facts: finalized.facts,
+      facts: { ...finalized.facts, referenceLocalDate: referenceDate.toString(), calendarDayOffsetFromReference },
       formats: finalized.formats,
       deterministicValidation: finalized.validation,
       agentRationale: rationale,

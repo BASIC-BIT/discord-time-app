@@ -90,7 +90,7 @@ jobs:
         run: npm run eval:temporal
 
       - name: Run frontend tests
-        run: npm run test:routing && npm run test:manual && npm run test:relay
+        run: npm run test:routing && npm run test:manual && npm run test:relay && npm run test:release-config
 
       - name: Check frontend build
         run: npm run build

@@ -3227,6 +3227,10 @@ assert.equal(fragmentedOrdinal.status, 'failed', 'separate chrono fragments requ
 assert.equal(fragmentedOrdinal.epoch, undefined);
 assert.equal(resolveTimeZone({text: 'tomorrow at 5pm in est', calendarContext}).status, 'resolved');
 assert.equal((await parse('tomorrow at 5pm in est')).status, 'resolved');
+for (const text of ['friday in est at 3pm', 'monday est 3pm', 'tomorrow 5pm for pst', 'est noon']) {
+  assert.equal(resolveTimeZone({text, calendarContext}).status, 'resolved');
+  assert.equal((await parse(text)).status, 'resolved');
+}
 for (const text of ['tomorrow 5pm, cst', 'tomorrow 5pm (cst)']) {
   assert.equal(resolveTimeZone({text, calendarContext}).status, 'ambiguous');
   assert.equal(hasContextualTimeZoneAbbreviation(text), false);

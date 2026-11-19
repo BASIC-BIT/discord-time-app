@@ -6,6 +6,8 @@ All runs use `gpt-6-luna`, low reasoning. The selected hybrid keeps `planIr=true
 
 The qualified source also fixes contextual timezone words, multi-zone choice loops, partial usage on errors, and per-identity daily fairness. The earlier complete passing report at 70b68dd remains available in commit 16bd7e2.
 
+The newer 71199dc review fixes reached 201/202 required and 5/5 diagnostics. Its recursive-relative failure returned a day early and passed independent validation. The last passing report still applies to 57cc336, not that newer source. Calendar-day offset facts and explicit inside-out modifier validation passed a two-case live probe; full qualification of this follow-up is pending.
+
 ## Complete measurements
 
 | Source or experiment | Required | Diagnostics |
@@ -20,7 +22,8 @@ The qualified source also fixes contextual timezone words, multi-zone choice loo
 | Guard repair and timezone timestamp choices, 4330fd1 | 199/202 | 5/5 |
 | Calendar contract and timezone UI, 042a250 | 201/202 | 5/5 |
 | Explicit compound anchors, 70b68dd | 202/202 | 5/5 |
-| Reviewed timezone context and usage, 57cc336 | **202/202** | **5/5** |
+| Reviewed timezone context and usage, 57cc336 | 202/202 | 5/5 |
+| Atomic admission and lazy sign-in, 71199dc | **201/202** | **5/5** |
 
 The [initial case-level evidence](2026-11-19-luna-qualification.json) preserves the first 54 required failures. The [research evidence](2026-11-19-luna-research.json) preserves later scores, failed cases, and source hashes. Intermediate snapshots are distinct implementations, not an unchanged-build passing streak. Partial probes stopped after an edit assertion or offline regression failure are not qualification results.
 

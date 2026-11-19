@@ -20,6 +20,9 @@ type NamedZoneRule = {
 const OFFSET_ZONE_PATTERN = /\b(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?([0-5]\d))?\b/gi;
 const STANDALONE_OFFSET_PATTERN = /(?:^|[\s(])([+-])(\d{2})(?::?([0-5]\d))(?=$|[\s),.;])/g;
 const IANA_TIME_ZONE_PATTERN = /\b[A-Za-z]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)*\b/g;
+const EXPLICIT_CLOCK_SOURCE = String.raw`(?:\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)`;
+const CLOCK_BEFORE_ZONE = new RegExp(String.raw`\b${EXPLICIT_CLOCK_SOURCE}\s*(?:(?:in|at|for|on)\s+|[,()]\s*)?$`, 'i');
+const CLOCK_AFTER_ZONE = new RegExp(String.raw`^\s*(?:(?:in|at|for|on)\s+|[,()]\s*)?${EXPLICIT_CLOCK_SOURCE}\b`, 'i');
 const UTC_ZONE_PATTERN = /\b(?:UTC|GMT|Zulu)\b/gi;
 const EXPLICIT_OFFSET_LIKE_PATTERN = /\b(?:UTC|GMT)\s*[+-]\s*\d+(?::?\d+)?\b/gi;
 const VALID_EXPLICIT_OFFSET_PATTERN = /^(?:UTC|GMT)\s*[+-]\s*(?:0?\d|1\d|2[0-3])(?::?[0-5]\d)?$/i;
@@ -417,9 +420,10 @@ function addAbbreviationReferences(text: string, references: TimeZoneReference[]
     if (references.some((reference) => start >= reference.start && end <= reference.end)) {
       continue;
     }
-    // Lowercase words need model context unless they directly follow an explicit clock.
+    // Lowercase words need model context unless adjacent to an explicit clock and its connector.
     const requiresContext = matchedText !== abbreviation && text.trim().toLowerCase() !== matchedText.toLowerCase()
-      && !/\b(?:\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)\s*(?:in\s+|[,()]\s*)?$/i.test(text.slice(0, start));
+      && !CLOCK_BEFORE_ZONE.test(text.slice(0, start))
+      && !CLOCK_AFTER_ZONE.test(text.slice(end));
     const ambiguous = AMBIGUOUS_ABBREVIATIONS[abbreviation];
     if (ambiguous !== undefined) {
       references.push({

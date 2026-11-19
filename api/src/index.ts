@@ -419,6 +419,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
       200: parseResponseSchema,
       400: errorResponseSchema,
       499: errorResponseSchema,
+      504: errorResponseSchema,
       500: errorResponseSchema
     }
   }
@@ -437,6 +438,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
   request.raw.once('aborted', abortOnDisconnect);
   reply.raw.once('close', abortOnPrematureClose);
   const startedAt = performance.now();
+  let warmupBudgetSignal: AbortSignal | undefined;
 
   try {
     if (now !== undefined && !isValidIsoInstant(now)) {
@@ -489,11 +491,13 @@ server.post<{ Body: ParseRequest }>('/parse', {
     const { openaiApiKey, ...withoutLlm } = parseInput;
     let parsed = await parseTemporalExpression(endpointWarming ? withoutLlm : parseInput);
     if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
+      warmupBudgetSignal = AbortSignal.timeout(30_000);
       parsed = await parseTemporalExpression({ ...parseInput,
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+        signal: AbortSignal.any([controller.signal, warmupBudgetSignal]),
         deadlineMs: Date.now() + 30_000,
         features: { ...parseInput.features, planIr: true },
       });
+      warmupBudgetSignal.throwIfAborted();
     }
     if (endpointWarming) {
       parsed.debug = { ...parsed.debug, endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' };
@@ -570,6 +574,10 @@ server.post<{ Body: ParseRequest }>('/parse', {
     };
 
   } catch (error) {
+    if (warmupBudgetSignal?.aborted && !controller.signal.aborted) {
+      request.log.warn({ requestId, status: 'parse_timeout', durationMs: Math.round(performance.now() - startedAt) }, 'warmup fallback timed out');
+      return reply.status(504).send({ error: 'parse_timeout', message: 'Smart parsing took too long. Please try again.' });
+    }
     if (controller.signal.aborted || error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {
       request.log.info({
         requestId,

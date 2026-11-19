@@ -1,4 +1,4 @@
-import { ConvexError } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internalMutation } from './_generated/server';
 import { components } from './_generated/api';
 import { RateLimiter, MINUTE, DAY } from '@convex-dev/rate-limiter';
@@ -11,6 +11,7 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
 
 export const admit = internalMutation({
   args: {},
+  returns: v.null(),
   handler: async ctx => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError('Sign in to use hosted parsing.');
@@ -20,6 +21,10 @@ export const admit = internalMutation({
     const userDaily = await rateLimiter.limit(ctx, 'fallbackUserDaily', { key: identity.tokenIdentifier });
     if (!userDaily.ok) throw new ConvexError({ code: 'rate_limited', message: 'You have reached your daily smart parsing limit. Try again tomorrow.' });
     const daily = await rateLimiter.limit(ctx, 'fallbackDaily');
-    if (!daily.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing has reached its shared daily limit. Try again later.' });
+    if (!daily.ok) {
+      console.warn('shared_daily_limit_reached');
+      throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing has reached its shared daily limit. Try again later.' });
+    }
+    return null;
   },
 });

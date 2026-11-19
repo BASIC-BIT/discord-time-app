@@ -607,6 +607,53 @@
       "failures": [
 
       ]
+    },
+    {
+      "path": ".cache/luna-admission-full.json",
+      "source": {
+        "workers": [
+          {
+            "shard": 0,
+            "pid": 28840
+          },
+          {
+            "shard": 1,
+            "pid": 20000
+          },
+          {
+            "shard": 2,
+            "pid": 92480
+          },
+          {
+            "shard": 3,
+            "pid": 93352
+          }
+        ],
+        "deterministicSha256": "ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0",
+        "baseCommit": "71199dca9171074f2ca6f740486db6c6ffa08331",
+        "timezoneSha256": "A10309D61A648E76E2F9D58DA2556E61996BD182083CF1A24E0F38CBD023EE4E",
+        "started": "2026-11-19T08:54:33.7247983-05:00",
+        "graphSha256": "B8C3A2D18E45C8DF66B93F437672D26FD3835B9D25CB40F5D346D28E8F28F3EC"
+      },
+      "experiments": [
+        {
+          "label": "review-admission",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 201,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 2946,
+      "p95Ms": 12995,
+      "failures": [
+        {"caseId":"recursive-relative-typo-tomorow-2","text":"the day after the day after tomorow","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"method":"deterministic","finalValidation":{"accepted":true,"confidence":0.99,"reason":"“Tomorow” is an unambiguous typo for “tomorrow.” Applying “the day after” twice gives May 26, 2026. The candidate preserves the date and uses the product’s noon default for a date-only expression.","missingOrContradictedSignals":[]}}
+      ]
     }
   ]
 }

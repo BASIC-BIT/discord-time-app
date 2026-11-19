@@ -68,6 +68,16 @@ async function main() {
       return fn.name;
     });
     const planning = raw.includes('"outcome"');
+    if (!planning && 'messages' in body && Array.isArray(body.messages)) {
+      for (const message of body.messages) {
+        if (message.role !== 'user' || typeof message.content !== 'string') continue;
+        const packet = JSON.parse(message.content);
+        if (packet.originalText === 'May 26th (Tuesday) 2026 at 5pm') {
+          assert.equal(packet.facts.referenceLocalDate, '2026-05-15');
+          assert.equal(packet.facts.calendarDayOffsetFromReference, 11);
+        }
+      }
+    }
     const selectedPlan = firstProviderPlan ?? providerPlan;
     const args = planning
       ? { ...selectedPlan, plans: selectedPlan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
@@ -120,10 +130,10 @@ async function main() {
           assert(child.exitCode === null && Date.now() < deadline, output);
           await new Promise(resolve => setTimeout(resolve, 20));
         }
-        const parse = (text: string) => fetch(`${apiUrl}/parse`, {
+        const parse = (text: string, timeoutMs = 10_000) => fetch(`${apiUrl}/parse`, {
           method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'test-local-key', 'x-api-version': '1' },
           body: JSON.stringify({ requestId: 'warmup-fallback-test', text, tz: 'America/Indianapolis', now: '2026-11-18T21:18:11.689Z', features: { deterministicPreflight: false } }),
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         const before = llmCalls;
         const resolved = await parse('5pm');
@@ -168,6 +178,9 @@ async function main() {
           });
           assert.equal((await cancellation.json()).cancelled, true);
           assert.equal((await pending).status, 499);
+          const timedOut = await parse('fuzzy evening marker', 35_000);
+          assert.equal(timedOut.status, 504);
+          assert.equal((await timedOut.json()).error, 'parse_timeout', 'server budget expiry is not user cancellation');
         } else {
           assert.equal(fallback.status, 400);
           assert.equal(result.debug?.endpointWarming, true, 'credential-free clients need the warming signal to use the relay');

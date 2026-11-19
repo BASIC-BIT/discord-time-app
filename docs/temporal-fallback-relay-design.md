@@ -87,3 +87,5 @@ Development Clerk and Convex configuration is deployed. The 57cc336 qualified pa
 - [Clerk and Convex authentication](https://docs.convex.dev/auth/clerk)
 - [Clerk device authorization grant](https://clerk.com/docs/guides/configure/auth-strategies/oauth/device-authorization-grant)
 - [Convex actions](https://docs.convex.dev/functions/actions)
+
+Release builds require dedicated public repository variables `RELEASE_CONVEX_URL`, `RELEASE_CLERK_ISSUER`, and `RELEASE_CLERK_OAUTH_CLIENT_ID`. These must select production services. Debug CI keeps its `VITE_*` configuration. The release gate rejects missing values and Clerk development issuers, so development settings cannot be inherited accidentally. Production setup and an actual release remain separate from this development relay.
