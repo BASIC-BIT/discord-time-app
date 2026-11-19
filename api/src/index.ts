@@ -496,17 +496,28 @@ server.post<{ Body: ParseRequest }>('/parse', {
     if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
       llmFallbackAttempted = true;
       const warmupBudgetSignal = AbortSignal.timeout(30_000);
+      const completedUsage = { modelCallsWithUsage: 0, inputTokens: 0, outputTokens: 0 };
       try {
         parsed = await parseTemporalExpression({ ...parseInput,
           signal: AbortSignal.any([controller.signal, warmupBudgetSignal]),
           deadlineMs: Date.now() + 30_000,
           features: { ...parseInput.features, planIr: true },
+          onModelUsage(usage) {
+            if (!usage) return;
+            completedUsage.modelCallsWithUsage += 1;
+            completedUsage.inputTokens += usage.inputTokens;
+            completedUsage.outputTokens += usage.outputTokens;
+          },
         });
         warmupBudgetSignal.throwIfAborted();
       } catch (error) {
         if (warmupBudgetSignal.aborted && !controller.signal.aborted &&
             (error === warmupBudgetSignal.reason || error instanceof TemporalCancellationError ||
              (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)))) {
+          request.log.warn({
+            requestId, status: 'parse_timeout', durationMs: Math.round(performance.now() - startedAt),
+            generationId: parsed.generationId, usageComplete: false, ...completedUsage,
+          }, 'warmup fallback timed out');
           throw new WarmupFallbackTimeoutError();
         }
         throw error;
@@ -588,7 +599,6 @@ server.post<{ Body: ParseRequest }>('/parse', {
 
   } catch (error) {
     if (error instanceof WarmupFallbackTimeoutError) {
-      request.log.warn({ requestId, status: 'parse_timeout', durationMs: Math.round(performance.now() - startedAt) }, 'warmup fallback timed out');
       return reply.status(504).send({ error: 'parse_timeout', message: 'Smart parsing took too long. Please try again.' });
     }
     if (controller.signal.aborted || error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {

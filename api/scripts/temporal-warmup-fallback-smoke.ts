@@ -35,6 +35,7 @@ async function main() {
   let verdict: 'accept' | 'reject' | 'unavailable' | 'pending' = 'accept';
   let slmReady = false;
   let rejectNextValidation = false;
+  let stallNextValidation = false;
   let validationContradictions: string[] = [];
   const plan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic clock interpretation.', plans: [{
     label: '5 PM', confidence: 0.9, finalStep: 0,
@@ -70,6 +71,10 @@ async function main() {
       return fn.name;
     });
     const planning = raw.includes('"outcome"');
+    if (!planning && stallNextValidation) {
+      stallNextValidation = false;
+      return;
+    }
     if (!planning && 'messages' in body && Array.isArray(body.messages)) {
       for (const message of body.messages) {
         if (message.role !== 'user' || typeof message.content !== 'string') continue;
@@ -197,9 +202,21 @@ async function main() {
           });
           assert.equal((await cancellation.json()).cancelled, true);
           assert.equal((await pending).status, 499);
+          verdict = 'accept';
+          stallNextValidation = true;
           const timedOut = await parse('fuzzy evening marker', 60_000);
           assert.equal(timedOut.status, 504);
           assert.equal((await timedOut.json()).error, 'parse_timeout', 'server budget expiry is not user cancellation');
+          const logDeadline = Date.now() + 2_000;
+          while (!output.includes('warmup fallback timed out')) {
+            assert(Date.now() < logDeadline, 'no timeout telemetry was written');
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          const timeoutLog = JSON.parse(output.split('\n').find(line => line.includes('warmup fallback timed out'))!);
+          assert.equal(timeoutLog.usageComplete, false);
+          assert.equal(timeoutLog.modelCallsWithUsage, 1);
+          assert.equal(timeoutLog.inputTokens, 1);
+          assert.equal(timeoutLog.outputTokens, 1);
         } else {
           assert.equal(fallback.status, 400);
           assert.equal(result.debug?.llmFallbackAttempted, false);

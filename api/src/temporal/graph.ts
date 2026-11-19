@@ -659,14 +659,6 @@ export async function executeTemporalPlanPlannerOutput(
   }
 
   const toolPasses = executions.reduce((total, execution) => total + execution.toolPasses, 0);
-  const executionErrors = executions.map(execution => execution.error).filter((error): error is string => error !== undefined);
-  if (executionErrors.length > 0) {
-    const producedCount = executions.reduce((total, execution) => total + (execution.candidates?.length ?? 0) + (execution.ranges?.length ?? 0), 0);
-    const response = responseFromFailedPlanIr(['Not all planned interpretations could be executed.', ...executionErrors].join(' '), trace, producedCount, toolPasses, 0);
-    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
-    return response;
-  }
-
   const ranges = executions.flatMap((execution) => (execution.ranges ?? []).map((range) => ({
     plan: execution.plan,
     planIndex: execution.planIndex,

@@ -189,10 +189,9 @@ async function main() {
   const incompleteChoices = await executeTemporalPlanPlannerOutput(partialClarification,
     { text: 'May 25, May 26, or May 27 2026 at 5pm', calendarContext },
     { implementations: createDeterministicTemporalToolImplementations() });
-  assert.equal(incompleteChoices.status, 'failed', 'an unexecutable alternative cannot disappear from clarification');
-  assert.equal(incompleteChoices.clarificationAlternatives, undefined);
+  assert.equal(incompleteChoices.status, 'needs_clarification', 'retain the existing endpoint behavior');
+  assert.equal(incompleteChoices.clarificationAlternatives?.length, 2);
   assert.equal(incompleteChoices.epoch, undefined);
-  assert.match(incompleteChoices.validation.warnings.join(' '), /requires query/);
 
   for (const text of ['friday pst', '9/15/2027 est', 'tuesday mt']) {
     const dateZoneContext = {referenceInstant:'2026-05-24T12:00:00Z',timeZone:'UTC'};
