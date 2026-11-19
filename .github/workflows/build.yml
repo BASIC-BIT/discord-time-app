@@ -18,9 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         platform: [windows-latest]
-        
+
     runs-on: ${{ matrix.platform }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
         run: npm run eval:temporal
 
       - name: Run frontend tests
-        run: npm test
+        run: npm run test:routing && npm run test:manual && npm run test:relay
 
       - name: Check frontend build
         run: npm run build
@@ -120,7 +120,7 @@ jobs:
         shell: bash
         run: |
           echo "🔍 Checking build artifacts..."
-          
+
           # Check if MSI was created
           if find src-tauri/target/debug/bundle/msi/ -name "*.msi" -print -quit | grep -q .; then
             echo "✅ MSI installer created successfully"
@@ -131,7 +131,7 @@ jobs:
             echo "❌ No MSI installer found"
             exit 1
           fi
-          
+
           # Check if executable was created
           if find src-tauri/target/debug/ -name "*.exe" -print -quit | grep -q .; then
             echo "✅ Executable created successfully"

@@ -1,6 +1,7 @@
 import { convexTest } from 'convex-test';
 import { beforeEach, expect, test, vi } from 'vitest';
 import schema from './schema';
+import { rateLimiter as limits } from './limits';
 import { api } from './_generated/api';
 import { parseTemporalExpression } from '../api/src/temporal/index';
 import rateLimiter from '@convex-dev/rate-limiter/test';
@@ -82,6 +83,14 @@ test('bounds deployment-wide model calls even across distinct admitted identitie
   }
   await expect(t.withIdentity({ subject: 'one-more-account' }).action(api.temporal.parse, args)).rejects.toThrow('shared daily limit');
   expect(parseTemporalExpression).toHaveBeenCalledTimes(100);
+  const rejected = t.withIdentity({subject: 'one-more-account'});
+  await rejected.run(async ctx => {
+    const identity = await ctx.auth.getUserIdentity();
+    const personal = await limits.getValue(ctx, 'fallbackUserDaily', {key: identity!.tokenIdentifier});
+    expect(personal.value).toBe(20);
+    const burst = await limits.getValue(ctx, 'fallback', {key: identity!.tokenIdentifier});
+    expect(burst.value).toBe(3);
+  });
 });
 
 test('tracking failure cannot replace a successful validated result', async () => {

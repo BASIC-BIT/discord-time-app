@@ -3217,6 +3217,24 @@ for (const text of ['5pm cst', '5pm CST', 'cst']) {
   const resolution = resolveTimeZone({ text, calendarContext });
   assert.equal(resolution.status, 'ambiguous');
 }
+for (const text of ['Tuesday May 26th 2026 at 5pm', 'May 26th, 2026 at 5pm']) {
+  const result = await parse(text);
+  assert.equal(result.status, 'resolved');
+  assert.equal(result.epoch, 1779829200);
+}
+const fragmentedOrdinal = await parse('May 26th (Tuesday) 2026 at 5pm');
+assert.equal(fragmentedOrdinal.status, 'failed', 'separate chrono fragments require model composition');
+assert.equal(fragmentedOrdinal.epoch, undefined);
+assert.equal(resolveTimeZone({text: 'tomorrow at 5pm in est', calendarContext}).status, 'resolved');
+assert.equal((await parse('tomorrow at 5pm in est')).status, 'resolved');
+for (const text of ['tomorrow 5pm, cst', 'tomorrow 5pm (cst)']) {
+  assert.equal(resolveTimeZone({text, calendarContext}).status, 'ambiguous');
+  assert.equal(hasContextualTimeZoneAbbreviation(text), false);
+}
+const lowerCst = await createDeterministicTemporalToolImplementations().resolveCalendarQuery({query:'tomorrow 5pm cst', calendarContext});
+assert.equal(lowerCst.candidates.length, 0);
+assert((lowerCst.notes ?? []).some(note => note.includes('Which timezone')));
+assert.equal((await parse('3pm EST to 5pm PST')).status, 'needs_clarification');
 const zoneChoice = resolveTimeZone({ text: 'tomorrow 5pm CST', calendarContext }).candidates[0]!;
 assert.equal(applyTimeZoneChoice('tomorrow 5pm CST or Friday 7pm CST', zoneChoice), 'tomorrow 5pm America/Chicago or Friday 7pm America/Chicago');
 assert.notEqual((await parse('3pm EST to 5pm PST')).debug?.ambiguousTimeZone, true);

@@ -2898,6 +2898,8 @@ async function deterministicParse(
     const needsTimeClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
     const timeZones = resolveTimeZone(request);
     const needsTimeZoneClarification = timeZones.status === 'ambiguous'
+      && parsed.parserNotes.includes(timeZones.clarificationQuestion ?? 'Input contains an ambiguous timezone reference.');
+    const singleTimeZoneChoice = needsTimeZoneClarification
       && new Set(timeZones.candidates.map(zone => zone.matchedText.toLowerCase())).size === 1;
     const needsClarification = needsTimeClarification || needsTimeZoneClarification;
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
@@ -2909,7 +2911,7 @@ async function deterministicParse(
       assumptions: [],
       ambiguity: needsClarification ? [warning] : [],
       validation: { passed: false, warnings: parsed.parserNotes, checks: needsClarification ? ['deterministic_preflight'] : [] },
-      debug: { candidateCount: 0, deterministicDurationMs: elapsedMs(startedAt), ambiguousTimeZone: needsTimeZoneClarification },
+      debug: { candidateCount: 0, deterministicDurationMs: elapsedMs(startedAt), ambiguousTimeZone: singleTimeZoneChoice },
     };
     if (needsClarification) {
       response.clarificationQuestion = needsTimeZoneClarification

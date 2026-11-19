@@ -190,6 +190,12 @@ async function main() {
       assert.equal(contextualWord.status, 'resolved');
       assert.equal(contextualWord.canonical?.isoInstant, '2026-11-18T22:00:00Z');
       assert.equal(llmCalls - beforeContextualWord, 2, 'interpret the ordinary word with a model, then independently validate');
+      providerPlan = parseTemporalPlanPlannerOutput({outcome:'plans', reason:'Interpret an ordinal date with an incidental weekday.', plans:[{label:'May 26 at 5pm',confidence:1,finalStep:0,steps:[{op:'resolve_calendar_query',query:'May 26 2026 at 5pm',precision:'datetime'}]}]});
+      const beforeOrdinal = llmCalls;
+      const ordinal = await parseTemporalExpression({text:'May 26th (Tuesday) 2026 at 5pm',timeZone:'America/New_York',referenceInstant:'2026-05-15T16:00:00Z',openaiApiKey:'synthetic-test-key',openaiModel:'test-llm',features:{planIr:true,deterministicPreflight:true},langfuse:{enabled:false}});
+      assert.equal(ordinal.status,'resolved');
+      assert.equal(ordinal.epoch,1779829200);
+      assert.equal(llmCalls-beforeOrdinal,2,'model composes separate chrono fragments, followed by independent validation');
       rejectNextValidation = true;
       providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Repair a rejected heuristic.', plans: [{ label: 'Six days later', rationale: 'Resolve tomorrow then shift five calendar days.', confidence: 1, finalStep: 1, steps: [{ op: 'resolve_calendar_query', query: 'tomorrow' }, { op: 'shift_datetime', baseStep: 0, delta: { days: 5 } }] }] });
       const observedUsage: ({ inputTokens: number; outputTokens: number } | null)[] = [];

@@ -24,7 +24,7 @@ function createLoggerConfig() {
   if (process.env['NODE_ENV'] === 'production') {
     return { level: 'info' }; // Simple JSON logging in production
   }
-  
+
   try {
     require.resolve('pino-pretty');
     return {
@@ -361,7 +361,7 @@ server.get('/health', async (_request, reply) => {
   planIrEndpointWarmth.nudge();
   const dbInfo = db.getInfo();
   const usageStats = db.getUsageStats();
-  
+
   reply.send({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -489,7 +489,11 @@ server.post<{ Body: ParseRequest }>('/parse', {
     const { openaiApiKey, ...withoutLlm } = parseInput;
     let parsed = await parseTemporalExpression(endpointWarming ? withoutLlm : parseInput);
     if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
-      parsed = await parseTemporalExpression({ ...parseInput, features: { ...parseInput.features, planIr: true } });
+      parsed = await parseTemporalExpression({ ...parseInput,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+        deadlineMs: Date.now() + 30_000,
+        features: { ...parseInput.features, planIr: true },
+      });
     }
     if (endpointWarming) {
       parsed.debug = { ...parsed.debug, endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' };
@@ -935,7 +939,7 @@ server.get('/stats', async (_request, reply) => {
   const stats = db.getUsageStats();
   const referenceRouting = db.getReferenceRoutingStats();
   const recentUsage = db.getRecentUsage(5);
-  
+
   reply.send({
     usage: stats,
     referenceRouting,
@@ -958,7 +962,7 @@ server.setErrorHandler(async (error, _request, reply) => {
     ? Number((error as { statusCode?: unknown }).statusCode)
     : undefined;
   const message = error instanceof Error ? error.message : 'Invalid request';
-  
+
   // Rate limit errors
   if (statusCode === 429) {
     const errorResponse: ErrorResponse = {
@@ -968,7 +972,7 @@ server.setErrorHandler(async (error, _request, reply) => {
     reply.status(429).send(errorResponse);
     return;
   }
-  
+
   // Validation errors
   if (statusCode === 400) {
     const errorResponse: ErrorResponse = {
@@ -978,7 +982,7 @@ server.setErrorHandler(async (error, _request, reply) => {
     reply.status(400).send(errorResponse);
     return;
   }
-  
+
   // Generic error
   const errorResponse: ErrorResponse = {
     error: 'server_error',
@@ -992,14 +996,14 @@ server.setErrorHandler(async (error, _request, reply) => {
  */
 const gracefulShutdown = async (signal: string) => {
   console.log(`\nReceived ${signal}, shutting down gracefully...`);
-  
+
   try {
     // Close database
     db.close();
-    
+
     // Close server
     await server.close();
-    
+
     console.log('Server shutdown complete');
     process.exit(0);
   } catch (error) {
@@ -1019,15 +1023,15 @@ const start = async () => {
   try {
     console.log('Starting Time-Parse API server...');
     console.log('Configuration:', config.getSanitizedConfig());
-    
+
     // Initialize database with config path
     getDatabase(config.dbPath, config.telemetryRetentionDays);
-    
+
     await server.listen({
       host: '0.0.0.0',
       port: config.port
     });
-    
+
     console.log(`Server listening on port ${config.port}`);
     console.log(`Health check available at: http://localhost:${config.port}/health`);
   } catch (error) {
@@ -1037,4 +1041,4 @@ const start = async () => {
 };
 
 // Start the server
-start(); 
+start();

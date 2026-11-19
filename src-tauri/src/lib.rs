@@ -3660,7 +3660,7 @@ pub fn run() {
             pull_local_slm_docker_image,
         ])
         .setup(|app| {
-            app.manage(hosted_auth::HostedAuth::new(APP_INSTANCE_ID)?);
+            app.manage(hosted_auth::HostedAuth::new(APP_INSTANCE_ID));
             // Initialize logging
             log::info!("HammerOverlay starting up...");
             log::info!("Application version: {}", env!("CARGO_PKG_VERSION"));

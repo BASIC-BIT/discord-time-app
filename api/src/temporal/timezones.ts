@@ -419,7 +419,7 @@ function addAbbreviationReferences(text: string, references: TimeZoneReference[]
     }
     // Lowercase words need model context unless they directly follow an explicit clock.
     const requiresContext = matchedText !== abbreviation && text.trim().toLowerCase() !== matchedText.toLowerCase()
-      && !/\b(?:\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)\s*$/i.test(text.slice(0, start));
+      && !/\b(?:\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)\s*(?:in\s+|[,()]\s*)?$/i.test(text.slice(0, start));
     const ambiguous = AMBIGUOUS_ABBREVIATIONS[abbreviation];
     if (ambiguous !== undefined) {
       references.push({

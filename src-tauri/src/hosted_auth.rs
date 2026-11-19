@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
@@ -13,7 +13,7 @@ const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 pub struct HostedAuth {
     inner: Arc<Mutex<Inner>>,
     refresh_lock: Arc<tokio::sync::Mutex<()>>,
-    http: Client,
+    http: Arc<OnceLock<Result<Client, String>>>,
     service: String,
     issuer: String,
     client_id: String,
@@ -142,7 +142,7 @@ fn session_from_token(
 }
 
 impl HostedAuth {
-    pub fn new(instance: &str) -> Result<Self, String> {
+    pub fn new(instance: &str) -> Self {
         let issuer = option_env!("VITE_CLERK_ISSUER")
             .unwrap_or("")
             .trim_end_matches('/')
@@ -150,18 +150,27 @@ impl HostedAuth {
         let client_id = option_env!("VITE_CLERK_OAUTH_CLIENT_ID")
             .unwrap_or("")
             .to_string();
-        Ok(Self {
+        Self {
             inner: Arc::new(Mutex::new(Inner::default())),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
-            http: Client::builder()
-                .timeout(Duration::from_secs(10))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|_| "Could not initialize browser sign-in.")?,
+            http: Arc::new(OnceLock::new()),
             service: format!("{instance}:clerk:{client_id}"),
             issuer,
             client_id,
-        })
+        }
+    }
+
+    fn http(&self) -> Result<&Client, String> {
+        self.http
+            .get_or_init(|| {
+                Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .map_err(|_| "Could not initialize browser sign-in.".into())
+            })
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     fn entry(&self) -> Result<keyring::Entry, String> {
@@ -236,7 +245,7 @@ impl HostedAuth {
             return Err("Browser sign-in is not configured in this build.".into());
         }
         let value: Metadata = self
-            .http
+            .http()?
             .get(format!("{}/.well-known/openid-configuration", self.issuer))
             .send()
             .await
@@ -297,7 +306,7 @@ impl HostedAuth {
         getrandom::fill(&mut random).map_err(|_| "Could not start a secure sign-in.")?;
         let nonce: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let reply: DeviceReply = self
-            .http
+            .http()?
             .post(&metadata.device_authorization_endpoint)
             .form(&[
                 ("client_id", self.client_id.as_str()),
@@ -342,6 +351,13 @@ impl HostedAuth {
     }
 
     async fn poll(&self, generation: u64, pending: Pending, metadata: Metadata, app: AppHandle) {
+        let http = match self.http() {
+            Ok(http) => http,
+            Err(error) => {
+                self.fail_pending(generation, &error, &app);
+                return;
+            }
+        };
         let mut interval = pending.interval;
         loop {
             tokio::time::sleep(Duration::from_secs(interval)).await;
@@ -361,8 +377,7 @@ impl HostedAuth {
                 );
                 return;
             }
-            let reply = self
-                .http
+            let reply = http
                 .post(&metadata.token_endpoint)
                 .form(&[
                     ("client_id", self.client_id.as_str()),
@@ -480,7 +495,7 @@ impl HostedAuth {
         };
         let metadata = self.metadata().await?;
         let reply: TokenReply = self
-            .http
+            .http()?
             .post(&metadata.token_endpoint)
             .form(&[
                 ("client_id", self.client_id.as_str()),
@@ -586,7 +601,7 @@ pub async fn sign_out_hosted_auth(
             .and_then(|metadata| metadata.revocation_endpoint)
         {
             let _ = auth
-                .http
+                .http()?
                 .post(endpoint)
                 .form(&[
                     ("client_id", auth.client_id.as_str()),
@@ -603,6 +618,18 @@ pub async fn sign_out_hosted_auth(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_http_failure_does_not_prevent_auth_state_or_app_setup() {
+        let mut auth = HostedAuth::new("unavailable-http-test");
+        assert!(auth.http.get().is_none());
+        auth.http
+            .set(Err("Could not initialize browser sign-in.".into()))
+            .unwrap();
+        assert!(auth.http().is_err());
+        auth.client_id.clear();
+        assert!(!auth.status().unwrap().configured);
+    }
     fn token(issuer: &str, audience: &str, nonce: &str, expiry: u64) -> String {
         let payload = serde_json::json!({"iss":issuer,"aud":audience,"nonce":nonce,"exp":expiry});
         format!(
@@ -668,7 +695,7 @@ mod tests {
     }
     #[test]
     fn cancelled_generation_cannot_store_a_late_token() {
-        let auth = HostedAuth::new("cancelled-auth-test").unwrap();
+        let auth = HostedAuth::new("cancelled-auth-test");
         auth.inner.lock().unwrap().generation = 2;
         let reply = TokenReply {
             id_token: Some(token(&auth.issuer, &auth.client_id, "nonce", now() + 3600)),
@@ -682,14 +709,14 @@ mod tests {
     #[test]
     fn refresh_credential_survives_native_state_restart_and_is_removed_on_clear() {
         let instance = format!("hammer-overlay-auth-test-{}-{}", std::process::id(), now());
-        let first = HostedAuth::new(&instance).unwrap();
+        let first = HostedAuth::new(&instance);
         assert!(first.stored_refresh().unwrap().is_none());
         first
             .entry()
             .unwrap()
             .set_password("synthetic-refresh-test")
             .unwrap();
-        let restored = HostedAuth::new(&instance).unwrap().stored_refresh();
+        let restored = HostedAuth::new(&instance).stored_refresh();
         let cleared = first.clear_refresh();
         assert_eq!(restored.unwrap().as_deref(), Some("synthetic-refresh-test"));
         cleared.unwrap();
