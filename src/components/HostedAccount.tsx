@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { cancelHostedSignIn, getHostedAuthStatus, hostedConfigured, openHostedSignInBrowser, restoreHostedSignInWindow, signOutHostedAuth, startHostedSignIn, type HostedAuthStatus } from '../lib/hosted-auth';
 
-export function HostedAccount({ compact = false, onSignedIn, onDismiss }: { compact?: boolean; onSignedIn?: () => void; onDismiss?: () => void }) {
+export function HostedAccount({ compact = false, dismissWhenIdle = false, onSignedIn, onDismiss }: { compact?: boolean; dismissWhenIdle?: boolean; onSignedIn?: () => void; onDismiss?: () => void }) {
   const [status, setStatus] = useState<HostedAuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +56,10 @@ export function HostedAccount({ compact = false, onSignedIn, onDismiss }: { comp
   };
 
   useEffect(() => { setCodeCopied(false); }, [status?.userCode]);
+
+  useEffect(() => {
+    if (dismissWhenIdle && !busy && status?.phase === 'signed_out') onDismiss?.();
+  }, [dismissWhenIdle, busy, status?.phase, onDismiss]);
 
   if (!hostedConfigured) return null;
   const pending = status?.phase === 'pending';

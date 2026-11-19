@@ -81,3 +81,13 @@ it('lets users dismiss the compact prompt while preserving approval until cancel
   expect([...container.querySelectorAll('button')].some(button=>button.textContent==='Not now')).toBe(false);
   await click('Cancel'); await click('Not now'); expect(dismiss).toHaveBeenCalledTimes(2);
 });
+
+it('dismisses an idle prompt after a result without dismissing pending browser approval', async () => {
+  const dismiss = vi.fn();
+  await act(async () => root.render(<HostedAccount compact onDismiss={dismiss} />));
+  await click('Sign in with browser');
+  await act(async () => root.render(<HostedAccount compact dismissWhenIdle onDismiss={dismiss} />));
+  expect(dismiss).not.toHaveBeenCalled();
+  await click('Cancel');
+  expect(dismiss).toHaveBeenCalledOnce();
+});
