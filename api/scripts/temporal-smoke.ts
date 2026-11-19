@@ -1673,6 +1673,7 @@ async function main() {
   assert.equal(groundedTwoPlanClockChoice.status, 'failed');
   assert.equal(groundedTwoPlanClockChoice.clarificationAlternatives, undefined);
   assert.match(groundedTwoPlanClockChoice.validation.warnings.join(' '), /clock did not match/);
+  assert.match(groundedTwoPlanClockChoice.validation.warnings.join(' '), /one resolve_clock_time options step/);
 
   const unusedDiscordReferenceBranch = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',

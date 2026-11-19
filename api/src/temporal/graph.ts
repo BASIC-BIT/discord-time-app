@@ -20,6 +20,10 @@ import { resolveTimeZone } from './timezones';
 import { parseTemporalPlanPlannerOutput, TEMPORAL_PLAN_MAX_PLANS, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
+const EXECUTOR_BOUNDARY_CONVENTIONS = [
+  'Unqualified "first of the month" resolves to the next future first-of-month at 12:00 PM local time: advance a month if the current month first at noon is not future. Explicit this/next/last month instead selects that specified month. This is a product convention, not unresolved ambiguity.',
+  '"The hour after next" is the whole-hour boundary after the next whole-hour boundary, with minutes and seconds zero. It is not a two-hour duration preserving the reference minutes. Explicit "two hours from now" is duration arithmetic and does preserve them.',
+].join('\n');
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
 const OpenAiTemporalPlanSchema = TemporalPlanSchema.extend({
   kind: z.enum(['instant', 'time_range']).nullable(),
@@ -4386,6 +4390,7 @@ async function validateFinalAnswer(
 Your job is not to be generous. Reject candidates that dropped, contradicted, or guessed around temporal signals in the original input.
 
 Validation rules:
+- ${EXECUTOR_BOUNDARY_CONVENTIONS}
 - An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
 - Unqualified holiday names use the holiday tool's configured regional calendar, selected from country/locale or timezone context. Validate the date against that calendar; do not reject solely because another religious or regional tradition exists elsewhere. Explicitly requested regions or traditions must still be preserved, and actual tool-reported ambiguity requires clarification.
 - Candidate facts (weekday, ISO date, timezone offset) come from deterministic calendar arithmetic. Use those computed facts to compare against the user's requested meaning; do not replace them with a mentally recomputed weekday or remembered calendar. If the user explicitly names a weekday, compare it with facts.weekday.
@@ -4500,7 +4505,7 @@ Rules:
 - Return reject when the solver dropped, contradicted, guessed around, or overfit a date, weekday, clock, timezone, relative offset, or ambiguity signal.
 - Return uncertain when the packet is insufficient to decide safely.
 - Clarification alternatives can be accepted when they represent the materially plausible interpretations instead of choosing one silently.
-- Respect documented deterministic executor conventions included in candidate assumptions and validation evidence. In particular, unqualified "first of the month" resolves to the next first-of-month when the current month's first at local noon is not in the future; do not reject that as dropped ambiguity.
+- ${EXECUTOR_BOUNDARY_CONVENTIONS}
 - For date-like relative offsets using days, weeks, months, or years with no explicit clock time, the documented product convention is date precision at 12:00 PM local time. Do not reject those candidates solely because they do not preserve the reference clock time. Relative offsets using hours or minutes should preserve exact time arithmetic.
 - A bare integer from 13 through 23 with no other meaningful tokens is a supported 24-hour clock shorthand in this product. It resolves to the next occurrence of that local hour, rolling forward to the next day if today's occurrence has passed. Do not reject that as generic day-of-month ambiguity. Bare 1 through 12 remains meridiem-ambiguous unless another explicit signal resolves it.
 - Bare numeric "0" is a supported explicit Unix epoch-zero input when deterministic evidence shows epoch parsing. Do not reject it as an unsupported bare-number guess.
@@ -4627,6 +4632,7 @@ function systemPrompt(request: TemporalParseRequest, agentContext: TemporalAgent
   return `You are a precise temporal coalescing agent. Your job is to convert fuzzy user time text into one correct timestamp.
 
 Rules:
+- ${EXECUTOR_BOUNDARY_CONVENTIONS}
 - Use tools for calendar facts and parsing; do not rely on memory for weekday math.
 - The tool executor supports multiple independent tool calls in one assistant turn. On the first tool pass, call all independent tools that are useful instead of discovering one fact per turn.
 - Do not call finalize_candidate in the same assistant turn as a candidate-producing tool; wait for candidate IDs from tool output.
@@ -4684,12 +4690,15 @@ function planIrSystemPrompt(request: TemporalParseRequest, agentContext: Tempora
 Return only structured output matching the schema. Do not answer with prose.
 Every plan step must include every schema field. Set fields that do not apply to null. For delta, set unused units to null.
 
+Product calendar convention: ${EXECUTOR_BOUNDARY_CONVENTIONS}
+For a supported boundary request, preserve its normalized wording in resolve_calendar_query so the executor applies this convention; do not replace it with a guessed absolute date.
+
 Available plan operations:
 - resolve_calendar_query: put the anchor in query, not text (text=null for this operation). Use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", "May 24 at 13:37", Discord timestamps, and bare 10/13/16/19 digit epochs.
 - resolve_weekday_anchor: use for every normalized weekday anchor, including an ordinary unqualified weekday (weekdayAnchor=upcoming); combine the clock separately with set_clock_time or combine_date_time. Do not send phrases such as "upcoming Tuesday at 10pm" to resolve_calendar_query. Also use this operation when weekday wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
 - resolve_holiday: use for holiday names; include year and normalized time when the user specified them. Unqualified names follow the configured regional calendar selected by the tool from country/locale or timezone context; do not introduce unrequested regional or religious alternatives.
 - resolve_clock_time: use for conventional numeric clock text like "13:37", "1pm", or "noon". It returns ONLY a clock, not a dated timestamp candidate. For spelled-out or semantic clock phrases, interpret the clock yourself and emit interpret_clock_phrase with a numeric 24-hour time; keep the original phrase and interpretation in the rationale.
-- For an ambiguous clock attached to a Discord timestamp reference, resolve_clock_time accepts options: an array of distinct {label,text} explicit AM/PM readings instead of a single text. The compact clock-choice contract requires exactly one plan and one option-bearing clock step feeding the final result. Keep the full reference/date arithmetic in that one plan; do not split its AM/PM readings into separate plans.
+- For an ambiguous clock attached to a Discord timestamp reference, resolve_clock_time accepts options: an array of distinct {label,text} explicit AM/PM readings instead of a single text. The compact clock-choice contract requires exactly one plan and one option-bearing clock step feeding the final result. This takes precedence over interpret_clock_phrase for meridiem ambiguity, including an unqualified hour with o'clock. Put every reading into options as conventional explicit AM/PM text. Keep the full reference/date arithmetic in that one plan; do not split its AM/PM readings into separate plans.
 - resolve_timezone: use for explicit timezone text. Reference it from date/time operations with timeZoneStep, or put exact IANA/fixed-offset text directly in timeZone.
 - interpret_clock_phrase: use when the clock phrase is semantic/fuzzy rather than conventional syntax, such as "leet time" or "133t time". You must set time to the interpreted 24-hour clock. It returns ONLY a clock, not a dated timestamp candidate.
 - shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Use time or timeStep when the final clock is known.
@@ -5331,7 +5340,9 @@ function discordReferenceClockSemanticsError(
     actualKeys.size !== requestedKeys.size
     || [...actualKeys].some((key) => !requestedKeys.has(key))
   ) {
-    return 'Model plan clock did not match the requested Discord-reference clock.';
+    return !isTimeRangePlan(plan) && singularClockMentionCount === 1 && requestedClocks.length > 1
+      ? `Model plan clock did not match the requested Discord-reference clock. Use one plan with one resolve_clock_time options step containing every requested reading: ${JSON.stringify(requestedClocks)}. Do not split readings across plans or interpret_clock_phrase steps.`
+      : 'Model plan clock did not match the requested Discord-reference clock.';
   }
   if (isTimeRangePlan(plan) && terminalDependencies.length === 2) {
     const orderedRangeClocks = requestedDiscordReferenceOrderedRangeClocks(originalText);

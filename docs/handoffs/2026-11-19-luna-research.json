@@ -654,6 +654,55 @@
       "failures": [
         {"caseId":"recursive-relative-typo-tomorow-2","text":"the day after the day after tomorow","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"method":"deterministic","finalValidation":{"accepted":true,"confidence":0.99,"reason":"“Tomorow” is an unambiguous typo for “tomorrow.” Applying “the day after” twice gives May 26, 2026. The candidate preserves the date and uses the product’s noon default for a date-only expression.","missingOrContradictedSignals":[]}}
       ]
+    },
+    {
+      "path": ".cache/luna-offset-full.json",
+      "source": {
+        "started": "2026-11-19T09:12:38.9713397-05:00",
+        "deterministicSha256": "ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0",
+        "baseCommit": "2cd9ce6eba9ca5876a349eec8a16563f1e852430",
+        "timezoneSha256": "E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49",
+        "graphSha256": "B0D244A65EBC93B0C139A9665D79605A54EFFC170011FD08546C7C3FEAFBFC70",
+        "workers": [
+          {
+            "shard": 0,
+            "pid": 22560
+          },
+          {
+            "shard": 1,
+            "pid": 88136
+          },
+          {
+            "shard": 2,
+            "pid": 106364
+          },
+          {
+            "shard": 3,
+            "pid": 75428
+          }
+        ]
+      },
+      "experiments": [
+        {
+          "label": "relative-offset-facts",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 199,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 3233,
+      "p95Ms": 15683,
+      "failures": [
+        {"caseId":"month-boundary-first-of-month","text":"first of the month","required":true,"mismatch":"expected epoch 1782921600, got 1780329600","status":"resolved","epoch":1780329600,"method":"agent+plan","validationWarnings":["Date-only input is represented at noon in the selected timezone for Discord timestamp compatibility."],"finalValidation":{"accepted":true,"confidence":0.91,"reason":"“First of the month” is reasonably interpreted as the first day of the current month. In the selected timezone, that is June 1, 2026, and the date-only noon default is correctly applied.","missingOrContradictedSignals":[]}},
+        {"caseId":"boundary-snap-hour-after-next","text":"the hour after next","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “The hour after next” does not unambiguously mean two hours from now with the current minutes preserved. It can refer to a later whole-hour boundary, which would produce a materially different time. The candidate assumes duration arithmetic without resolving that ambiguity.","The candidate’s 4:55 PM time relies on interpreting “after next” as adding two hours, but the phrase may refer to the hour after the next whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":0.95,"reason":"“The hour after next” does not unambiguously mean two hours from now with the current minutes preserved. It can refer to a later whole-hour boundary, which would produce a materially different time. The candidate assumes duration arithmetic without resolving that ambiguity.","missingOrContradictedSignals":["The candidate’s 4:55 PM time relies on interpreting “after next” as adding two hours, but the phrase may refer to the hour after the next whole-hour boundary."]}},
+        {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","text":"2 o’clock, on the day preceding <t:1772951400:D>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed","method":"agent+plan","validationWarnings":["Model plan clock did not match the requested Discord-reference clock."]}
+      ]
     }
   ]
 }

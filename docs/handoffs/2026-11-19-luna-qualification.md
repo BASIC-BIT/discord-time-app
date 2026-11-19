@@ -8,6 +8,8 @@ The qualified source also fixes contextual timezone words, multi-zone choice loo
 
 The newer 71199dc review fixes reached 201/202 required and 5/5 diagnostics. Its recursive-relative failure returned a day early and passed independent validation. The last passing report still applies to 57cc336, not that newer source. Calendar-day offset facts and explicit inside-out modifier validation passed a two-case live probe; full qualification of this follow-up is pending.
 
+The 2cd9ce6 follow-up passed the recursive case but reached 199/202 overall. It exposed missing shared boundary conventions (first-of-month and hour-after-next) and a safely rejected AM/PM plan shape. All failures are preserved. Shared boundary instructions and actionable clock-contract feedback pass a four-case live probe; the next complete run is pending. Case categories are available in the pinned catalog rather than duplicated in each passing measurement row.
+
 ## Complete measurements
 
 | Source or experiment | Required | Diagnostics |
@@ -23,7 +25,8 @@ The newer 71199dc review fixes reached 201/202 required and 5/5 diagnostics. Its
 | Calendar contract and timezone UI, 042a250 | 201/202 | 5/5 |
 | Explicit compound anchors, 70b68dd | 202/202 | 5/5 |
 | Reviewed timezone context and usage, 57cc336 | 202/202 | 5/5 |
-| Atomic admission and lazy sign-in, 71199dc | **201/202** | **5/5** |
+| Atomic admission and lazy sign-in, 71199dc | 201/202 | 5/5 |
+| Factual relative offsets, 2cd9ce6 | **199/202** | **5/5** |
 
 The [initial case-level evidence](2026-11-19-luna-qualification.json) preserves the first 54 required failures. The [research evidence](2026-11-19-luna-research.json) preserves later scores, failed cases, and source hashes. Intermediate snapshots are distinct implementations, not an unchanged-build passing streak. Partial probes stopped after an edit assertion or offline regression failure are not qualification results.
 
