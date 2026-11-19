@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { beforeEach, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { rateLimiter as limits } from './limits';
-import { api } from './_generated/api';
+import { api, internal } from './_generated/api';
 import { parseTemporalExpression } from '../api/src/temporal/index';
 import rateLimiter from '@convex-dev/rate-limiter/test';
 
@@ -55,11 +55,13 @@ test('provider errors stay generic and still record an unsuccessful attempt', as
 test('nonthrowing provider diagnostics and validation details do not cross into the client', async () => {
   const t = convexTest(schema, modules); rateLimiter.register(t);
   const privateMessage = 'Incorrect API key sk-synthetic-fragment at private-provider.example';
-  vi.mocked(parseTemporalExpression).mockResolvedValue({ status: 'failed', confidence: 0, method: 'fallback', assumptions: [], ambiguity: [], validation: { passed: false, warnings: [privateMessage], checks: [] }, debug: { finalValidation: { accepted: false, confidence: 0, reason: privateMessage, missingOrContradictedSignals: [] } } });
+  vi.mocked(parseTemporalExpression).mockResolvedValue({ status: 'failed', confidence: 0, method: 'fallback', assumptions: [], ambiguity: [privateMessage], clarificationQuestion: privateMessage, validation: { passed: false, warnings: [privateMessage], checks: [] }, debug: { finalValidation: { accepted: false, confidence: 0, reason: privateMessage, missingOrContradictedSignals: [] } } });
   const result = await t.withIdentity({ subject: 'provider-warning' }).action(api.temporal.parse, args);
   expect(JSON.stringify(result)).not.toContain(privateMessage);
   expect(result.validation.warnings).toEqual(['Smart parsing could not verify this expression.']);
   expect(result.debug?.finalValidation).toBeUndefined();
+  expect(result.ambiguity).toEqual(['Smart parsing could not verify this expression.']);
+  expect(result.clarificationQuestion).toBeUndefined();
 });
 
 test('throttles duplicate bursts before model work and isolates accounts', async () => {
@@ -128,4 +130,22 @@ test('one account cannot consume the entire shared daily allowance', async () =>
     await t.withIdentity({subject: 'another-user'}).action(api.temporal.parse, args);
     expect(parseTemporalExpression).toHaveBeenCalledTimes(21);
   } finally { clock.mockRestore(); }
+});
+
+test('retains 30 days of attempt rows while preserving lifetime usage totals', async () => {
+  const t = convexTest(schema, modules); rateLimiter.register(t);
+  let now = new Date('2026-10-01T12:00:00Z').getTime();
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  vi.mocked(parseTemporalExpression).mockResolvedValue({status:'resolved',epoch:1,confidence:1,method:'agent+plan',assumptions:[],ambiguity:[],validation:{passed:true,warnings:[],checks:[]},debug:{inputTokens:5,outputTokens:2}});
+  try {
+    const user = t.withIdentity({subject:'retention-user'});
+    await user.action(api.temporal.parse,args);
+    now += 31*24*60*60*1000;
+    await user.action(api.temporal.parse,args);
+    expect(await user.query(api.usage.mine,{})).toEqual({requests:2,inputTokens:10,outputTokens:4});
+    await t.mutation(internal.usage.prune,{});
+    await t.run(async ctx => {expect(await ctx.db.query('usage').collect()).toHaveLength(1);});
+    expect(await user.query(api.usage.mine,{})).toEqual({requests:2,inputTokens:10,outputTokens:4});
+    expect(parseTemporalExpression).toHaveBeenCalledTimes(2);
+  } finally {clock.mockRestore();}
 });

@@ -5,7 +5,7 @@ import { ConvexError } from 'convex/values';
 import { TimeParserAPIError, type ParseResponse } from './api-client';
 
 export function canUseHostedFallback(error: unknown): boolean {
-  return hostedConfigured && error instanceof TimeParserAPIError && error.endpointWarming && error.status === 400 && error.code !== 'needs_clarification';
+  return hostedConfigured && error instanceof TimeParserAPIError && error.endpointWarming && !error.llmFallbackAttempted && error.status === 400 && error.code !== 'needs_clarification';
 }
 
 export async function parseHostedTime(text: string, tz: string, now: string, requestId: string, signal: AbortSignal): Promise<ParseResponse | null> {

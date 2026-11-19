@@ -20,9 +20,11 @@ import { resolveTimeZone } from './timezones';
 import { parseTemporalPlanPlannerOutput, TEMPORAL_PLAN_MAX_PLANS, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
-const EXECUTOR_BOUNDARY_CONVENTIONS = [
+const EXECUTOR_PRODUCT_CONVENTIONS = [
   'Unqualified "first of the month" resolves to the next future first-of-month at 12:00 PM local time: advance a month if the current month first at noon is not future. Explicit this/next/last month instead selects that specified month. This is a product convention, not unresolved ambiguity.',
-  '"The hour after next" is the whole-hour boundary after the next whole-hour boundary, with minutes and seconds zero. It is not a two-hour duration preserving the reference minutes. Explicit "two hours from now" is duration arithmetic and does preserve them.',
+  '"Next hour" means the next whole-hour boundary; "previous hour" means the most recent whole-hour boundary. "The hour after next" is the whole-hour boundary after the next whole-hour boundary, with minutes and seconds zero. It is not a two-hour duration preserving the reference minutes. Explicit "two hours from now" is duration arithmetic and does preserve them.',
+  'Bare nonnegative integers of exactly 10, 13, 16, or 19 digits are supported Unix epochs in seconds, milliseconds, microseconds, or nanoseconds. Keep the exact digits in resolve_calendar_query; do not convert them mentally or call a 16-digit epoch unsupported. All-zero bare integers are epoch zero.',
+  'Bare hours 13 through 23 are supported unambiguous 24-hour clocks at minute zero, using the next occurrence in the selected timezone (tomorrow if today has passed). Bare 1 through 12 instead requires AM/PM clarification. A bare supported hour is not an unsupported epoch length.',
 ].join('\n');
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
 const OpenAiTemporalPlanSchema = TemporalPlanSchema.extend({
@@ -67,7 +69,7 @@ const DISCORD_TIMESTAMP_FORMAT_CODES = [':d', ':D', ':t', ':T', ':f', ':F', ':R'
 const DISCORD_TIMESTAMP_RANGE_PATTERN = /^\s*<t:(\d+)(:[tTdDfFR])?>\s*(?:-|–|—|\bto\b)\s*<t:(\d+)(:[tTdDfFR])?>\s*$/i;
 const EXPLICIT_RANGE_CLOCK_PATTERN = String.raw`(?:(?:0?[1-9]|1[0-2])(?:[:.][0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|a|p)|(?:[01]?\d|2[0-3])[:.][0-5]\d)`;
 const EXPLICIT_DATED_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<dateText>.+?)\s+(?:from\s+)?(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
-const EXPLICIT_BARE_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?:-|–|—|\bto\b|\buntil\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
+const EXPLICIT_BARE_TIME_RANGE_PATTERN = new RegExp(String.raw`^\s*(?:(?<prefix>from|between)\s+)?(?<startText>${EXPLICIT_RANGE_CLOCK_PATTERN})\s*(?<separator>-|–|—|\bto\b|\buntil\b|\band\b)\s*(?<endText>${EXPLICIT_RANGE_CLOCK_PATTERN})(?<suffixText>.*)$`, 'i');
 const EXPLICIT_RANGE_DATE_SIGNAL_PATTERN = new RegExp(String.raw`\b(?:${MONTH_DATE_QUERY_PATTERN.source}|\d{4}-\d{2}-\d{2}|today|tomorrow|tonight|(?:${PLAN_WEEKDAYS.join('|')}))\b`, 'i');
 
 const AgentBaseDateTimeSchema = z.union([
@@ -1499,6 +1501,12 @@ async function runPlanIrAttempt(
   const clockChoiceContractError = temporalClockChoiceContractError(planResult, plans, request.text);
   if (clockChoiceContractError !== undefined) {
     const response = responseFromFailedPlanIr(clockChoiceContractError, trace, 0, 0, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
+  if (planResult.outcome === 'clarification' && plans.length === 0 && planResult.clarificationQuestion !== null) {
+    const response = responseFromQuestionOnlyPlanClarification(planResult.clarificationQuestion, planResult.reason, trace, 'agent+plan');
+    response.debug = { ...response.debug, agentAttempts: 1 };
     attachPlanDebug(response);
     return response;
   }
@@ -3226,10 +3234,11 @@ function parseExplicitDatedTimeRangeParts(text: string): ExplicitDatedTimeRangeP
 
 function parseExplicitBareTimeRangeParts(text: string): ExplicitBareTimeRangeParts | null {
   const match = EXPLICIT_BARE_TIME_RANGE_PATTERN.exec(text);
-  const groups = match?.groups as Partial<ExplicitBareTimeRangeParts> | undefined;
+  const groups = match?.groups as (Partial<ExplicitBareTimeRangeParts> & {prefix?: string; separator?: string}) | undefined;
   if (groups?.startText === undefined || groups.endText === undefined) {
     return null;
   }
+  if (groups.separator?.toLowerCase() === 'and' && groups.prefix?.toLowerCase() !== 'between') return null;
   return {
     startText: groups.startText.trim(),
     endText: groups.endText.trim(),
@@ -4390,7 +4399,7 @@ async function validateFinalAnswer(
 Your job is not to be generous. Reject candidates that dropped, contradicted, or guessed around temporal signals in the original input.
 
 Validation rules:
-- ${EXECUTOR_BOUNDARY_CONVENTIONS}
+- ${EXECUTOR_PRODUCT_CONVENTIONS}
 - An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
 - Unqualified holiday names use the holiday tool's configured regional calendar, selected from country/locale or timezone context. Validate the date against that calendar; do not reject solely because another religious or regional tradition exists elsewhere. Explicitly requested regions or traditions must still be preserved, and actual tool-reported ambiguity requires clarification.
 - Candidate facts (weekday, ISO date, timezone offset) come from deterministic calendar arithmetic. Use those computed facts to compare against the user's requested meaning; do not replace them with a mentally recomputed weekday or remembered calendar. If the user explicitly names a weekday, compare it with facts.weekday.
@@ -4505,7 +4514,7 @@ Rules:
 - Return reject when the solver dropped, contradicted, guessed around, or overfit a date, weekday, clock, timezone, relative offset, or ambiguity signal.
 - Return uncertain when the packet is insufficient to decide safely.
 - Clarification alternatives can be accepted when they represent the materially plausible interpretations instead of choosing one silently.
-- ${EXECUTOR_BOUNDARY_CONVENTIONS}
+- ${EXECUTOR_PRODUCT_CONVENTIONS}
 - For date-like relative offsets using days, weeks, months, or years with no explicit clock time, the documented product convention is date precision at 12:00 PM local time. Do not reject those candidates solely because they do not preserve the reference clock time. Relative offsets using hours or minutes should preserve exact time arithmetic.
 - A bare integer from 13 through 23 with no other meaningful tokens is a supported 24-hour clock shorthand in this product. It resolves to the next occurrence of that local hour, rolling forward to the next day if today's occurrence has passed. Do not reject that as generic day-of-month ambiguity. Bare 1 through 12 remains meridiem-ambiguous unless another explicit signal resolves it.
 - Bare numeric "0" is a supported explicit Unix epoch-zero input when deterministic evidence shows epoch parsing. Do not reject it as an unsupported bare-number guess.
@@ -4632,7 +4641,7 @@ function systemPrompt(request: TemporalParseRequest, agentContext: TemporalAgent
   return `You are a precise temporal coalescing agent. Your job is to convert fuzzy user time text into one correct timestamp.
 
 Rules:
-- ${EXECUTOR_BOUNDARY_CONVENTIONS}
+- ${EXECUTOR_PRODUCT_CONVENTIONS}
 - Use tools for calendar facts and parsing; do not rely on memory for weekday math.
 - The tool executor supports multiple independent tool calls in one assistant turn. On the first tool pass, call all independent tools that are useful instead of discovering one fact per turn.
 - Do not call finalize_candidate in the same assistant turn as a candidate-producing tool; wait for candidate IDs from tool output.
@@ -4647,7 +4656,7 @@ Rules:
 - For relative compositions, resolve or choose an anchor, then apply shift_datetime. If the intended normalized clock time is already known, pass time to shift_datetime instead of calling set_clock_time afterward.
 - Use resolve_clock_time only for conventional explicit clock syntax. For fuzzy clock wording, you may infer the intended normalized 24-hour time yourself, pass it to shift_datetime or set_clock_time, and state that assumption.
 - Use resolve_timezone for explicit timezone text. Prefer regional/IANA timezone intent for names like Eastern time, UK time, and Japan time; use fixed offsets only for explicit UTC/GMT offset text.
-- If a timezone abbreviation is ambiguous, such as CST, IST, or BST, ask for clarification rather than choosing silently.
+- If a timezone abbreviation is ambiguous, such as CST, IST, or BST, return a question-only clarification with plans=[] and no timestamp alternatives until its region is selected.
 - When inferring a fuzzy clock token, first decide whether the token is wordplay, slang, or a cultural time phrase rather than a literal clock string.
 - Preserve all available signal. Do not silently discard trailing characters or default minutes to :00 when the token appears to include minute information.
 - Discord timestamp references in factual routing context are exact, immutable anchors, not answers by themselves when route is "model". Resolve each required reference using its exact raw token, then interpret all meaningful surrounding language with tools.
@@ -4690,7 +4699,7 @@ function planIrSystemPrompt(request: TemporalParseRequest, agentContext: Tempora
 Return only structured output matching the schema. Do not answer with prose.
 Every plan step must include every schema field. Set fields that do not apply to null. For delta, set unused units to null.
 
-Product calendar convention: ${EXECUTOR_BOUNDARY_CONVENTIONS}
+Product calendar convention: ${EXECUTOR_PRODUCT_CONVENTIONS}
 For a supported boundary request, preserve its normalized wording in resolve_calendar_query so the executor applies this convention; do not replace it with a guessed absolute date.
 
 Available plan operations:
@@ -4733,10 +4742,11 @@ Planning rules:
 - For a top-level request whose intended wording is "next <weekday>", including corrected typos or shorthand, bare dates, conventional clocks, and fuzzy clocks, treat the weekday convention as materially ambiguous unless surrounding wording explicitly says "upcoming", "this", or "the week after". Use resolve_weekday_anchor with weekdayAnchor=next_ambiguous, combine any clock separately, and return clarification. Normalizing a typo must not silently choose a weekday convention.
 - If "next <weekday>" is an internal anchor inside a larger offset expression, resolve ONLY that normalized weekday anchor through resolve_calendar_query, then apply the outer offset with shift_datetime. Do not pass the compound offset phrase to resolve_calendar_query: its opaque parse can select a different week. Combine any supplied clock after the explicit offset.
 - For fuzzy cultural clock cases, resolve the semantic clock, but keep any independent date ambiguity as clarification alternatives.
-- For explicit timezone names or abbreviations, preserve timezone intent. Use IANA/regional timezones for named regions so DST is date-specific. Use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, use outcome "clarification" rather than choosing.
+- For explicit timezone names or abbreviations, preserve timezone intent. Use IANA/regional timezones for named regions so DST is date-specific. Use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, use a question-only outcome "clarification" with plans=[] and no dated alternatives until the user selects a region.
 - Phrases like "sunday after next" are ambiguous. Do not choose one silently; use resolve_weekday_anchor with weekdayAnchor=after_next_ambiguous and outcome "clarification".
 - For dependent compositions, resolve the anchor and clock independently when possible, then combine with shift_datetime or set_clock_time.
 - For typos in temporal words, correct the phrase in resolve_calendar_query and include the correction in the plan rationale.
+- For arithmetic relative to an explicit clock anchor such as noon, set that anchor with set_clock_time, then apply every stated hour/minute offset using shift_datetime. Do not fold the arithmetic into interpret_clock_phrase or drop a duration unit.
 - For fuzzy cultural clock text, infer the semantic clock only when the phrase is stable. For leet/l33t/133t time, use interpret_clock_phrase with time 13:37.
 - For negative or unsupported-length bare epoch-like numbers, use outcome "no_plan" rather than guessing.
 - For bounded repeated "day after ... tomorrow" chains up to five repetitions, resolve "tomorrow" and emit one shift_datetime step whose days delta equals the repetition count. If the chain is longer or uncertain, use outcome "no_plan" rather than guessing.

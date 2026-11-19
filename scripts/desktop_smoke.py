@@ -1132,8 +1132,8 @@ def install_pending_fixture(s, command='parse_time_with_local_service', verifica
 def release_fixture(s):
     s.evaluate('window.__pickerTiming.release(); return true')
     wait_for('real response released', lambda: s.evaluate('return window.__pickerTiming.released'))
-    # Two render frames drain promise continuations and React's queued work.
-    s.wd('POST', '/execute/async', {'script': 'const done=arguments[0]; requestAnimationFrame(()=>requestAnimationFrame(()=>done(true)));', 'args': []})
+    # Drain queued continuations without depending on WebKit producing paint frames.
+    s.wd('POST', '/execute/async', {'script': 'const done=arguments[0]; setTimeout(()=>setTimeout(()=>done(true),0),0);', 'args': []})
 
 
 def restore_fixture(s):

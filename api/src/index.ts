@@ -188,6 +188,7 @@ const parseResponseSchema = {
       type: 'object',
       properties: {
         endpointWarming: { type: 'boolean' },
+        llmFallbackAttempted: { type: 'boolean' },
         shortCircuitReason: { type: 'string' },
       }
     }
@@ -488,9 +489,11 @@ server.post<{ Body: ParseRequest }>('/parse', {
       }
     }
 
+    let llmFallbackAttempted = false;
     const { openaiApiKey, ...withoutLlm } = parseInput;
     let parsed = await parseTemporalExpression(endpointWarming ? withoutLlm : parseInput);
     if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
+      llmFallbackAttempted = true;
       warmupBudgetSignal = AbortSignal.timeout(30_000);
       parsed = await parseTemporalExpression({ ...parseInput,
         signal: AbortSignal.any([controller.signal, warmupBudgetSignal]),
@@ -500,7 +503,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
       warmupBudgetSignal.throwIfAborted();
     }
     if (endpointWarming) {
-      parsed.debug = { ...parsed.debug, endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' };
+      parsed.debug = { ...parsed.debug, endpointWarming: true, llmFallbackAttempted, shortCircuitReason: 'plan_ir_endpoint_warming' };
       parsed.validation.warnings.push(PLAN_IR_WARMING_WARNING);
     }
     logTemporalGeneration(text, tz, now, parsed);
@@ -538,7 +541,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
         error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,
-        ...(endpointWarming ? { debug: { endpointWarming: true } } : {}),
+        ...(endpointWarming ? { debug: { endpointWarming: true, llmFallbackAttempted } } : {}),
         alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
           label: alternative.label,
           kind: alternative.kind,
@@ -570,7 +573,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
       confidence: parsed.confidence,
       method: parsed.method,
       canonical: parsed.canonical,
-      ...(endpointWarming ? { debug: { endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' } } : {}),
+      ...(endpointWarming ? { debug: { endpointWarming: true, llmFallbackAttempted, shortCircuitReason: 'plan_ir_endpoint_warming' } } : {}),
     };
 
   } catch (error) {

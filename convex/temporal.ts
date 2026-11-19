@@ -45,7 +45,10 @@ export const parse = action({
         },
       });
       // Keep model traces and raw prompts out of the client response.
-      return { ...result,
+      const { clarificationQuestion, ...publicResult } = result;
+      return { ...publicResult,
+        ...(result.status === 'needs_clarification' && clarificationQuestion !== undefined ? {clarificationQuestion} : {}),
+        ambiguity: result.validation.passed ? [] : ['Smart parsing could not verify this expression.'],
         validation: { ...result.validation, warnings: result.validation.passed ? [] : ['Smart parsing could not verify this expression.'] },
         debug: {
         model: MODEL, reasoningEffort: 'low',

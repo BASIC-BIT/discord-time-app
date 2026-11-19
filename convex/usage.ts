@@ -35,3 +35,14 @@ export const mine = query({
     return user ? { requests: user.requests, inputTokens: user.inputTokens, outputTokens: user.outputTokens } : { requests: 0, inputTokens: 0, outputTokens: 0 };
   },
 });
+
+export const prune = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async ctx => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const oldest = await ctx.db.query('usage').order('asc').take(200);
+    for (const row of oldest) if (row._creationTime < cutoff) await ctx.db.delete(row._id);
+    return null;
+  },
+});

@@ -10,6 +10,8 @@ The newer 71199dc review fixes reached 201/202 required and 5/5 diagnostics. Its
 
 The 2cd9ce6 follow-up passed the recursive case but reached 199/202 overall. It exposed missing shared boundary conventions (first-of-month and hour-after-next) and a safely rejected AM/PM plan shape. All failures are preserved. Shared boundary instructions and actionable clock-contract feedback pass a four-case live probe; the next complete run is pending. Case categories are available in the pinned catalog rather than duplicated in each passing measurement row.
 
+The 6309695 hybrid reached 201/202 and again accepted a recursive answer one day early: the validator omitted an outer modifier. The same parser with deterministic preflight disabled reached 196/202 without a resolved mismatch. That comparison exposed six interpretation/response-contract failures, which are preserved. Shared literal/boundary conventions, tool-based noon arithmetic, and correct OpenAI question-only handling pass their focused checks. A complete follow-up will evaluate the existing Plan-IR-first permutation before any default promotion. Measurement references use `caseDefaults` plus per-row overrides; hydration preserves every original reference and timezone.
+
 ## Complete measurements
 
 | Source or experiment | Required | Diagnostics |
@@ -26,7 +28,9 @@ The 2cd9ce6 follow-up passed the recursive case but reached 199/202 overall. It 
 | Explicit compound anchors, 70b68dd | 202/202 | 5/5 |
 | Reviewed timezone context and usage, 57cc336 | 202/202 | 5/5 |
 | Atomic admission and lazy sign-in, 71199dc | 201/202 | 5/5 |
-| Factual relative offsets, 2cd9ce6 | **199/202** | **5/5** |
+| Factual relative offsets, 2cd9ce6 | 199/202 | 5/5 |
+| Shared boundaries, 6309695 hybrid | 201/202 | 5/5 |
+| 6309695 Plan-IR-first comparison | **196/202** | **5/5** |
 
 The [initial case-level evidence](2026-11-19-luna-qualification.json) preserves the first 54 required failures. The [research evidence](2026-11-19-luna-research.json) preserves later scores, failed cases, and source hashes. Intermediate snapshots are distinct implementations, not an unchanged-build passing streak. Partial probes stopped after an edit assertion or offline regression failure are not qualification results.
 

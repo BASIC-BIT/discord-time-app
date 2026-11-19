@@ -23,6 +23,21 @@ from desktop_smoke import DesktopSession, build_environment, http_json, validate
 
 
 class RunnerBoundaries(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'requires Node.js')
+    def test_release_fixture_drains_work_without_animation_frames(self):
+        class Session:
+            def evaluate(self, *_args):
+                return True
+            def wd(self, method, path, payload):
+                program = "const assert=require('node:assert/strict'); let settled=false; Promise.resolve().then(()=>setTimeout(()=>{settled=true},0)); new Function(process.argv[1])(()=>{assert.ok(settled);process.stdout.write('drained')});"
+                result = subprocess.run(['node', '-e', program, payload['script']], capture_output=True, text=True, timeout=5)
+                if result.returncode:
+                    raise AssertionError(result.stderr)
+                if result.stdout != 'drained':
+                    raise AssertionError(result.stdout)
+        desktop_smoke.release_fixture(Session())
+
+
     def test_offline_env_removes_provider_configuration(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)

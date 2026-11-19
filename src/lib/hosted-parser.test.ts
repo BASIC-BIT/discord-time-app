@@ -106,3 +106,13 @@ test('cancelling during token refresh never starts a model call', async () => {
   await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
   expect(fake.action).not.toHaveBeenCalled();
 });
+
+test('native and HTTP errors do not trigger a second hosted attempt after local LLM work', async () => {
+  const body = {error:'parse_failed',debug:{endpointWarming:true,llmFallbackAttempted:true}};
+  fake.invoke.mockResolvedValue({ok:false,status:400,body});
+  const native = new TimeParserAPIClient('http://127.0.0.1:8857','test-local-key');
+  await expect(native.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && !canUseHostedFallback(error));
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify(body),{status:400})));
+  const http = new TimeParserAPIClient('http://127.0.0.1:8857','test-local-key','unavailable',false);
+  await expect(http.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && !canUseHostedFallback(error));
+});

@@ -3049,13 +3049,13 @@ async function main() {
   assert.equal(explicitDatedRange.range?.start.epoch, 1781128800);
   assert.equal(explicitDatedRange.range?.end.epoch, 1781136000);
 
-  for (const text of ['tomorrow from 3pm to 5pm', 'Friday 8pm-10:30pm', 'May 29, 2026 8pm-10:30pm']) {
+  for (const text of ['from 3pm to 5pm', 'between 3pm and 5pm', 'tomorrow from 3pm to 5pm', 'Friday 8pm-10:30pm', 'May 29, 2026 8pm-10:30pm']) {
     const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
     assert.equal(result.status, 'resolved', text);
     assert.equal(result.kind, 'time_range', text);
     assert.ok(result.range!.end.epoch > result.range!.start.epoch, text);
   }
-  for (const text of ['Tuesday through Thursday 3pm-5pm', 'Tuesday through Thursday', 'tomorrow at 5pm, confirmed Nov 1']) {
+  for (const text of ['Tuesday through Thursday 3pm-5pm', 'Tuesday through Thursday', 'tomorrow at 5pm, confirmed Nov 1', '3pm and 5pm']) {
     const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
     assert.notEqual(result.status, 'resolved', `Partial text must not finalize: ${text}`);
   }

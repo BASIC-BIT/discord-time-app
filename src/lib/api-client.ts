@@ -12,7 +12,7 @@ export interface ParseResponse {
   confidence: number;
   method: string;
   canonical?: ParseCanonical;
-  debug?: { endpointWarming?: boolean; shortCircuitReason?: string; serverValidated?: boolean };
+  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean; shortCircuitReason?: string; serverValidated?: boolean };
 }
 
 export interface PlanIrEndpointStatus {
@@ -59,7 +59,7 @@ export interface ParseError {
   message?: string;
   generationId?: string;
   alternatives?: ParseAlternative[];
-  debug?: { endpointWarming?: boolean };
+  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean };
 }
 
 export interface ParseOptions {
@@ -119,6 +119,7 @@ export class TimeParserAPIError extends Error {
     public readonly alternatives?: ParseAlternative[],
     public readonly generationId?: string,
     public readonly endpointWarming = false,
+    public readonly llmFallbackAttempted = false,
   ) {
     super(message);
     this.name = 'TimeParserAPIError';
@@ -196,7 +197,7 @@ export class TimeParserAPIClient {
     if (nativeResult !== null) {
       return nativeResult;
     }
-    
+
     try {
       const response = await fetchWithStartupRetry(url, {
         method: 'POST',
@@ -217,7 +218,7 @@ export class TimeParserAPIClient {
 
       if (!response.ok) {
         const errorData = await response.json() as ParseError;
-        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId, errorData.debug?.endpointWarming);
+        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId, errorData.debug?.endpointWarming, errorData.debug?.llmFallbackAttempted);
       }
 
       const data = await response.json() as ParseResponse;
@@ -237,7 +238,7 @@ export class TimeParserAPIClient {
       if (error instanceof TypeError) {
         throw new TimeParserUnavailableError(this.unavailableMessage);
       }
-      
+
       // Re-throw with more context
       throw new TimeParserAPIError(`Failed to parse time: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -298,6 +299,7 @@ export class TimeParserAPIClient {
         errorData.alternatives,
         errorData.generationId,
         errorData.debug?.endpointWarming,
+        errorData.debug?.llmFallbackAttempted,
       );
     }
 

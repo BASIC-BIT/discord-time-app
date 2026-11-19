@@ -161,7 +161,9 @@ async function main() {
           assert.equal(result.debug?.endpointWarming, true);
           assert.equal(llmCalls - before, 2, 'agent proposal and independent validation must both run');
           verdict = 'reject';
-          assert.equal((await parse('fuzzy evening marker')).status, 400, 'rejected LLM answers must stay failed');
+          const locallyRejected = await parse('fuzzy evening marker');
+          assert.equal(locallyRejected.status, 400, 'rejected LLM answers must stay failed');
+          assert.equal((await locallyRejected.json()).debug.llmFallbackAttempted, true);
           verdict = 'unavailable';
           assert.equal((await parse('fuzzy evening marker')).status, 400, 'provider failure must stay failed');
           verdict = 'pending';
@@ -183,6 +185,7 @@ async function main() {
           assert.equal((await timedOut.json()).error, 'parse_timeout', 'server budget expiry is not user cancellation');
         } else {
           assert.equal(fallback.status, 400);
+          assert.equal(result.debug?.llmFallbackAttempted, false);
           assert.equal(result.debug?.endpointWarming, true, 'credential-free clients need the warming signal to use the relay');
           assert.equal(llmCalls, before, 'missing credentials must not call the LLM');
         }
@@ -263,6 +266,15 @@ async function main() {
       assert.equal(lateRepair.status, 'failed');
       assert.equal(llmCalls - beforeLateRepair, 1, 'do not pay for repair without time to finish it');
       assert.ok(lateRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_skipped'));
+      providerPlan = parseTemporalPlanPlannerOutput({outcome:'clarification',reason:'The timezone abbreviation requires a region.',clarificationQuestion:'Which region did you mean by CST?',plans:[]});
+      const beforeQuestion = llmCalls;
+      const question = await parseTemporalExpression({text:'tomorrow 5pm CST',timeZone:'America/New_York',referenceInstant:'2026-05-24T12:00:00Z',openaiApiKey:'synthetic-test-key',openaiModel:'test-llm',features:{planIr:true,deterministicPreflight:false},langfuse:{enabled:false}});
+      assert.equal(question.status,'needs_clarification');
+      assert.equal(question.clarificationQuestion,'Which region did you mean by CST?');
+      assert.equal(question.epoch,undefined);
+      assert.equal(question.clarificationAlternatives,undefined);
+      assert.equal(question.debug?.agentAttempts,1);
+      assert.equal(llmCalls-beforeQuestion,1,'a valid question-only answer needs no repair or timestamp validation');
       rejectNextValidation = true;
       providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'no_plan', reason: 'Synthetic unrepresentable interpretation.', plans: [] });
       const beforeNoPlan = llmCalls;
