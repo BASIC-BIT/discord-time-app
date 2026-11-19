@@ -4,6 +4,7 @@ import { internalMutation, query } from './_generated/server';
 export const record = internalMutation({
   returns: v.null(),
   args: {
+    usageComplete: v.optional(v.boolean()),
     requestId: v.string(), model: v.string(), status: v.string(),
     durationMs: v.number(), inputLength: v.number(),
     inputTokens: v.number(), outputTokens: v.number(),

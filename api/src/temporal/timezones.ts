@@ -7,6 +7,7 @@ type TimeZoneReference = {
   matchedText: string;
   candidates: TimeZoneResolutionCandidate[];
   note: string;
+  requiresContext?: boolean;
 };
 
 type NamedZoneRule = {
@@ -173,7 +174,7 @@ export function resolveTimeZone(input: { text: string; calendarContext: Calendar
   if ([...input.text.matchAll(EXPLICIT_OFFSET_LIKE_PATTERN)].some((match) => !VALID_EXPLICIT_OFFSET_PATTERN.test(match[0]))) {
     return { status: 'invalid', candidates: [], notes: ['Input contains a malformed UTC/GMT offset.'] };
   }
-  const references = extractTimeZoneReferences(input.text);
+  const references = extractTimeZoneReferences(input.text).filter(reference => !reference.requiresContext);
   if (references.length === 0) {
     return { status: 'not_found', candidates: [], notes: ['No explicit timezone reference found.'] };
   }
@@ -204,6 +205,20 @@ export function resolveTimeZone(input: { text: string; calendarContext: Calendar
     candidates,
     notes: references.map((reference) => reference.note),
   };
+}
+
+export function hasContextualTimeZoneAbbreviation(text: string): boolean {
+  return extractTimeZoneReferences(text).some(reference => reference.requiresContext);
+}
+
+export function applyTimeZoneChoice(text: string, candidate: TimeZoneResolutionCandidate): string {
+  const references = extractTimeZoneReferences(text).filter(reference => !reference.requiresContext
+    && reference.matchedText.toLowerCase() === candidate.matchedText.toLowerCase()
+    && reference.candidates.some(zone => zone.timeZone === candidate.timeZone));
+  for (const reference of references.reverse()) {
+    text = text.slice(0, reference.start) + candidate.timeZone + text.slice(reference.end);
+  }
+  return text;
 }
 
 export function stripResolvedTimeZoneText(text: string, candidate: TimeZoneResolutionCandidate): string {
@@ -402,12 +417,16 @@ function addAbbreviationReferences(text: string, references: TimeZoneReference[]
     if (references.some((reference) => start >= reference.start && end <= reference.end)) {
       continue;
     }
+    // Lowercase words need model context unless they directly follow an explicit clock.
+    const requiresContext = matchedText !== abbreviation && text.trim().toLowerCase() !== matchedText.toLowerCase()
+      && !/\b(?:\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)\s*$/i.test(text.slice(0, start));
     const ambiguous = AMBIGUOUS_ABBREVIATIONS[abbreviation];
     if (ambiguous !== undefined) {
       references.push({
         start,
         end,
         matchedText,
+        requiresContext,
         candidates: ambiguous.map((entry) => timeZoneCandidate({
           timeZone: entry.timeZone,
           label: entry.label,
@@ -426,6 +445,7 @@ function addAbbreviationReferences(text: string, references: TimeZoneReference[]
         start,
         end,
         matchedText,
+        requiresContext,
         candidates: [timeZoneCandidate({
           timeZone: unique.timeZone,
           label: unique.label,

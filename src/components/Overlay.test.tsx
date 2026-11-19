@@ -139,7 +139,7 @@ it('lets the user clarify a timezone before parsing a timestamp', async () => {
   const central = [...choices.querySelectorAll('button')].find(button => button.textContent === 'US Central time')!;
   await act(async () => central.click());
   await act(async () => vi.advanceTimersByTimeAsync(400));
-  expect(input.value).toBe('tomorrow at 5pm in America/Chicago');
+  expect(input.value).toBe('tomorrow at 5pm America/Chicago');
   expect(fake.parse).toHaveBeenLastCalledWith(input.value, expect.anything(), expect.anything(), expect.anything());
   expect(fake.hosted).not.toHaveBeenCalled();
   expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
@@ -172,7 +172,7 @@ it('can use the model for a fuzzy clock after the user clarifies its timezone', 
   await act(async () => central.click());
   await act(async () => vi.advanceTimersByTimeAsync(1100));
   expect(fake.hosted).toHaveBeenCalledOnce();
-  expect(fake.hosted.mock.calls[0][0]).toBe('tmrw at seventeen hundred in America/Chicago');
+  expect(fake.hosted.mock.calls[0][0]).toBe('tmrw at seventeen hundred America/Chicago');
   expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
 });
 
@@ -192,4 +192,17 @@ it('accepts finished input after a prefix call starts and ignores its late resul
   expect(fake.hosted).toHaveBeenCalledTimes(2); expect(container.textContent).toContain('1795129200');
   await act(async () => finishPrefix({ epoch: 1795125600, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } }));
   expect(container.textContent).toContain('1795129200'); expect(container.textContent).not.toContain('1795125600');
+});
+
+it('does not replace independent zones with one global timezone choice', async () => {
+  fake.eligible = false;
+  fake.parse.mockRejectedValue(new TimeParserAPIError('Which timezone should the timestamp use?', 400, 'needs_clarification', []));
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '3pm EST to 5pm PST');
+    input.dispatchEvent(new Event('input', {bubbles:true}));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(400));
+  expect(container.querySelector('[aria-label="Choose timezone"]')).toBeNull();
 });

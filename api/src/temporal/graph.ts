@@ -170,6 +170,7 @@ export interface TemporalGraphOptions {
   requestId?: string;
   signal?: AbortSignal;
   deadlineMs?: number;
+  onModelUsage?: (usage: { inputTokens: number; outputTokens: number } | null) => void;
   maxAgentAttempts?: number;
   maxToolCalls?: number;
   openaiApiKey?: string;
@@ -587,7 +588,7 @@ function referenceRoutingMessage(classification: DiscordTimestampClassification)
 export async function executeTemporalPlanPlannerOutput(
   planResult: TemporalPlanPlannerOutput,
   request: TemporalParseRequest,
-  options: Pick<TemporalGraphOptions, 'features' | 'implementations' | 'openaiApiKey' | 'openaiModel' | 'openaiReasoningEffort' | 'langfuse'> & {
+  options: Pick<TemporalGraphOptions, 'features' | 'implementations' | 'openaiApiKey' | 'openaiModel' | 'openaiReasoningEffort' | 'langfuse' | 'onModelUsage'> & {
     method?: TemporalMethod;
     modelName?: string;
     planningDurationMs?: number;
@@ -788,7 +789,7 @@ export async function executeTemporalPlanPlannerOutput(
 export async function verifyTemporalParseResponseWithSemanticConsistencyGate(
   request: TemporalParseRequest,
   response: TemporalParseResponse,
-  options: Pick<TemporalGraphOptions, 'implementations' | 'openaiApiKey' | 'openaiModel' | 'openaiReasoningEffort' | 'langfuse'>,
+  options: Pick<TemporalGraphOptions, 'implementations' | 'openaiApiKey' | 'openaiModel' | 'openaiReasoningEffort' | 'langfuse' | 'onModelUsage'>,
 ): Promise<TemporalSemanticConsistencyGateResult> {
   if (options.openaiApiKey === undefined) {
     return {
@@ -1200,7 +1201,7 @@ async function runAgentGraph(
     finalizeCandidateTool,
     askClarificationTool,
   ];
-  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
+  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort, options.onModelUsage);
   const modelWithTools = model.bindTools(tools, { parallel_tool_calls: true });
 
   const llmCall = async (state: typeof MessagesAnnotation.State) => {
@@ -1412,7 +1413,7 @@ async function runPlanIrAttempt(
   const agentContext = collectTemporalAgentContext(request);
   const langfuseHandler = await createLangfuseHandler(options, request);
   const callbacks = langfuseHandler === null ? undefined : [langfuseHandler];
-  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
+  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort, options.onModelUsage);
   const planner = model.withStructuredOutput(OpenAiTemporalPlanPlannerSchema, { includeRaw: true });
   const system = planIrSystemPrompt(request, agentContext);
   const human = JSON.stringify({ text: request.text, calendarContext: request.calendarContext });
@@ -2896,7 +2897,8 @@ async function deterministicParse(
   if (!candidate) {
     const needsTimeClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
     const timeZones = resolveTimeZone(request);
-    const needsTimeZoneClarification = timeZones.status === 'ambiguous';
+    const needsTimeZoneClarification = timeZones.status === 'ambiguous'
+      && new Set(timeZones.candidates.map(zone => zone.matchedText.toLowerCase())).size === 1;
     const needsClarification = needsTimeClarification || needsTimeZoneClarification;
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
     const clarificationAlternatives = needsTimeClarification ? await bareHourAlternatives(request, implementations, features) : [];
@@ -3251,7 +3253,7 @@ async function validateDeterministicResolvedResponse(
 
   const modelName = options.openaiModel ?? DEFAULT_OPENAI_MODEL;
   const reasoningEffort = options.openaiReasoningEffort ?? DEFAULT_OPENAI_REASONING_EFFORT;
-  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
+  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort, options.onModelUsage);
   const trace: TemporalAgentTraceStep[] = [];
   const langfuseHandler = await createLangfuseHandler(options, request);
   const callbacks = langfuseHandler === null ? undefined : [langfuseHandler];
@@ -4476,7 +4478,7 @@ async function runSemanticConsistencyGate(
   }
   const modelName = options.openaiModel ?? DEFAULT_OPENAI_MODEL;
   const reasoningEffort = options.openaiReasoningEffort ?? DEFAULT_OPENAI_REASONING_EFFORT;
-  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort);
+  const model = createChatModel(options.openaiApiKey, modelName, reasoningEffort, options.onModelUsage);
   const validator = model.withStructuredOutput(SemanticConsistencyGateSchema);
   const langfuseHandler = await createLangfuseHandler(options, request);
   const callbacks = langfuseHandler === null ? undefined : [langfuseHandler];
@@ -5928,11 +5930,20 @@ function ensureGenerationId(response: TemporalParseResponse): void {
   response.generationId ??= `tp_${randomUUID()}`;
 }
 
-function createChatModel(apiKey: string, model: string, reasoningEffort: string): ChatOpenAI {
+function createChatModel(apiKey: string, model: string, reasoningEffort: string, onUsage?: TemporalGraphOptions['onModelUsage']): ChatOpenAI {
+  const callbacks: ChatOpenAI['callbacks'] = onUsage === undefined ? [] : [{
+    handleLLMEnd(output) {
+      const generation = output.generations[0]?.[0];
+      const usage = generation && 'message' in generation && generation.message instanceof AIMessage
+        ? generation.message.usage_metadata : undefined;
+      onUsage(usage === undefined ? null : modelUsageFromUnknown(usage));
+    },
+    handleLLMError() { onUsage(null); },
+  }];
   if (model.startsWith('gpt-5') || model.startsWith('gpt-6')) {
-    return new ChatOpenAI({ apiKey, model, reasoning: { effort: normalizeReasoningEffort(reasoningEffort), summary: 'auto' }, useResponsesApi: true });
+    return new ChatOpenAI({ apiKey, model, callbacks, reasoning: { effort: normalizeReasoningEffort(reasoningEffort), summary: 'auto' }, useResponsesApi: true });
   }
-  return new ChatOpenAI({ apiKey, model, temperature: 0 });
+  return new ChatOpenAI({ apiKey, model, callbacks, temperature: 0 });
 }
 
 async function createLangfuseHandler(options: TemporalGraphOptions, request: TemporalParseRequest): Promise<LangfuseHandler | null> {

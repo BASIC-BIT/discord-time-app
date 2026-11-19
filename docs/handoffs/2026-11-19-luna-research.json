@@ -1690,6 +1690,50 @@
           "suggestedFormatIndex": 4
         }
       ]
+    },
+    {
+      "path": ".cache/luna-compound-full.json",
+      "source": {
+        "deterministicSha256": "E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1",
+        "started": "2026-11-19T07:35:18.2120362-05:00",
+        "workers": [
+          {
+            "shard": 0,
+            "pid": 67252
+          },
+          {
+            "shard": 1,
+            "pid": 61780
+          },
+          {
+            "shard": 2,
+            "pid": 107832
+          },
+          {
+            "shard": 3,
+            "pid": 88648
+          }
+        ],
+        "graphSha256": "8FE2263FDBE5CAC5D504494D76E4E69DA9E5FB66EF93F24C2864A596F814C0C3",
+        "baseCommit": "70b68dd6f968438fb90c1308ac38a09429c553f8"
+      },
+      "experiments": [
+        {
+          "label": "compound-anchor-contract",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 202,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 2632,
+      "p95Ms": 12659,
+      "failures": []
     }
   ]
 }

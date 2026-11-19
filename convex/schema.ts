@@ -11,6 +11,7 @@ export default defineSchema({
   }).index('by_identity', ['identity']),
   usage: defineTable({
     userId: v.id('users'),
+    usageComplete: v.optional(v.boolean()),
     requestId: v.string(),
     model: v.string(),
     status: v.string(),

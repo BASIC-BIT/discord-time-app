@@ -1,3 +1,5 @@
+import { resolveTimeZone, applyTimeZoneChoice, hasContextualTimeZoneAbbreviation } from '../src/temporal/timezones';
+import { parseExpression } from '../src/temporal/deterministic';
 import assert from 'node:assert/strict';
 import { Temporal } from '@js-temporal/polyfill';
 import { parseTemporalExpression } from '../src/temporal';
@@ -3205,6 +3207,20 @@ async function main() {
     calendarContext,
   });
   assert.equal(validation.passed, true);
+for (const text of ['the standup ist tomorrow um seventeen hundred', 'dinner 456 oak ct, 7ish']) {
+  assert.equal(resolveTimeZone({ text, calendarContext }).status, 'not_found');
+  assert.equal(hasContextualTimeZoneAbbreviation(text), true);
+  assert.equal((await parseExpression({ text, calendarContext })).candidates.length, 0);
+  assert.notEqual((await parse(text)).debug?.ambiguousTimeZone, true);
+}
+for (const text of ['5pm cst', '5pm CST', 'cst']) {
+  const resolution = resolveTimeZone({ text, calendarContext });
+  assert.equal(resolution.status, 'ambiguous');
+}
+const zoneChoice = resolveTimeZone({ text: 'tomorrow 5pm CST', calendarContext }).candidates[0]!;
+assert.equal(applyTimeZoneChoice('tomorrow 5pm CST or Friday 7pm CST', zoneChoice), 'tomorrow 5pm America/Chicago or Friday 7pm America/Chicago');
+assert.notEqual((await parse('3pm EST to 5pm PST')).debug?.ambiguousTimeZone, true);
+
 }
 
 main().catch((error: unknown) => {

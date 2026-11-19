@@ -14,7 +14,7 @@ import { parseFallback } from '../lib/parse';
 import { canUseHostedFallback, parseHostedTime } from '../lib/hosted-parser';
 import { loadClipboardText } from '../lib/clipboard';
 import { HostedAccount } from './HostedAccount';
-import { resolveTimeZone, stripResolvedTimeZoneText } from '../../api/src/temporal/timezones';
+import { resolveTimeZone, applyTimeZoneChoice } from '../../api/src/temporal/timezones';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 import {
   classifyDiscordTimestampInput,
@@ -135,7 +135,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [discordReferenceRouting, setDiscordReferenceRouting] = useState(true);
   const [discordReferenceShadow, setDiscordReferenceShadow] = useState(false);
   const [endpointWarming, setEndpointWarming] = useState(false);
-  
+
   const [manual, setManual] = useState(false);
   const [draft, setDraft] = useState<ManualDraft | null>(null);
   const [parseRequest, setParseRequest] = useState(0);
@@ -249,15 +249,15 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         } catch (settingsError) {
           console.log('Settings unavailable; clipboard preload skipped, using parser defaults:', settingsError);
         }
-        
+
         // Load clipboard content (handle empty clipboard gracefully)
         const clipboardText = await loadClipboardText(autoLoadClipboard, readText);
-        
+
         if (!active()) return;
         setInputText(clipboardText);
         setIsClipboardText(Boolean(clipboardText));
         setParseRequest(value => value + 1);
-        
+
         // Focus the window
         const appWindow = getCurrentWindow();
         try {
@@ -265,7 +265,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         } catch (error) {
           console.error('Error focusing window:', error);
         }
-        
+
         // Then focus the textarea after a short delay
         if (!active()) return;
         focusTimer = window.setTimeout(() => {
@@ -282,7 +282,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         console.error('Error initializing overlay:', error);
       }
     };
-    
+
     void initialize();
     return () => {
       window.clearTimeout(focusTimer);
@@ -320,7 +320,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         ? directInstantFromClassification(referenceRouting)
         : null;
       const directReject = discordReferenceRouting && referenceRouting.route === 'reject';
-      
+
       if (directReject) {
         const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
         setEpoch(null);
@@ -522,7 +522,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     const active = () => revisionRef.current === revision && !abortController.signal.aborted;
-    
+
     setError(null);
     setRange(null);
     setClarificationQuestion(null);
@@ -531,7 +531,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setGenerationId(null);
     setVerifying(false);
     setParseProgressMessage('Localing');
-    
+
     try {
       // Check if request was already cancelled
       if (!active()) {
@@ -541,12 +541,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       // Get format stats for LLM context
       const stats = await getFormatStats();
       const timezone = getUserTimezone();
-      
+
       // Check again if request was cancelled
       if (!active()) {
         return;
       }
-      
+
       const apiClient = await createAPIClient();
       if (!active()) return;
       const referenceRouting = classifyDiscordTimestampInput(text);
@@ -566,7 +566,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       let apiError: Error | null = null;
       const requestId = crypto.randomUUID();
       const referenceInstant = new Date().toISOString();
-      
+
       if (apiClient) {
         startBackendProgress(displayedFallback, revision);
         try {
@@ -630,7 +630,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       if (!active()) {
         return;
       }
-      
+
       if (result?.kind === 'time_range' && result.range) {
         console.log('API parsed range successfully:', result);
         setEpoch(null);
@@ -682,7 +682,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         console.log('Parsing request aborted');
         return;
       }
-      
+
       console.error('Error parsing input:', error);
       setError('Something went wrong. Please try again or check your internet connection.');
     } finally {
@@ -752,7 +752,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const hasClarification = clarificationQuestion !== null;
   const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
   const clarificationZones = hasClarification ? resolveTimeZone({ text: inputText, calendarContext: { referenceInstant: new Date().toISOString(), timeZone: getUserTimezone() } }) : null;
-  const timeZoneChoices = clarificationZones?.status === 'ambiguous' ? clarificationZones.candidates : [];
+  const timeZoneChoices = clarificationZones?.status === 'ambiguous' && new Set(clarificationZones.candidates.map(zone => zone.matchedText.toLowerCase())).size === 1 ? clarificationZones.candidates : [];
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
   const statusTone = error && !signInRequired && !(isClipboardText && canRetryFallback) ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
@@ -931,7 +931,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     invalidateWork();
     ownershipRef.current = 'text';
     setManual(false);
-    
+
     // A real edit ends clipboard ownership; the browser already applied the edit.
     if (isClipboardText && newValue !== inputText) {
       setIsClipboardText(false);
@@ -1061,7 +1061,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
                   <>
                     <div className="clarification-help">{timeZoneChoices.length ? 'Choose a timezone, or edit the expression above.' : 'Add the missing detail in the expression above.'}</div>
                     {timeZoneChoices.length > 0 && <div className="account-actions" role="group" aria-label="Choose timezone">
-                      {timeZoneChoices.map(zone => <button key={zone.timeZone} type="button" className="secondary-button account-button" onClick={() => handleInputChange(`${stripResolvedTimeZoneText(inputText, zone)} in ${zone.timeZone}`)}>{zone.label}</button>)}
+                      {timeZoneChoices.map(zone => <button key={zone.timeZone} type="button" className="secondary-button account-button" onClick={() => handleInputChange(applyTimeZoneChoice(inputText, zone))}>{zone.label}</button>)}
                     </div>}
                   </>
                 )}

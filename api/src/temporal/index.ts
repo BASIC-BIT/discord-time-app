@@ -18,11 +18,13 @@ export async function parseTemporalExpression(params: {
   requestId?: string;
   signal?: AbortSignal;
   deadlineMs?: number;
+  onModelUsage?: TemporalGraphOptions['onModelUsage'];
 }): Promise<TemporalParseResponse> {
   const implementations = createDeterministicTemporalToolImplementations();
   const options: TemporalGraphOptions = params.openaiApiKey === undefined
     ? { implementations }
     : { openaiApiKey: params.openaiApiKey, implementations };
+  if (params.onModelUsage !== undefined) options.onModelUsage = params.onModelUsage;
   if (params.features !== undefined) {
     options.features = params.features;
   }

@@ -12,6 +12,7 @@ import { Temporal } from '@js-temporal/polyfill';
 const MODEL = 'gpt-6-luna';
 const rateLimiter = new RateLimiter(components.rateLimiter, {
   fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 3 },
+  fallbackUserDaily: { kind: 'fixed window', rate: 20, period: DAY },
   fallbackDaily: { kind: 'fixed window', rate: 100, period: DAY },
 });
 
@@ -31,10 +32,16 @@ export const parse = action({
     if (!apiKey) throw new ConvexError('Hosted parsing is not configured yet.');
     const limit = await rateLimiter.limit(ctx, 'fallback', { key: identity.tokenIdentifier });
     if (!limit.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing is busy. Wait a few seconds, then try again.' });
+    const userDaily = await rateLimiter.limit(ctx, 'fallbackUserDaily', { key: identity.tokenIdentifier });
+    if (!userDaily.ok) throw new ConvexError({ code: 'rate_limited', message: 'You have reached your daily smart parsing limit. Try again tomorrow.' });
     const daily = await rateLimiter.limit(ctx, 'fallbackDaily');
     if (!daily.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing has reached its shared daily limit. Try again later.' });
     const started = Date.now();
     let result: TemporalParseResponse | undefined;
+    let usageEvents = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let usageComplete = true;
     try {
       result = await parseTemporalExpression({
         text: args.text, timeZone: args.tz, referenceInstant: args.now,
@@ -43,6 +50,11 @@ export const parse = action({
         features: { planIr: true, deterministicPreflight: true, discordReferenceRouting: true },
         signal: AbortSignal.timeout(30_000),
         deadlineMs: started + 30_000,
+        onModelUsage(usage) {
+          usageEvents += 1;
+          if (usage === null) usageComplete = false;
+          else { inputTokens += usage.inputTokens; outputTokens += usage.outputTokens; }
+        },
       });
       // Keep model traces and raw prompts out of the client response.
       return { ...result,
@@ -59,7 +71,9 @@ export const parse = action({
       try { await ctx.runMutation(internal.usage.record, {
         requestId: args.requestId, model: MODEL, status: result?.status ?? 'error',
         durationMs: Date.now() - started, inputLength: args.text.length,
-        inputTokens: result?.debug?.inputTokens ?? 0, outputTokens: result?.debug?.outputTokens ?? 0,
+        inputTokens: usageEvents ? inputTokens : result?.debug?.inputTokens ?? 0,
+        outputTokens: usageEvents ? outputTokens : result?.debug?.outputTokens ?? 0,
+        usageComplete: result !== undefined && usageComplete,
       }); } catch { console.warn('Could not record parsing usage', { requestId: args.requestId }); }
     }
   },

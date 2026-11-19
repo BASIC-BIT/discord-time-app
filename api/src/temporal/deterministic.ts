@@ -32,7 +32,7 @@ import type {
   ValidateCandidateInput,
   ValidateCandidateOutput,
 } from './tools';
-import { resolveTimeZone as resolveTimeZoneFromText, stripResolvedTimeZoneText, timeZoneValidationForCandidate } from './timezones';
+import { resolveTimeZone as resolveTimeZoneFromText, stripResolvedTimeZoneText, hasContextualTimeZoneAbbreviation, timeZoneValidationForCandidate } from './timezones';
 
 const WEEKDAY_LOOKUP: Record<Weekday, number> = {
   monday: 1,
@@ -187,6 +187,9 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
   const timeZoneResolution = resolveTimeZoneFromText({ text: input.text, calendarContext: input.calendarContext });
   if (timeZoneResolution.status === 'ambiguous') {
     return { candidates: [], parserNotes: [timeZoneResolution.clarificationQuestion ?? 'Input contains an ambiguous timezone reference.', ...timeZoneResolution.notes] };
+  }
+  if (hasContextualTimeZoneAbbreviation(input.text)) {
+    return { candidates: [], parserNotes: ['A possible timezone abbreviation requires semantic interpretation.'] };
   }
   const timeZoneCandidate = timeZoneResolution.status === 'resolved' ? timeZoneResolution.candidates[0] : undefined;
   if (timeZoneCandidate !== undefined) {

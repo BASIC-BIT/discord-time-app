@@ -91,3 +91,32 @@ test('tracking failure cannot replace a successful validated result', async () =
   await expect(t.withIdentity({ subject: 'tracking-failure' }).action(api.temporal.parse, args)).resolves.toMatchObject({ status: 'resolved', epoch: 1 });
   expect(warning).toHaveBeenCalled(); warning.mockRestore();
 });
+
+test('keeps completed usage when a later provider call fails', async () => {
+  const t = convexTest(schema, modules); rateLimiter.register(t);
+  vi.mocked(parseTemporalExpression).mockImplementation(async params => {
+    params.onModelUsage?.({inputTokens: 123, outputTokens: 45});
+    params.onModelUsage?.(null);
+    throw new Error('later provider failure');
+  });
+  await expect(t.withIdentity({subject: 'partial-usage'}).action(api.temporal.parse, args)).rejects.toThrow('Hosted parsing is unavailable');
+  await t.run(async ctx => {
+    const [usage] = await ctx.db.query('usage').collect();
+    expect(usage).toMatchObject({inputTokens: 123, outputTokens: 45, usageComplete: false, status: 'error'});
+  });
+});
+
+test('one account cannot consume the entire shared daily allowance', async () => {
+  const t = convexTest(schema, modules); rateLimiter.register(t);
+  let now = new Date('2026-11-19T12:00:00Z').getTime();
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  vi.mocked(parseTemporalExpression).mockResolvedValue({ status: 'failed', confidence: 0, method: 'agent+plan', assumptions: [], ambiguity: [], validation: { passed: false, warnings: [], checks: [] } });
+  try {
+    const user = t.withIdentity({subject: 'daily-user'});
+    for (let index=0; index<20; index++) { await user.action(api.temporal.parse, args); now += 60_000; }
+    await expect(user.action(api.temporal.parse, args)).rejects.toThrow('your daily');
+    expect(parseTemporalExpression).toHaveBeenCalledTimes(20);
+    await t.withIdentity({subject: 'another-user'}).action(api.temporal.parse, args);
+    expect(parseTemporalExpression).toHaveBeenCalledTimes(21);
+  } finally { clock.mockRestore(); }
+});

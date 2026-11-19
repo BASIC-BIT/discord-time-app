@@ -184,16 +184,24 @@ async function main() {
     const previousBase = process.env.OPENAI_BASE_URL;
     try {
       process.env.OPENAI_BASE_URL = `${llmUrl}/v1`;
-      verdict = 'accept'; rejectNextValidation = true;
+      verdict = 'accept';
+      const beforeContextualWord = llmCalls;
+      const contextualWord = await parseTemporalExpression({ text: 'the standup ist tomorrow um seventeen hundred', timeZone: 'America/New_York', referenceInstant: '2026-11-17T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: true }, langfuse: { enabled: false } });
+      assert.equal(contextualWord.status, 'resolved');
+      assert.equal(contextualWord.canonical?.isoInstant, '2026-11-18T22:00:00Z');
+      assert.equal(llmCalls - beforeContextualWord, 2, 'interpret the ordinary word with a model, then independently validate');
+      rejectNextValidation = true;
       providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Repair a rejected heuristic.', plans: [{ label: 'Six days later', rationale: 'Resolve tomorrow then shift five calendar days.', confidence: 1, finalStep: 1, steps: [{ op: 'resolve_calendar_query', query: 'tomorrow' }, { op: 'shift_datetime', baseStep: 0, delta: { days: 5 } }] }] });
+      const observedUsage: ({ inputTokens: number; outputTokens: number } | null)[] = [];
       const beforeRepair = llmCalls;
-      const repaired = await parseTemporalExpression({ text: 'the day after the day after the day after the day after the day after tomorrow', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: true }, langfuse: { enabled: false } });
+      const repaired = await parseTemporalExpression({ onModelUsage: usage => { observedUsage.push(usage); }, text: 'the day after the day after the day after the day after the day after tomorrow', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: true }, langfuse: { enabled: false } });
       assert.equal(repaired.status, 'resolved');
       assert.equal(repaired.method, 'agent+plan');
       assert.equal(repaired.canonical?.isoInstant, '2026-05-30T16:00:00Z');
       assert.equal(llmCalls - beforeRepair, 3, 'reject heuristic, plan repair, independently validate repair');
       assert.equal(repaired.debug?.modelCalls, 3, 'include the rejected preflight validation in usage');
       assert.equal(repaired.debug?.inputTokens, 3);
+      assert.deepEqual(observedUsage, Array.from({length: 3}, () => ({inputTokens: 1, outputTokens: 1})));
       assert.equal(repaired.debug?.outputTokens, 3);
       rejectNextValidation = true;
       const beforeLegacy = llmCalls;
