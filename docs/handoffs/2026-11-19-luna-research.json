@@ -9,588 +9,254 @@
     "requiredSha256": "a689b0e20fc1bed448ce8868fcbc752479081ba5a1a3426a93ed3a628599960a"
   },
   "runs": [
-    {
-      "path": ".cache/deterministic-required-baseline.json",
-      "requiredPassed": 125,
-      "requiredTotal": 202,
-      "diagnosticPassed": 1,
-      "diagnosticTotal": 5,
-      "medianMs": 3,
-      "p95Ms": 7,
-      "source": null,
-      "experiments": [{"label":"plan-ir","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"month-boundary-leading-clock-first-of-last-month","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"relative-shorthand-tom-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"relative-shorthand-tmw-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"relative-shorthand-tom-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"relative-shorthand-tmw-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"range-relative-same-day-from-to","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1779735600,"suggestedFormatIndex":4},
-        {"caseId":"range-weekday-same-day","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1780099200,"suggestedFormatIndex":5},
-        {"caseId":"range-explicit-date-same-day","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1780099200,"suggestedFormatIndex":4},
-        {"caseId":"range-overnight-explicit","required":true,"mismatch":"expected status resolved, got ambiguous","status":"ambiguous","epoch":1780110000,"suggestedFormatIndex":5},
-        {"caseId":"range-next-weekday-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780167600,"suggestedFormatIndex":5},
-        {"caseId":"range-date-span-unsupported","required":true,"mismatch":"expected status failed, got resolved","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
-        {"caseId":"range-schedule-block-unsupported","required":true,"mismatch":"expected status failed, got resolved","status":"resolved","epoch":1779822000,"suggestedFormatIndex":5},
-        {"caseId":"bare-hour-clarification","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"anchor-offset-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"anchor-offset-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-suffix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-suffix-word-number-four","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-suffix-day-earlier","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-suffix-day-earlier-typo-ebefore","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-prefix-hours-before-typo-befoer","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-prefix-hours-after-typo-afetr","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-prefix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-infix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-day-at","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-same-day-prefix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-set-to","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-spring-forward-day","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-fall-back-day","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-held-out-wording","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-ambiguous-bare-hour","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-midnight-presentation","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-clock-composition-five-am-presentation","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-clean","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-typo-ebefore-three","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-typo-later-three","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-clock-infix-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-after","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-explicit-clock-prefix-before","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-ambiguity-typo-ebefore","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-explicit-typo-ebefore","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-shift-clock-explicit-later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-range-residue","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-range-pull-end","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-range-push-start","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-range-ending-point-moved","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-following-day-after-clock","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-fuzzy-shift-model-diagnostic","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-fall-back-hour","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-spring-forward-hour","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"discord-reference-spring-forward-day","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"anchor-offset-fuzzy-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"weekday-fuzzy-clock","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"compound-typo-cultural-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"chained-day-after-tomorrow-5","required":true,"mismatch":"expected epoch 1780156800, got 1779811200","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
-        {"caseId":"weekday-typo-short-tu-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"weekday-typo-added-letter-tuee-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"weekday-typo-missing-tail-wedn-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"weekday-typo-missing-vowel-thrs-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"weekday-typo-added-letter-frii-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"weekday-typo-added-tail-satdy-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"relative-typo-tomorrrow-24h-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"next-weekday-typo-fri-clock-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780099200,"suggestedFormatIndex":4},
-        {"caseId":"next-weekday-typo-satdy-clock-clarification","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"anchor-offset-typo-weekday-relative-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"date-space-separated-ymd-clock","required":true,"mismatch":"expected epoch 1780099200, got 1779667200","status":"resolved","epoch":1779667200,"suggestedFormatIndex":4},
-        {"caseId":"month-typo-september-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"diagnostic-luna-spelled-clock-warmup","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"diagnostic-luna-standalone-clock-typo","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"weekday-typo-full-monnday-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"event-post-month-typo-two-times","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"recursive-relative-typo-tomorow-2","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
-        {"caseId":"weekday-after-next-clarification","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"explicit-year-holiday","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"future-year-holiday","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"next-weekday-clock-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780174800,"suggestedFormatIndex":5},
-        {"caseId":"simple-weekday-shortcut-pressure","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
-        {"caseId":"current-week-next-weekday-bare-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780761600,"suggestedFormatIndex":1},
-        {"caseId":"weekday-short-ambiguous-clock-suffix-six-way","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"}
-      ]
-    },
-    {
-      "path": ".cache/luna-model-only-full.json",
-      "requiredPassed": 131,
-      "requiredTotal": 202,
-      "diagnosticPassed": 4,
-      "diagnosticTotal": 5,
-      "medianMs": 6972,
-      "p95Ms": 13149,
-      "source": {"concurrency":4,"deterministicSha256":"A6C0AE60B26BE4B2CE89CEFA827C14B489F3123F36F56276AE4738CC8F5B59CB","workers":[{"pid":64968,"shard":0,"cases":52},{"pid":51936,"shard":1,"cases":52},{"pid":44928,"shard":2,"cases":52},{"pid":52996,"shard":3,"cases":51}],"baseCommit":"cf04f92ac2537dc7943842296139143bf0df52ca","graphSha256":"B8BFFE1EA04B730C0AB2BF1030370CE2EFD410D68D385E023114EFCE45B65DC0"},
-      "experiments": [{"label":"luna-model-only","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"relative-date-default-noon","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-in-1-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-from-now-100-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1788278400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-2-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1778428800,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-100-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1719158400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-12-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1748102400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-100-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1516813200,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-10-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1464105600,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-ago-100-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":-1376121600,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-ago-1-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779623940,"suggestedFormatIndex":2},
-        {"caseId":"relative-offset-ago-100-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779618000,"suggestedFormatIndex":2},
-        {"caseId":"boundary-snap-nearest-quarter","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1780426800,"suggestedFormatIndex":2},
-        {"caseId":"boundary-snap-hour-after-next","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"timezone-ambiguous-cst","required":true,"mismatch":"expected alternatives , got 1779699600,1779746400,1779750000","status":"needs_clarification"},
-        {"caseId":"anchor-offset-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"anchor-offset-fuzzy-clock","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780249020,"suggestedFormatIndex":4},
-        {"caseId":"weekday-typo-short-tu-clock","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"ordinal-weekday-shift-relative-noon","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780938600,"suggestedFormatIndex":4},
-        {"caseId":"bare-24h-hour-before-target","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1779663600,"suggestedFormatIndex":2},
-        {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"relative-offset-from-now-60-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1784822400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-100-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1771002000,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-from-now-60-weeks","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1815926400,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-1-months","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1782316800,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-60-months","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1937404800,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-1-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1811174400,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-60-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":3673094400,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-1-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779627600,"suggestedFormatIndex":2},
-        {"caseId":"relative-offset-from-now-60-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779840000,"suggestedFormatIndex":2},
-        {"caseId":"relative-offset-from-now-100-hours","required":true,"mismatch":"expected format 6, got 4","status":"resolved","epoch":1779984000,"suggestedFormatIndex":4},
-        {"caseId":"boundary-snap-relative-hour-word","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1780427700,"suggestedFormatIndex":2},
-        {"caseId":"anchor-offset-clock","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780249020,"suggestedFormatIndex":4},
-        {"caseId":"discord-reference-clock-composition-ambiguous-bare-hour","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"direct-epoch-seconds","required":true,"mismatch":"expected format 4, got 5","status":"resolved","epoch":1779724800,"suggestedFormatIndex":5},
-        {"caseId":"ordinal-weekday-next-month-clock","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780851600,"suggestedFormatIndex":4},
-        {"caseId":"bare-24h-hour-after-target-rollover","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1779750000,"suggestedFormatIndex":2},
-        {"caseId":"month-boundary-first-of-this-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1780329600,"suggestedFormatIndex":0},
-        {"caseId":"relative-shorthand-tom-date","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-from-now-1-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-60-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1774454400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-in-100-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1788278400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-60-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1743350400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-1-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1777046400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-60-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1621872000,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-1-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1748102400,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-ago-60-years","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":-113817600,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-60-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779408000,"suggestedFormatIndex":2},
-        {"caseId":"relative-offset-ago-100-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779264000,"suggestedFormatIndex":2},
-        {"caseId":"boundary-snap-relative-top-of-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"boundary-snap-next-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"discord-reference-shift-suffix-day-earlier-typo-ebefore","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1785556800,"suggestedFormatIndex":2},
-        {"caseId":"month-boundary-first-of-next-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1782921600,"suggestedFormatIndex":0},
-        {"caseId":"relative-shorthand-tmw-date","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-ago-1-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779552000,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-in-60-days","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1784822400,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-2-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1780848000,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-from-now-100-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1840118400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-from-now-12-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1811174400,"suggestedFormatIndex":0},
-        {"caseId":"relative-offset-from-now-100-months","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":2042726400,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-10-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":2095257600,"suggestedFormatIndex":1},
-        {"caseId":"relative-offset-from-now-100-years","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"relative-offset-from-now-1-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779624060,"suggestedFormatIndex":2},
-        {"caseId":"relative-offset-from-now-60-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779627600,"suggestedFormatIndex":2},
-        {"caseId":"relative-offset-from-now-100-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779630000,"suggestedFormatIndex":2},
-        {"caseId":"boundary-snap-nearest-hour","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1780426800,"suggestedFormatIndex":2},
-        {"caseId":"boundary-snap-previous-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"discord-reference-clock-composition-day-at","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"weekday-typo-missing-vowel-thrs-clock","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"anchor-offset-typo-weekday-relative-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
-        {"caseId":"ordinal-weekday-explicit-month-name-rollover","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"}
-      ]
-    },
-    {
-      "path": ".cache/luna-hybrid-full.json",
-      "requiredPassed": 200,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2411,
-      "p95Ms": 12108,
-      "source": {"graphSha256":"17481B6C706F75981285F0064F9B65842101069FA8A4FA670FD43E5AAC1FCF56","workers":[{"shard":0,"pid":88468},{"shard":1,"pid":57268},{"shard":2,"pid":24804},{"shard":3,"pid":92972}],"started":"2026-11-19T06:03:49.1914058-05:00","baseCommit":"d6aa61f85c05ddcabfacb1311a45435990023406","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"},
-      "experiments": [{"label":"weekday-operation","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"relative-offset-from-now-100-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779984000,"suggestedFormatIndex":2},
-        {"caseId":"discord-reference-clock-composition-spring-forward-day","required":true,"mismatch":"expected format 4, got 5","status":"resolved","epoch":1772985600,"suggestedFormatIndex":5}
-      ]
-    },
-    {
-      "path": ".cache/luna-display-full.json",
-      "requiredPassed": 197,
-      "requiredTotal": 202,
-      "diagnosticPassed": 4,
-      "diagnosticTotal": 5,
-      "medianMs": 2654,
-      "p95Ms": 13106,
-      "source": {"started":"2026-11-19T06:11:34.2849893-05:00","baseCommit":"d6aa61f85c05ddcabfacb1311a45435990023406","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","graphSha256":"45933525A50918CB3EA9C9FEC8FABF5C87ED1F9E495537D90F136DC79822D93B","workers":[{"pid":96824,"shard":0},{"pid":86136,"shard":1},{"pid":32444,"shard":2},{"pid":78980,"shard":3}]},
-      "experiments": [{"label":"display-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"boundary-snap-relative-hour-word","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"discord-reference-shift-suffix-day-earlier","required":true,"mismatch":"expected format 4, got 0","status":"resolved","epoch":1785556800,"suggestedFormatIndex":0},
-        {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-after","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"direct-epoch-seconds","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"diagnostic-luna-standalone-clock-typo","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"weekday-short-ambiguous-clock-suffix-six-way","required":true,"mismatch":"expected alternatives 1780390800,1780434000,1780477200,1780520400,1780995600,1781038800, got 1780390800,1780434000","status":"needs_clarification"}
-      ]
-    },
-    {
-      "path": ".cache/luna-product-full.json",
-      "requiredPassed": 200,
-      "requiredTotal": 202,
-      "diagnosticPassed": 4,
-      "diagnosticTotal": 5,
-      "medianMs": 2676,
-      "p95Ms": 13053,
-      "source": {"baseCommit":"8ecdbf1dbf10d3c44ecd765fb6285a9022e7c38c","workers":[{"shard":0,"pid":93852},{"shard":1,"pid":96916},{"shard":2,"pid":81496},{"shard":3,"pid":63688}],"graphSha256":"2BA4CB6A7D4F3AD81AC645ABA3804A254352175BD88E406F41EEAE5582A9C397","started":"2026-11-19T06:20:56.9808756-05:00","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"},
-      "experiments": [{"label":"product-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"compound-typo-cultural-clock","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"explicit-year-holiday","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"}
-      ]
-    },
-    {
-      "path": ".cache/luna-bounded-full.json",
-      "requiredPassed": 199,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2626,
-      "p95Ms": 12608,
-      "source": {"deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","workers":[{"pid":114308,"shard":0},{"pid":76972,"shard":1},{"pid":77220,"shard":2},{"pid":112540,"shard":3}],"graphSha256":"F9BE2F35AC5D84B30B88DD931A1FA58F5E6B0FCD2093450988FE5485699B5EC2","baseCommit":"356c5d75c8d0fddcb1592e2b592cf2fe239eebcd","started":"2026-11-19T06:37:59.6871467-05:00"},
-      "experiments": [{"label":"bounded-plan-repair","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"discord-reference-shift-prefix-hours-before-typo-befoer","required":true,"mismatch":"expected format 5, got 2","status":"resolved","epoch":1785726000,"suggestedFormatIndex":2},
-        {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
-        {"caseId":"discord-reference-range-push-start","required":true,"mismatch":"expected status resolved, got failed","status":"failed"}
-      ]
-    },
-    {
-      "path": ".cache/luna-guard-full.json",
-      "requiredPassed": 199,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2337,
-      "p95Ms": 11153,
-      "source": {"graphSha256":"C4A648C65CBF0280DF7EC6F0F4ACEC7EDBC37B8A2B06D04F00E3CD624A40715D","baseCommit":"4330fd1b0d57a8cbdb2f4518e86fb4e4d82befc0","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","started":"2026-11-19T06:55:59.9189400-05:00","workers":[{"shard":0,"pid":50048},{"shard":1,"pid":91396},{"shard":2,"pid":41372},{"shard":3,"pid":77676}]},
-      "experiments": [{"label":"guard-repair","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"month-boundary-leading-clock-first-of-last-month","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"relative-offset-from-now-100-years","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
-        {"caseId":"timezone-ambiguous-cst","required":true,"mismatch":"expected alternatives , got 1779699600,1779742800,1779746400","status":"needs_clarification"}
-      ]
-    },
-    {
-      "path": ".cache/luna-calendar-full.json",
-      "requiredPassed": 201,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2659,
-      "p95Ms": 11638,
-      "source": {"baseCommit":"042a250363db4715d9fd200e11d4ae05259f9809","started":"2026-11-19T07:12:05.6632501-05:00","graphSha256":"974A013C991C164A060CB4F79A73687D4C078E07C072FB870E1E5E351229B7BB","workers":[{"pid":36512,"shard":0},{"pid":101936,"shard":1},{"pid":78904,"shard":2},{"pid":71740,"shard":3}],"deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"},
-      "experiments": [{"label":"calendar-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"anchor-offset-typo-weekday-relative-clock","required":true,"mismatch":"expected epoch 1780249020, got 1780853820","status":"resolved","epoch":1780853820,"suggestedFormatIndex":4}
-      ]
-    },
-    {
-      "path": ".cache/luna-compound-full.json",
-      "requiredPassed": 202,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2632,
-      "p95Ms": 12659,
-      "source": {"deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","started":"2026-11-19T07:35:18.2120362-05:00","workers":[{"shard":0,"pid":67252},{"shard":1,"pid":61780},{"shard":2,"pid":107832},{"shard":3,"pid":88648}],"graphSha256":"8FE2263FDBE5CAC5D504494D76E4E69DA9E5FB66EF93F24C2864A596F814C0C3","baseCommit":"70b68dd6f968438fb90c1308ac38a09429c553f8"},
-      "experiments": [{"label":"compound-anchor-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
+    {"path":".cache/deterministic-required-baseline.json","requiredPassed":125,"requiredTotal":202,"diagnosticPassed":1,"diagnosticTotal":5,"medianMs":3,"p95Ms":7,"source":null,"experiments":[{"label":"plan-ir","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"month-boundary-leading-clock-first-of-last-month","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"relative-shorthand-tom-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"relative-shorthand-tmw-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"relative-shorthand-tom-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"relative-shorthand-tmw-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"range-relative-same-day-from-to","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1779735600,"suggestedFormatIndex":4},
+      {"caseId":"range-weekday-same-day","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1780099200,"suggestedFormatIndex":5},
+      {"caseId":"range-explicit-date-same-day","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1780099200,"suggestedFormatIndex":4},
+      {"caseId":"range-overnight-explicit","required":true,"mismatch":"expected status resolved, got ambiguous","status":"ambiguous","epoch":1780110000,"suggestedFormatIndex":5},
+      {"caseId":"range-next-weekday-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780167600,"suggestedFormatIndex":5},
+      {"caseId":"range-date-span-unsupported","required":true,"mismatch":"expected status failed, got resolved","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+      {"caseId":"range-schedule-block-unsupported","required":true,"mismatch":"expected status failed, got resolved","status":"resolved","epoch":1779822000,"suggestedFormatIndex":5},
+      {"caseId":"bare-hour-clarification","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"anchor-offset-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"anchor-offset-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-suffix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-suffix-word-number-four","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-suffix-day-earlier","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-suffix-day-earlier-typo-ebefore","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-prefix-hours-before-typo-befoer","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-prefix-hours-after-typo-afetr","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-prefix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-infix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-day-at","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-same-day-prefix","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-set-to","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-spring-forward-day","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-fall-back-day","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-held-out-wording","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-ambiguous-bare-hour","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-midnight-presentation","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-clock-composition-five-am-presentation","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-clean","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-typo-ebefore-three","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-typo-later-three","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-clock-infix-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-after","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-explicit-clock-prefix-before","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-ambiguity-typo-ebefore","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-explicit-typo-ebefore","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-shift-clock-explicit-later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-range-residue","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-range-pull-end","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-range-push-start","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-range-ending-point-moved","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-following-day-after-clock","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-fuzzy-shift-model-diagnostic","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-fall-back-hour","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-spring-forward-hour","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"discord-reference-spring-forward-day","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"anchor-offset-fuzzy-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"weekday-fuzzy-clock","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"compound-typo-cultural-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"chained-day-after-tomorrow-5","required":true,"mismatch":"expected epoch 1780156800, got 1779811200","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+      {"caseId":"weekday-typo-short-tu-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"weekday-typo-added-letter-tuee-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"weekday-typo-missing-tail-wedn-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"weekday-typo-missing-vowel-thrs-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"weekday-typo-added-letter-frii-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"weekday-typo-added-tail-satdy-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"relative-typo-tomorrrow-24h-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"next-weekday-typo-fri-clock-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780099200,"suggestedFormatIndex":4},
+      {"caseId":"next-weekday-typo-satdy-clock-clarification","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"anchor-offset-typo-weekday-relative-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"date-space-separated-ymd-clock","required":true,"mismatch":"expected epoch 1780099200, got 1779667200","status":"resolved","epoch":1779667200,"suggestedFormatIndex":4},
+      {"caseId":"month-typo-september-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"diagnostic-luna-spelled-clock-warmup","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"diagnostic-luna-standalone-clock-typo","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"weekday-typo-full-monnday-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"event-post-month-typo-two-times","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"recursive-relative-typo-tomorow-2","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+      {"caseId":"weekday-after-next-clarification","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"explicit-year-holiday","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"future-year-holiday","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"next-weekday-clock-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780174800,"suggestedFormatIndex":5},
+      {"caseId":"simple-weekday-shortcut-pressure","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+      {"caseId":"current-week-next-weekday-bare-clarification","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780761600,"suggestedFormatIndex":1},
+      {"caseId":"weekday-short-ambiguous-clock-suffix-six-way","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"}
+    ]},
+    {"path":".cache/luna-model-only-full.json","requiredPassed":131,"requiredTotal":202,"diagnosticPassed":4,"diagnosticTotal":5,"medianMs":6972,"p95Ms":13149,"source":{"concurrency":4,"deterministicSha256":"A6C0AE60B26BE4B2CE89CEFA827C14B489F3123F36F56276AE4738CC8F5B59CB","workers":[{"pid":64968,"shard":0,"cases":52},{"pid":51936,"shard":1,"cases":52},{"pid":44928,"shard":2,"cases":52},{"pid":52996,"shard":3,"cases":51}],"baseCommit":"cf04f92ac2537dc7943842296139143bf0df52ca","graphSha256":"B8BFFE1EA04B730C0AB2BF1030370CE2EFD410D68D385E023114EFCE45B65DC0"},"experiments":[{"label":"luna-model-only","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"relative-date-default-noon","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-in-1-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-from-now-100-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1788278400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-2-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1778428800,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-100-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1719158400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-12-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1748102400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-100-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1516813200,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-10-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1464105600,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-ago-100-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":-1376121600,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-ago-1-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779623940,"suggestedFormatIndex":2},
+      {"caseId":"relative-offset-ago-100-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779618000,"suggestedFormatIndex":2},
+      {"caseId":"boundary-snap-nearest-quarter","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1780426800,"suggestedFormatIndex":2},
+      {"caseId":"boundary-snap-hour-after-next","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"timezone-ambiguous-cst","required":true,"mismatch":"expected alternatives , got 1779699600,1779746400,1779750000","status":"needs_clarification"},
+      {"caseId":"anchor-offset-date","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"anchor-offset-fuzzy-clock","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780249020,"suggestedFormatIndex":4},
+      {"caseId":"weekday-typo-short-tu-clock","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"ordinal-weekday-shift-relative-noon","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780938600,"suggestedFormatIndex":4},
+      {"caseId":"bare-24h-hour-before-target","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1779663600,"suggestedFormatIndex":2},
+      {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"relative-offset-from-now-60-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1784822400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-100-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1771002000,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-from-now-60-weeks","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1815926400,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-1-months","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1782316800,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-60-months","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1937404800,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-1-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1811174400,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-60-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":3673094400,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-1-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779627600,"suggestedFormatIndex":2},
+      {"caseId":"relative-offset-from-now-60-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779840000,"suggestedFormatIndex":2},
+      {"caseId":"relative-offset-from-now-100-hours","required":true,"mismatch":"expected format 6, got 4","status":"resolved","epoch":1779984000,"suggestedFormatIndex":4},
+      {"caseId":"boundary-snap-relative-hour-word","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1780427700,"suggestedFormatIndex":2},
+      {"caseId":"anchor-offset-clock","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780249020,"suggestedFormatIndex":4},
+      {"caseId":"discord-reference-clock-composition-ambiguous-bare-hour","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"direct-epoch-seconds","required":true,"mismatch":"expected format 4, got 5","status":"resolved","epoch":1779724800,"suggestedFormatIndex":5},
+      {"caseId":"ordinal-weekday-next-month-clock","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780851600,"suggestedFormatIndex":4},
+      {"caseId":"bare-24h-hour-after-target-rollover","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1779750000,"suggestedFormatIndex":2},
+      {"caseId":"month-boundary-first-of-this-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1780329600,"suggestedFormatIndex":0},
+      {"caseId":"relative-shorthand-tom-date","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-from-now-1-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-60-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1774454400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-in-100-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1788278400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-60-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1743350400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-1-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1777046400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-60-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1621872000,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-1-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1748102400,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-ago-60-years","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":-113817600,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-60-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779408000,"suggestedFormatIndex":2},
+      {"caseId":"relative-offset-ago-100-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779264000,"suggestedFormatIndex":2},
+      {"caseId":"boundary-snap-relative-top-of-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"boundary-snap-next-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"discord-reference-shift-suffix-day-earlier-typo-ebefore","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1785556800,"suggestedFormatIndex":2},
+      {"caseId":"month-boundary-first-of-next-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1782921600,"suggestedFormatIndex":0},
+      {"caseId":"relative-shorthand-tmw-date","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-ago-1-days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779552000,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-in-60-days","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1784822400,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-2-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1780848000,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-from-now-100-weeks","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1840118400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-from-now-12-months","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1811174400,"suggestedFormatIndex":0},
+      {"caseId":"relative-offset-from-now-100-months","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":2042726400,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-10-years","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":2095257600,"suggestedFormatIndex":1},
+      {"caseId":"relative-offset-from-now-100-years","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"relative-offset-from-now-1-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779624060,"suggestedFormatIndex":2},
+      {"caseId":"relative-offset-from-now-60-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779627600,"suggestedFormatIndex":2},
+      {"caseId":"relative-offset-from-now-100-minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779630000,"suggestedFormatIndex":2},
+      {"caseId":"boundary-snap-nearest-hour","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1780426800,"suggestedFormatIndex":2},
+      {"caseId":"boundary-snap-previous-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"discord-reference-clock-composition-day-at","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"weekday-typo-missing-vowel-thrs-clock","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"anchor-offset-typo-weekday-relative-clock","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+      {"caseId":"ordinal-weekday-explicit-month-name-rollover","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"}
+    ]},
+    {"path":".cache/luna-hybrid-full.json","requiredPassed":200,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2411,"p95Ms":12108,"source":{"graphSha256":"17481B6C706F75981285F0064F9B65842101069FA8A4FA670FD43E5AAC1FCF56","workers":[{"shard":0,"pid":88468},{"shard":1,"pid":57268},{"shard":2,"pid":24804},{"shard":3,"pid":92972}],"started":"2026-11-19T06:03:49.1914058-05:00","baseCommit":"d6aa61f85c05ddcabfacb1311a45435990023406","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"},"experiments":[{"label":"weekday-operation","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"relative-offset-from-now-100-hours","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779984000,"suggestedFormatIndex":2},
+      {"caseId":"discord-reference-clock-composition-spring-forward-day","required":true,"mismatch":"expected format 4, got 5","status":"resolved","epoch":1772985600,"suggestedFormatIndex":5}
+    ]},
+    {"path":".cache/luna-display-full.json","requiredPassed":197,"requiredTotal":202,"diagnosticPassed":4,"diagnosticTotal":5,"medianMs":2654,"p95Ms":13106,"source":{"started":"2026-11-19T06:11:34.2849893-05:00","baseCommit":"d6aa61f85c05ddcabfacb1311a45435990023406","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","graphSha256":"45933525A50918CB3EA9C9FEC8FABF5C87ED1F9E495537D90F136DC79822D93B","workers":[{"pid":96824,"shard":0},{"pid":86136,"shard":1},{"pid":32444,"shard":2},{"pid":78980,"shard":3}]},"experiments":[{"label":"display-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"boundary-snap-relative-hour-word","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"discord-reference-shift-suffix-day-earlier","required":true,"mismatch":"expected format 4, got 0","status":"resolved","epoch":1785556800,"suggestedFormatIndex":0},
+      {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-after","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"direct-epoch-seconds","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"diagnostic-luna-standalone-clock-typo","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"weekday-short-ambiguous-clock-suffix-six-way","required":true,"mismatch":"expected alternatives 1780390800,1780434000,1780477200,1780520400,1780995600,1781038800, got 1780390800,1780434000","status":"needs_clarification"}
+    ]},
+    {"path":".cache/luna-product-full.json","requiredPassed":200,"requiredTotal":202,"diagnosticPassed":4,"diagnosticTotal":5,"medianMs":2676,"p95Ms":13053,"source":{"baseCommit":"8ecdbf1dbf10d3c44ecd765fb6285a9022e7c38c","workers":[{"shard":0,"pid":93852},{"shard":1,"pid":96916},{"shard":2,"pid":81496},{"shard":3,"pid":63688}],"graphSha256":"2BA4CB6A7D4F3AD81AC645ABA3804A254352175BD88E406F41EEAE5582A9C397","started":"2026-11-19T06:20:56.9808756-05:00","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"},"experiments":[{"label":"product-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"compound-typo-cultural-clock","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"explicit-year-holiday","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"}
+    ]},
+    {"path":".cache/luna-bounded-full.json","requiredPassed":199,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2626,"p95Ms":12608,"source":{"deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","workers":[{"pid":114308,"shard":0},{"pid":76972,"shard":1},{"pid":77220,"shard":2},{"pid":112540,"shard":3}],"graphSha256":"F9BE2F35AC5D84B30B88DD931A1FA58F5E6B0FCD2093450988FE5485699B5EC2","baseCommit":"356c5d75c8d0fddcb1592e2b592cf2fe239eebcd","started":"2026-11-19T06:37:59.6871467-05:00"},"experiments":[{"label":"bounded-plan-repair","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"discord-reference-shift-prefix-hours-before-typo-befoer","required":true,"mismatch":"expected format 5, got 2","status":"resolved","epoch":1785726000,"suggestedFormatIndex":2},
+      {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+      {"caseId":"discord-reference-range-push-start","required":true,"mismatch":"expected status resolved, got failed","status":"failed"}
+    ]},
+    {"path":".cache/luna-guard-full.json","requiredPassed":199,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2337,"p95Ms":11153,"source":{"graphSha256":"C4A648C65CBF0280DF7EC6F0F4ACEC7EDBC37B8A2B06D04F00E3CD624A40715D","baseCommit":"4330fd1b0d57a8cbdb2f4518e86fb4e4d82befc0","deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","started":"2026-11-19T06:55:59.9189400-05:00","workers":[{"shard":0,"pid":50048},{"shard":1,"pid":91396},{"shard":2,"pid":41372},{"shard":3,"pid":77676}]},"experiments":[{"label":"guard-repair","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"month-boundary-leading-clock-first-of-last-month","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"relative-offset-from-now-100-years","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+      {"caseId":"timezone-ambiguous-cst","required":true,"mismatch":"expected alternatives , got 1779699600,1779742800,1779746400","status":"needs_clarification"}
+    ]},
+    {"path":".cache/luna-calendar-full.json","requiredPassed":201,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2659,"p95Ms":11638,"source":{"baseCommit":"042a250363db4715d9fd200e11d4ae05259f9809","started":"2026-11-19T07:12:05.6632501-05:00","graphSha256":"974A013C991C164A060CB4F79A73687D4C078E07C072FB870E1E5E351229B7BB","workers":[{"pid":36512,"shard":0},{"pid":101936,"shard":1},{"pid":78904,"shard":2},{"pid":71740,"shard":3}],"deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"},"experiments":[{"label":"calendar-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"anchor-offset-typo-weekday-relative-clock","required":true,"mismatch":"expected epoch 1780249020, got 1780853820","status":"resolved","epoch":1780853820,"suggestedFormatIndex":4}
+    ]},
+    {"path":".cache/luna-compound-full.json","requiredPassed":202,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2632,"p95Ms":12659,"source":{"deterministicSha256":"E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1","started":"2026-11-19T07:35:18.2120362-05:00","workers":[{"shard":0,"pid":67252},{"shard":1,"pid":61780},{"shard":2,"pid":107832},{"shard":3,"pid":88648}],"graphSha256":"8FE2263FDBE5CAC5D504494D76E4E69DA9E5FB66EF93F24C2864A596F814C0C3","baseCommit":"70b68dd6f968438fb90c1308ac38a09429c553f8"},"experiments":[{"label":"compound-anchor-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
 
-      ]
-    },
-    {
-      "path": ".cache/luna-review-full.json",
-      "requiredPassed": 202,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 3050,
-      "p95Ms": 13281,
-      "source": {"timezoneSha256":"D068375D6BF9E87C950B2D1FA0FE60851E705084FCBAB9FA19782D8F7569707C","baseCommit":"57cc33631542da1a3603565bfcb0bebc27689ed3","workers":[{"pid":92968,"shard":0},{"pid":99744,"shard":1},{"pid":11100,"shard":2},{"pid":105824,"shard":3}],"started":"2026-11-19T08:24:21.7077294-05:00","graphSha256":"27B684B0D53FFBEAFF9A69E83A3459CA598ECCB70D38357450C4DE3E86D6A100","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},
-      "experiments": [{"label":"review-context","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
+    ]},
+    {"path":".cache/luna-review-full.json","requiredPassed":202,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":3050,"p95Ms":13281,"source":{"timezoneSha256":"D068375D6BF9E87C950B2D1FA0FE60851E705084FCBAB9FA19782D8F7569707C","baseCommit":"57cc33631542da1a3603565bfcb0bebc27689ed3","workers":[{"pid":92968,"shard":0},{"pid":99744,"shard":1},{"pid":11100,"shard":2},{"pid":105824,"shard":3}],"started":"2026-11-19T08:24:21.7077294-05:00","graphSha256":"27B684B0D53FFBEAFF9A69E83A3459CA598ECCB70D38357450C4DE3E86D6A100","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},"experiments":[{"label":"review-context","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
 
-      ]
-    },
-    {
-      "path": ".cache/luna-admission-full.json",
-      "requiredPassed": 201,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2946,
-      "p95Ms": 12995,
-      "source": {"workers":[{"shard":0,"pid":28840},{"shard":1,"pid":20000},{"shard":2,"pid":92480},{"shard":3,"pid":93352}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"71199dca9171074f2ca6f740486db6c6ffa08331","timezoneSha256":"A10309D61A648E76E2F9D58DA2556E61996BD182083CF1A24E0F38CBD023EE4E","started":"2026-11-19T08:54:33.7247983-05:00","graphSha256":"B8C3A2D18E45C8DF66B93F437672D26FD3835B9D25CB40F5D346D28E8F28F3EC"},
-      "experiments": [{"label":"review-admission","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"recursive-relative-typo-tomorow-2","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"method":"deterministic","finalValidation":{"accepted":true,"confidence":0.99,"reason":"“Tomorow” is an unambiguous typo for “tomorrow.” Applying “the day after” twice gives May 26, 2026. The candidate preserves the date and uses the product’s noon default for a date-only expression.","missingOrContradictedSignals":[]}}
-      ]
-    },
-    {
-      "path": ".cache/luna-offset-full.json",
-      "requiredPassed": 199,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 3233,
-      "p95Ms": 15683,
-      "source": {"started":"2026-11-19T09:12:38.9713397-05:00","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"2cd9ce6eba9ca5876a349eec8a16563f1e852430","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","graphSha256":"B0D244A65EBC93B0C139A9665D79605A54EFFC170011FD08546C7C3FEAFBFC70","workers":[{"shard":0,"pid":22560},{"shard":1,"pid":88136},{"shard":2,"pid":106364},{"shard":3,"pid":75428}]},
-      "experiments": [{"label":"relative-offset-facts","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected epoch 1782921600, got 1780329600","status":"resolved","epoch":1780329600,"method":"agent+plan","validationWarnings":["Date-only input is represented at noon in the selected timezone for Discord timestamp compatibility."],"finalValidation":{"accepted":true,"confidence":0.91,"reason":"“First of the month” is reasonably interpreted as the first day of the current month. In the selected timezone, that is June 1, 2026, and the date-only noon default is correctly applied.","missingOrContradictedSignals":[]}},
-        {"caseId":"boundary-snap-hour-after-next","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “The hour after next” does not unambiguously mean two hours from now with the current minutes preserved. It can refer to a later whole-hour boundary, which would produce a materially different time. The candidate assumes duration arithmetic without resolving that ambiguity.","The candidate’s 4:55 PM time relies on interpreting “after next” as adding two hours, but the phrase may refer to the hour after the next whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":0.95,"reason":"“The hour after next” does not unambiguously mean two hours from now with the current minutes preserved. It can refer to a later whole-hour boundary, which would produce a materially different time. The candidate assumes duration arithmetic without resolving that ambiguity.","missingOrContradictedSignals":["The candidate’s 4:55 PM time relies on interpreting “after next” as adding two hours, but the phrase may refer to the hour after the next whole-hour boundary."]}},
-        {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed","method":"agent+plan","validationWarnings":["Model plan clock did not match the requested Discord-reference clock."]}
-      ]
-    },
-    {
-      "path": ".cache/luna-boundary-full.json",
-      "requiredPassed": 201,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 2526,
-      "p95Ms": 13114,
-      "source": {"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","baseCommit":"630969511b9a3e369168c0f6af3c124b3275e2a9","graphSha256":"92D521B50535645A2E98E0F0972293E3D709690C4314327D7CF1B31DE8B448BB","started":"2026-11-19T09:24:31.3331720-05:00","workers":[{"pid":53116,"shard":0},{"pid":15816,"shard":1},{"pid":81272,"shard":2},{"pid":63636,"shard":3}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},
-      "experiments": [{"label":"boundary-clock-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"recursive-relative-typo-tomorow-2","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"method":"deterministic","validationWarnings":["Date-only input is represented at noon in the selected timezone for Discord timestamp compatibility."],"finalValidation":{"accepted":true,"confidence":0.99,"reason":"“Tomorow” is an unambiguous typo for “tomorrow.” Applying the nested modifiers gives tomorrow (+1 day), then the day after (+1), for May 26, 2026. The candidate correctly represents that date at 12:00 PM in America/New_York.","missingOrContradictedSignals":[]}}
-      ]
-    },
-    {
-      "path": ".cache/luna-model-first-current-full.json",
-      "requiredPassed": 196,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 7524,
-      "p95Ms": 14946,
-      "source": {"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"deterministicPreflight":false,"planIr":true,"discordReferenceRouting":true},"baseCommit":"630969511b9a3e369168c0f6af3c124b3275e2a9","workers":[{"shard":0,"pid":42088},{"shard":1,"pid":70936},{"shard":2,"pid":63892},{"shard":3,"pid":73052}],"graphSha256":"92D521B50535645A2E98E0F0972293E3D709690C4314327D7CF1B31DE8B448BB","started":"2026-11-19T09:31:56.5132746-05:00","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},
-      "experiments": [{"label":"model-first-current","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"boundary-snap-next-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “Next hour” means the next whole-hour boundary, not one hour of duration arithmetic. From 2:55 PM in New York, the requested time is 3:00 PM, but the candidate is 3:55 PM.","The candidate preserves the minutes instead of snapping to the next whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":1,"reason":"“Next hour” means the next whole-hour boundary, not one hour of duration arithmetic. From 2:55 PM in New York, the requested time is 3:00 PM, but the candidate is 3:55 PM.","missingOrContradictedSignals":["The candidate preserves the minutes instead of snapping to the next whole-hour boundary."]}},
-        {"caseId":"boundary-snap-previous-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “Previous hour” means the most recent whole-hour boundary, not one hour of duration arithmetic. With the reference time at 2:55 PM in New York, the requested boundary is 2:00 PM; the candidate is 1:55 PM.","The candidate preserves the reference minutes instead of snapping to the previous whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":1,"reason":"“Previous hour” means the most recent whole-hour boundary, not one hour of duration arithmetic. With the reference time at 2:55 PM in New York, the requested boundary is 2:00 PM; the candidate is 1:55 PM.","missingOrContradictedSignals":["The candidate preserves the reference minutes instead of snapping to the previous whole-hour boundary."]}},
-        {"caseId":"timezone-ambiguous-cst","required":true,"mismatch":"expected alternatives , got 1779699600,1779746400","status":"needs_clarification","method":"agent+plan","validationWarnings":["Which timezone do you mean by CST: US Central Time or China Standard Time?"]},
-        {"caseId":"direct-epoch-microseconds","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The bare number has 16 digits, which is not a supported epoch format; its timestamp cannot be determined without guessing."]},
-        {"caseId":"ordinal-weekday-shift-relative-noon","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The first Sunday of next month is June 7, 2026; the day after is June 8. The stated clock phrase means 12:10 PM."]},
-        {"caseId":"bare-24h-hour-after-target-rollover","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The bare number “19” is neither a supported-length epoch timestamp nor an unambiguous clock expression."]}
-      ]
-    },
-    {
-      "path": ".cache/luna-model-first-qualified-full.json",
-      "requiredPassed": 201,
-      "requiredTotal": 202,
-      "diagnosticPassed": 4,
-      "diagnosticTotal": 5,
-      "medianMs": 8615,
-      "p95Ms": 16407,
-      "source": {"started":"2026-11-19T09:58:18.8676300-05:00","graphSha256":"EAA7C59FCE4F5417854E183C85F75CCB20C2C4FB71358ED73158EA7E9BB8686C","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","workers":[{"shard":0,"pid":79936},{"shard":1,"pid":86552},{"shard":2,"pid":39884},{"shard":3,"pid":110664}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","featureFlags":{"deterministicPreflight":false,"discordReferenceRouting":true,"planIr":true},"baseCommit":"3a234e6cf4c5ea3a8ec069190752c4a9ddce9c2f"},
-      "experiments": [{"label":"model-first-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"timezone-dst-gap-fail-closed","required":true,"mismatch":"expected status failed, got needs_clarification","status":"needs_clarification","validationWarnings":["2:30 AM does not occur in Eastern time on March 8, 2026, because clocks jump forward for daylight saving time."]},
-        {"caseId":"diagnostic-luna-standalone-clock-typo","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The trailing “s” can reasonably be treated as a typo, yielding an unambiguous 5:00 PM. But the candidate places that time on November 19, when it is already 6:00 PM locally, so it is not the next occurrence of the requested clock time.","The selected 5:00 PM is earlier than the reference time; the next occurrence would be on a later date."]}
-      ]
-    },
-    {
-      "path": ".cache/luna-gap-clock-full",
-      "incomplete": true,
-      "requiredPassed": null,
-      "requiredTotal": 202,
-      "diagnosticPassed": null,
-      "diagnosticTotal": 5,
-      "completedShard": {
-        "index": 3,
-        "total": 51,
-        "passed": 51,
-        "required": 47,
-        "diagnostic": 4
-      },
-      "stop": {
-        "completedShards": [
-          3
-        ],
-        "reason": "Provider overload (503 server_is_overloaded), incomplete unbounded qualification stopped; no parser promotion",
-        "qualification": "INCOMPLETE",
-        "workers": [
-          {
-            "pid": 54772,
-            "shard": 0
-          },
-          {
-            "pid": 38144,
-            "shard": 1
-          },
-          {
-            "pid": 77856,
-            "shard": 2
-          }
-        ],
-        "stoppedAt": "2026-11-19T10:52:38.9264653-05:00"
-      },
-      "limit": "Three stopped shards have no final report. Their progress markers are not complete measurements. The completed shard does not qualify the catalog.",
-      "providerProbes": [
-        {
-          "startedAt": "2026-11-19T15:51:14.794Z",
-          "status": 503,
-          "durationMs": 526,
-          "errorCode": "server_is_overloaded",
-          "errorType": "service_unavailable_error",
-          "retryAfter": "6"
-        },
-        {
-          "startedAt": "2026-11-19T15:55:14.415Z",
-          "status": 503,
-          "durationMs": 560,
-          "errorCode": "server_is_overloaded",
-          "errorType": "service_unavailable_error",
-          "retryAfter": "6"
-        }
-      ],
-      "source": {"featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true},"graphSha256":"7EE0ADEDE56F6D566C5FCBAAF81673CB11C8BC38D9B454732B83E4A2B718AA6C","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","started":"2026-11-19T10:34:28.0292034-05:00","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","baseCommit":"d33a0ef45a11195edc62b5f87b00f6056a99e980","workers":[{"pid":54772,"shard":0},{"pid":38144,"shard":1},{"pid":77856,"shard":2},{"pid":86012,"shard":3}]},
-      "experiments": [{"label":"gap-clock-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
+    ]},
+    {"path":".cache/luna-admission-full.json","requiredPassed":201,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2946,"p95Ms":12995,"source":{"workers":[{"shard":0,"pid":28840},{"shard":1,"pid":20000},{"shard":2,"pid":92480},{"shard":3,"pid":93352}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"71199dca9171074f2ca6f740486db6c6ffa08331","timezoneSha256":"A10309D61A648E76E2F9D58DA2556E61996BD182083CF1A24E0F38CBD023EE4E","started":"2026-11-19T08:54:33.7247983-05:00","graphSha256":"B8C3A2D18E45C8DF66B93F437672D26FD3835B9D25CB40F5D346D28E8F28F3EC"},"experiments":[{"label":"review-admission","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"recursive-relative-typo-tomorow-2","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"method":"deterministic","finalValidation":{"accepted":true,"confidence":0.99,"reason":"“Tomorow” is an unambiguous typo for “tomorrow.” Applying “the day after” twice gives May 26, 2026. The candidate preserves the date and uses the product’s noon default for a date-only expression.","missingOrContradictedSignals":[]}}
+    ]},
+    {"path":".cache/luna-offset-full.json","requiredPassed":199,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":3233,"p95Ms":15683,"source":{"started":"2026-11-19T09:12:38.9713397-05:00","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"2cd9ce6eba9ca5876a349eec8a16563f1e852430","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","graphSha256":"B0D244A65EBC93B0C139A9665D79605A54EFFC170011FD08546C7C3FEAFBFC70","workers":[{"shard":0,"pid":22560},{"shard":1,"pid":88136},{"shard":2,"pid":106364},{"shard":3,"pid":75428}]},"experiments":[{"label":"relative-offset-facts","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected epoch 1782921600, got 1780329600","status":"resolved","epoch":1780329600,"method":"agent+plan","validationWarnings":["Date-only input is represented at noon in the selected timezone for Discord timestamp compatibility."],"finalValidation":{"accepted":true,"confidence":0.91,"reason":"“First of the month” is reasonably interpreted as the first day of the current month. In the selected timezone, that is June 1, 2026, and the date-only noon default is correctly applied.","missingOrContradictedSignals":[]}},
+      {"caseId":"boundary-snap-hour-after-next","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “The hour after next” does not unambiguously mean two hours from now with the current minutes preserved. It can refer to a later whole-hour boundary, which would produce a materially different time. The candidate assumes duration arithmetic without resolving that ambiguity.","The candidate’s 4:55 PM time relies on interpreting “after next” as adding two hours, but the phrase may refer to the hour after the next whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":0.95,"reason":"“The hour after next” does not unambiguously mean two hours from now with the current minutes preserved. It can refer to a later whole-hour boundary, which would produce a materially different time. The candidate assumes duration arithmetic without resolving that ambiguity.","missingOrContradictedSignals":["The candidate’s 4:55 PM time relies on interpreting “after next” as adding two hours, but the phrase may refer to the hour after the next whole-hour boundary."]}},
+      {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed","method":"agent+plan","validationWarnings":["Model plan clock did not match the requested Discord-reference clock."]}
+    ]},
+    {"path":".cache/luna-boundary-full.json","requiredPassed":201,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":2526,"p95Ms":13114,"source":{"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","baseCommit":"630969511b9a3e369168c0f6af3c124b3275e2a9","graphSha256":"92D521B50535645A2E98E0F0972293E3D709690C4314327D7CF1B31DE8B448BB","started":"2026-11-19T09:24:31.3331720-05:00","workers":[{"pid":53116,"shard":0},{"pid":15816,"shard":1},{"pid":81272,"shard":2},{"pid":63636,"shard":3}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},"experiments":[{"label":"boundary-clock-contract","featureFlags":{"planIr":true,"deterministicPreflight":true,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"recursive-relative-typo-tomorow-2","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"method":"deterministic","validationWarnings":["Date-only input is represented at noon in the selected timezone for Discord timestamp compatibility."],"finalValidation":{"accepted":true,"confidence":0.99,"reason":"“Tomorow” is an unambiguous typo for “tomorrow.” Applying the nested modifiers gives tomorrow (+1 day), then the day after (+1), for May 26, 2026. The candidate correctly represents that date at 12:00 PM in America/New_York.","missingOrContradictedSignals":[]}}
+    ]},
+    {"path":".cache/luna-model-first-current-full.json","requiredPassed":196,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":7524,"p95Ms":14946,"source":{"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"deterministicPreflight":false,"planIr":true,"discordReferenceRouting":true},"baseCommit":"630969511b9a3e369168c0f6af3c124b3275e2a9","workers":[{"shard":0,"pid":42088},{"shard":1,"pid":70936},{"shard":2,"pid":63892},{"shard":3,"pid":73052}],"graphSha256":"92D521B50535645A2E98E0F0972293E3D709690C4314327D7CF1B31DE8B448BB","started":"2026-11-19T09:31:56.5132746-05:00","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},"experiments":[{"label":"model-first-current","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"boundary-snap-next-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “Next hour” means the next whole-hour boundary, not one hour of duration arithmetic. From 2:55 PM in New York, the requested time is 3:00 PM, but the candidate is 3:55 PM.","The candidate preserves the minutes instead of snapping to the next whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":1,"reason":"“Next hour” means the next whole-hour boundary, not one hour of duration arithmetic. From 2:55 PM in New York, the requested time is 3:00 PM, but the candidate is 3:55 PM.","missingOrContradictedSignals":["The candidate preserves the minutes instead of snapping to the next whole-hour boundary."]}},
+      {"caseId":"boundary-snap-previous-hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","method":"agent+plan","validationWarnings":["Final LLM validation rejected candidate: “Previous hour” means the most recent whole-hour boundary, not one hour of duration arithmetic. With the reference time at 2:55 PM in New York, the requested boundary is 2:00 PM; the candidate is 1:55 PM.","The candidate preserves the reference minutes instead of snapping to the previous whole-hour boundary."],"finalValidation":{"accepted":false,"confidence":1,"reason":"“Previous hour” means the most recent whole-hour boundary, not one hour of duration arithmetic. With the reference time at 2:55 PM in New York, the requested boundary is 2:00 PM; the candidate is 1:55 PM.","missingOrContradictedSignals":["The candidate preserves the reference minutes instead of snapping to the previous whole-hour boundary."]}},
+      {"caseId":"timezone-ambiguous-cst","required":true,"mismatch":"expected alternatives , got 1779699600,1779746400","status":"needs_clarification","method":"agent+plan","validationWarnings":["Which timezone do you mean by CST: US Central Time or China Standard Time?"]},
+      {"caseId":"direct-epoch-microseconds","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The bare number has 16 digits, which is not a supported epoch format; its timestamp cannot be determined without guessing."]},
+      {"caseId":"ordinal-weekday-shift-relative-noon","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The first Sunday of next month is June 7, 2026; the day after is June 8. The stated clock phrase means 12:10 PM."]},
+      {"caseId":"bare-24h-hour-after-target-rollover","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The bare number “19” is neither a supported-length epoch timestamp nor an unambiguous clock expression."]}
+    ]},
+    {"path":".cache/luna-model-first-qualified-full.json","requiredPassed":201,"requiredTotal":202,"diagnosticPassed":4,"diagnosticTotal":5,"medianMs":8615,"p95Ms":16407,"source":{"started":"2026-11-19T09:58:18.8676300-05:00","graphSha256":"EAA7C59FCE4F5417854E183C85F75CCB20C2C4FB71358ED73158EA7E9BB8686C","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","workers":[{"shard":0,"pid":79936},{"shard":1,"pid":86552},{"shard":2,"pid":39884},{"shard":3,"pid":110664}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","featureFlags":{"deterministicPreflight":false,"discordReferenceRouting":true,"planIr":true},"baseCommit":"3a234e6cf4c5ea3a8ec069190752c4a9ddce9c2f"},"experiments":[{"label":"model-first-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"timezone-dst-gap-fail-closed","required":true,"mismatch":"expected status failed, got needs_clarification","status":"needs_clarification","validationWarnings":["2:30 AM does not occur in Eastern time on March 8, 2026, because clocks jump forward for daylight saving time."]},
+      {"caseId":"diagnostic-luna-standalone-clock-typo","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The trailing “s” can reasonably be treated as a typo, yielding an unambiguous 5:00 PM. But the candidate places that time on November 19, when it is already 6:00 PM locally, so it is not the next occurrence of the requested clock time.","The selected 5:00 PM is earlier than the reference time; the next occurrence would be on a later date."]}
+    ]},
+    {"path":".cache/luna-gap-clock-full","incomplete":true,"requiredPassed":null,"requiredTotal":202,"diagnosticPassed":null,"diagnosticTotal":5,"completedShard":{"index":3,"total":51,"passed":51,"required":47,"diagnostic":4},"stop":{"completedShards":[3],"reason":"Provider overload (503 server_is_overloaded), incomplete unbounded qualification stopped; no parser promotion","qualification":"INCOMPLETE","workers":[{"pid":54772,"shard":0},{"pid":38144,"shard":1},{"pid":77856,"shard":2}],"stoppedAt":"2026-11-19T10:52:38.9264653-05:00"},"limit":"Three stopped shards have no final report. Their progress markers are not complete measurements. The completed shard does not qualify the catalog.","providerProbes":[{"startedAt":"2026-11-19T15:51:14.794Z","status":503,"durationMs":526,"errorCode":"server_is_overloaded","errorType":"service_unavailable_error","retryAfter":"6"},{"startedAt":"2026-11-19T15:55:14.415Z","status":503,"durationMs":560,"errorCode":"server_is_overloaded","errorType":"service_unavailable_error","retryAfter":"6"}],"source":{"featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true},"graphSha256":"7EE0ADEDE56F6D566C5FCBAAF81673CB11C8BC38D9B454732B83E4A2B718AA6C","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","started":"2026-11-19T10:34:28.0292034-05:00","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","baseCommit":"d33a0ef45a11195edc62b5f87b00f6056a99e980","workers":[{"pid":54772,"shard":0},{"pid":38144,"shard":1},{"pid":77856,"shard":2},{"pid":86012,"shard":3}]},"experiments":[{"label":"gap-clock-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
 
-      ]
-    },
-    {
-      "path": ".cache/luna-bounded-full-partial.json",
-      "incomplete": true,
-      "requiredPassed": null,
-      "requiredTotal": 202,
-      "diagnosticPassed": null,
-      "diagnosticTotal": 5,
-      "observed": {
-        "total": 34,
-        "requiredPassed": 32,
-        "requiredTotal": 34
-      },
-      "stop": {
-        "reason": "Required format mismatches observed; preserve every checkpoint and repair the shared date-only precision contract before a new run",
-        "qualification": "FAILED_INCOMPLETE",
-        "stoppedAt": "2026-11-19T11:07:00.5921651-05:00",
-        "workers": [
-          {
-            "shard": 0,
-            "pid": 76700
-          },
-          {
-            "shard": 1,
-            "pid": 79404
-          },
-          {
-            "shard": 2,
-            "pid": 53552
-          },
-          {
-            "shard": 3,
-            "pid": 45156
-          }
-        ]
-      },
-      "limit": "Stopped once required failures were recorded. Every completed case remains in the partial JSONL; this sample does not qualify the full catalog.",
-      "source": {"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","workers":[{"shard":0,"pid":76700},{"shard":1,"pid":79404},{"shard":2,"pid":53552},{"shard":3,"pid":45156}],"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e","agentTimeoutMs":120000,"graphSha256":"7EE0ADEDE56F6D566C5FCBAAF81673CB11C8BC38D9B454732B83E4A2B718AA6C","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","started":"2026-11-19T11:02:10.0913804-05:00","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false}},
-      "experiments": [{"label":"bounded-contract","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false}}],
-      "failures": [
-        {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","epoch":1782921600,"suggestedFormatIndex":4,"validationWarnings":[],"plannerSteps":[{"operation":"resolve_calendar_query","query":"July 1, 2026 at 12:00 PM","precision":"datetime"}]},
-        {"caseId":"month-boundary-first-of-this-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","epoch":1780329600,"suggestedFormatIndex":4,"validationWarnings":[],"plannerSteps":[{"operation":"resolve_calendar_query","query":"June 1, 2026 at 12:00 PM","precision":"datetime"}]}
-      ]
-    },
-    {
-      "path": ".cache/luna-date-precision-probe.json",
-      "requiredPassed": 4,
-      "requiredTotal": 6,
-      "diagnosticPassed": 0,
-      "diagnosticTotal": 0,
-      "source": {"dirtyParser":true,"started":"2026-11-19T11:07:33.2414357-05:00","graphSha256":"7B8C1236CE2D607420AB11FF76E26F9D182AAF03F24D7E43FED64BFE5CC8BE22","pid":62932,"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e"},
-      "experiments": [{"label":"date-precision-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"month-boundary-first-of-this-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1780329600,"suggestedFormatIndex":0,"precision":"date","presentationFormats":["d"]},
-        {"caseId":"month-boundary-first-of-next-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1782921600,"suggestedFormatIndex":0,"precision":"date","presentationFormats":["d"]}
-      ]
-    },
-    {
-      "path": ".cache/luna-date-presentation-probe.json",
-      "requiredPassed": 6,
-      "requiredTotal": 6,
-      "diagnosticPassed": 0,
-      "diagnosticTotal": 0,
-      "limit": "Focused contract regression only, not full required-catalog qualification.",
-      "source": {"pid":62484,"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e","graphSha256":"82A2769A7D624E8235C600A493E7C810E27D6301244151D3F7FEBFE271C23977","started":"2026-11-19T11:13:03.5669781-05:00","dirtyParser":true},
-      "experiments": [{"label":"date-presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
+    ]},
+    {"path":".cache/luna-bounded-full-partial.json","incomplete":true,"requiredPassed":null,"requiredTotal":202,"diagnosticPassed":null,"diagnosticTotal":5,"observed":{"total":34,"requiredPassed":32,"requiredTotal":34},"stop":{"reason":"Required format mismatches observed; preserve every checkpoint and repair the shared date-only precision contract before a new run","qualification":"FAILED_INCOMPLETE","stoppedAt":"2026-11-19T11:07:00.5921651-05:00","workers":[{"shard":0,"pid":76700},{"shard":1,"pid":79404},{"shard":2,"pid":53552},{"shard":3,"pid":45156}]},"limit":"Stopped once required failures were recorded. Every completed case remains in the partial JSONL; this sample does not qualify the full catalog.","source":{"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","workers":[{"shard":0,"pid":76700},{"shard":1,"pid":79404},{"shard":2,"pid":53552},{"shard":3,"pid":45156}],"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e","agentTimeoutMs":120000,"graphSha256":"7EE0ADEDE56F6D566C5FCBAAF81673CB11C8BC38D9B454732B83E4A2B718AA6C","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","started":"2026-11-19T11:02:10.0913804-05:00","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false}},"experiments":[{"label":"bounded-contract","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false}}],"failures":[
+      {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","epoch":1782921600,"suggestedFormatIndex":4,"validationWarnings":[],"plannerSteps":[{"operation":"resolve_calendar_query","query":"July 1, 2026 at 12:00 PM","precision":"datetime"}]},
+      {"caseId":"month-boundary-first-of-this-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","epoch":1780329600,"suggestedFormatIndex":4,"validationWarnings":[],"plannerSteps":[{"operation":"resolve_calendar_query","query":"June 1, 2026 at 12:00 PM","precision":"datetime"}]}
+    ]},
+    {"path":".cache/luna-date-precision-probe.json","requiredPassed":4,"requiredTotal":6,"diagnosticPassed":0,"diagnosticTotal":0,"source":{"dirtyParser":true,"started":"2026-11-19T11:07:33.2414357-05:00","graphSha256":"7B8C1236CE2D607420AB11FF76E26F9D182AAF03F24D7E43FED64BFE5CC8BE22","pid":62932,"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e"},"experiments":[{"label":"date-precision-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"month-boundary-first-of-this-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1780329600,"suggestedFormatIndex":0,"precision":"date","presentationFormats":["d"]},
+      {"caseId":"month-boundary-first-of-next-month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1782921600,"suggestedFormatIndex":0,"precision":"date","presentationFormats":["d"]}
+    ]},
+    {"path":".cache/luna-date-presentation-probe.json","requiredPassed":6,"requiredTotal":6,"diagnosticPassed":0,"diagnosticTotal":0,"limit":"Focused contract regression only, not full required-catalog qualification.","source":{"pid":62484,"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e","graphSha256":"82A2769A7D624E8235C600A493E7C810E27D6301244151D3F7FEBFE271C23977","started":"2026-11-19T11:13:03.5669781-05:00","dirtyParser":true},"experiments":[{"label":"date-presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
 
-      ]
-    },
-    {
-      "path": ".cache/luna-presentation-full.json",
-      "requiredPassed": 201,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 8642,
-      "p95Ms": 18517,
-      "overThirtySeconds": 1,
-      "source": {"baseCommit":"a27ae6f7ca69a895b274cdc5638bf3cc728e337c","graphSha256":"82A2769A7D624E8235C600A493E7C810E27D6301244151D3F7FEBFE271C23977","workers":[{"pid":87696,"shard":0},{"pid":63940,"shard":1},{"pid":114504,"shard":2},{"pid":95948,"shard":3}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false},"agentTimeoutMs":120000,"started":"2026-11-19T11:18:40.3311427-05:00"},
-      "experiments": [{"label":"presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"discord-reference-clock-composition-spring-forward-day","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The candidate correctly uses March 8, 2026 and sets the time to noon in America/New_York. However, the user did not request a display format for the result, so selecting presentationFormat \"f\" is unsupported.","The output format was set to \"f\" despite no explicit request for a result display style."],"finalValidation":{"accepted":false,"confidence":0.96,"reason":"The candidate correctly uses March 8, 2026 and sets the time to noon in America/New_York. However, the user did not request a display format for the result, so selecting presentationFormat \"f\" is unsupported.","missingOrContradictedSignals":["The output format was set to \"f\" despite no explicit request for a result display style."]}}
-      ]
-    },
-    {
-      "path": ".cache/luna-reference-presentation-probe.json",
-      "requiredPassed": 5,
-      "requiredTotal": 5,
-      "diagnosticPassed": 0,
-      "diagnosticTotal": 0,
-      "limit": "Focused reference and ordinary-date contract regression, not full-catalog qualification.",
-      "source": {"started":"2026-11-19T11:28:48.4930883-05:00","graphSha256":"D4B3A86F0424F2F42DA86780EA8ABA899C140D9B3554F903FFA3A46CB62E8133","baseCommit":"a27ae6f7ca69a895b274cdc5638bf3cc728e337c","dirtyParser":true,"pid":39884},
-      "experiments": [{"label":"reference-presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
+    ]},
+    {"path":".cache/luna-presentation-full.json","requiredPassed":201,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":8642,"p95Ms":18517,"overThirtySeconds":1,"source":{"baseCommit":"a27ae6f7ca69a895b274cdc5638bf3cc728e337c","graphSha256":"82A2769A7D624E8235C600A493E7C810E27D6301244151D3F7FEBFE271C23977","workers":[{"pid":87696,"shard":0},{"pid":63940,"shard":1},{"pid":114504,"shard":2},{"pid":95948,"shard":3}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false},"agentTimeoutMs":120000,"started":"2026-11-19T11:18:40.3311427-05:00"},"experiments":[{"label":"presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"discord-reference-clock-composition-spring-forward-day","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The candidate correctly uses March 8, 2026 and sets the time to noon in America/New_York. However, the user did not request a display format for the result, so selecting presentationFormat \"f\" is unsupported.","The output format was set to \"f\" despite no explicit request for a result display style."],"finalValidation":{"accepted":false,"confidence":0.96,"reason":"The candidate correctly uses March 8, 2026 and sets the time to noon in America/New_York. However, the user did not request a display format for the result, so selecting presentationFormat \"f\" is unsupported.","missingOrContradictedSignals":["The output format was set to \"f\" despite no explicit request for a result display style."]}}
+    ]},
+    {"path":".cache/luna-reference-presentation-probe.json","requiredPassed":5,"requiredTotal":5,"diagnosticPassed":0,"diagnosticTotal":0,"limit":"Focused reference and ordinary-date contract regression, not full-catalog qualification.","source":{"started":"2026-11-19T11:28:48.4930883-05:00","graphSha256":"D4B3A86F0424F2F42DA86780EA8ABA899C140D9B3554F903FFA3A46CB62E8133","baseCommit":"a27ae6f7ca69a895b274cdc5638bf3cc728e337c","dirtyParser":true,"pid":39884},"experiments":[{"label":"reference-presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
 
-      ]
-    },
-    {
-      "path": ".cache/luna-context-full.json",
-      "requiredPassed": 197,
-      "requiredTotal": 202,
-      "diagnosticPassed": 5,
-      "diagnosticTotal": 5,
-      "medianMs": 7865,
-      "p95Ms": 13344,
-      "overThirtySeconds": 0,
-      "source": {"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"deterministicPreflight":false,"planIr":true,"discordReferenceRouting":true},"graphSha256":"D4B3A86F0424F2F42DA86780EA8ABA899C140D9B3554F903FFA3A46CB62E8133","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","agentTimeoutMs":120000,"workers":[{"pid":32424,"shard":0},{"pid":66388,"shard":1},{"pid":90936,"shard":2},{"pid":68636,"shard":3}],"started":"2026-11-19T11:34:00.8289111-05:00"},
-      "experiments": [{"label":"context-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","validationWarnings":[],"finalValidation":{"accepted":true,"confidence":0.99,"reason":"The unqualified “first of the month” resolves by convention to the next future first-of-month at local noon. From June 2, 2026 in America/New_York, that is July 1, 2026 at 12:00 PM local time, matching the candidate.","missingOrContradictedSignals":[]}},
-        {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected status resolved, got failed","status":"failed","validationWarnings":["The requested 23-minute shift can be represented, but the available operations cannot round the resulting timestamp to the nearest 15-minute boundary."]},
-        {"caseId":"discord-reference-shift-suffix","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp is correctly shifted one hour from the Discord timestamp, but the plan incorrectly preserves the source’s `t` format. For a Discord-referenced date combined with a new clock, the default presentation format is `f`.","The plan uses presentationFormat `t` instead of the required default `f` for a Discord timestamp shifted to a new clock time."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp is correctly shifted one hour from the Discord timestamp, but the plan incorrectly preserves the source’s `t` format. For a Discord-referenced date combined with a new clock, the default presentation format is `f`.","missingOrContradictedSignals":["The plan uses presentationFormat `t` instead of the required default `f` for a Discord timestamp shifted to a new clock time."]}},
-        {"caseId":"discord-reference-shift-suffix-word-number-four","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp is correct: the Discord reference resolves to midnight in America/New_York, and four hours later is 2026-08-02 at 4:00 AM. However, the plan selects presentationFormat `t`. For a transformed Discord reference that combines the referenced date with a new clock, the default presentation format is `f`.","The selected presentation format `t` does not follow the required `f` default for a referenced date combined with a new clock."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp is correct: the Discord reference resolves to midnight in America/New_York, and four hours later is 2026-08-02 at 4:00 AM. However, the plan selects presentationFormat `t`. For a transformed Discord reference that combines the referenced date with a new clock, the default presentation format is `f`.","missingOrContradictedSignals":["The selected presentation format `t` does not follow the required `f` default for a referenced date combined with a new clock."]}},
-        {"caseId":"discord-reference-shift-prefix","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp arithmetic is correct: the referenced instant is 2026-08-02 00:00 in New York, and one hour later is 01:00. However, the plan selects Discord presentation format `t`; a transformed reference combining its date with a new clock should use `f` by default.","Presentation format should be `f`, not `t`, for the referenced date combined with the shifted clock."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp arithmetic is correct: the referenced instant is 2026-08-02 00:00 in New York, and one hour later is 01:00. However, the plan selects Discord presentation format `t`; a transformed reference combining its date with a new clock should use `f` by default.","missingOrContradictedSignals":["Presentation format should be `f`, not `t`, for the referenced date combined with the shifted clock."]}}
-      ]
-    },
-    {
-      "path": ".cache/luna-tool-contract-probe.json",
-      "requiredPassed": 7,
-      "requiredTotal": 8,
-      "diagnosticPassed": 0,
-      "diagnosticTotal": 0,
-      "source": {"started":"2026-11-19T11:45:55.5805325-05:00","pid":60052,"baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","dirtyParser":true,"graphSha256":"1A2B2611F4B01A35C6A96E1F192D8FA271E838BC48AF7F79CF8F605E1DEE58F9","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},
-      "experiments": [{"label":"tool-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
-        {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected status resolved, got failed","status":"failed","validationWarnings":["The request specifies a 23-minute duration followed by rounding to the nearest 15-minute boundary. Keep both operations together in the supported duration-and-rounding calendar query. resolve_calendar_query returned no candidates for 23 minutes from now, then round to the nearest 15 minutes."],"queryArguments":["in 23 minutes, round to the nearest 15 minutes","23 minutes from now, then round to the nearest 15 minutes"]}
-      ]
-    },
-    {
-      "path": ".cache/luna-query-contract-probe.json",
-      "requiredPassed": 8,
-      "requiredTotal": 8,
-      "diagnosticPassed": 0,
-      "diagnosticTotal": 0,
-      "limit": "Focused regression after query-separator and validator-payload repair, not full-catalog qualification.",
-      "source": {"pid":81880,"deterministicSha256":"102C8BA99D2669053EB7459FDFD3D66AA324A5F7EAACE96AECC83C403DCED172","baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","dirtyParser":true,"graphSha256":"1A2B2611F4B01A35C6A96E1F192D8FA271E838BC48AF7F79CF8F605E1DEE58F9","started":"2026-11-19T11:52:14.8310282-05:00"},
-      "experiments": [{"label":"query-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
-      "failures": [
+    ]},
+    {"path":".cache/luna-context-full.json","requiredPassed":197,"requiredTotal":202,"diagnosticPassed":5,"diagnosticTotal":5,"medianMs":7865,"p95Ms":13344,"overThirtySeconds":0,"source":{"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"deterministicPreflight":false,"planIr":true,"discordReferenceRouting":true},"graphSha256":"D4B3A86F0424F2F42DA86780EA8ABA899C140D9B3554F903FFA3A46CB62E8133","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","agentTimeoutMs":120000,"workers":[{"pid":32424,"shard":0},{"pid":66388,"shard":1},{"pid":90936,"shard":2},{"pid":68636,"shard":3}],"started":"2026-11-19T11:34:00.8289111-05:00"},"experiments":[{"label":"context-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","validationWarnings":[],"finalValidation":{"accepted":true,"confidence":0.99,"reason":"The unqualified “first of the month” resolves by convention to the next future first-of-month at local noon. From June 2, 2026 in America/New_York, that is July 1, 2026 at 12:00 PM local time, matching the candidate.","missingOrContradictedSignals":[]}},
+      {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected status resolved, got failed","status":"failed","validationWarnings":["The requested 23-minute shift can be represented, but the available operations cannot round the resulting timestamp to the nearest 15-minute boundary."]},
+      {"caseId":"discord-reference-shift-suffix","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp is correctly shifted one hour from the Discord timestamp, but the plan incorrectly preserves the source’s `t` format. For a Discord-referenced date combined with a new clock, the default presentation format is `f`.","The plan uses presentationFormat `t` instead of the required default `f` for a Discord timestamp shifted to a new clock time."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp is correctly shifted one hour from the Discord timestamp, but the plan incorrectly preserves the source’s `t` format. For a Discord-referenced date combined with a new clock, the default presentation format is `f`.","missingOrContradictedSignals":["The plan uses presentationFormat `t` instead of the required default `f` for a Discord timestamp shifted to a new clock time."]}},
+      {"caseId":"discord-reference-shift-suffix-word-number-four","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp is correct: the Discord reference resolves to midnight in America/New_York, and four hours later is 2026-08-02 at 4:00 AM. However, the plan selects presentationFormat `t`. For a transformed Discord reference that combines the referenced date with a new clock, the default presentation format is `f`.","The selected presentation format `t` does not follow the required `f` default for a referenced date combined with a new clock."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp is correct: the Discord reference resolves to midnight in America/New_York, and four hours later is 2026-08-02 at 4:00 AM. However, the plan selects presentationFormat `t`. For a transformed Discord reference that combines the referenced date with a new clock, the default presentation format is `f`.","missingOrContradictedSignals":["The selected presentation format `t` does not follow the required `f` default for a referenced date combined with a new clock."]}},
+      {"caseId":"discord-reference-shift-prefix","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp arithmetic is correct: the referenced instant is 2026-08-02 00:00 in New York, and one hour later is 01:00. However, the plan selects Discord presentation format `t`; a transformed reference combining its date with a new clock should use `f` by default.","Presentation format should be `f`, not `t`, for the referenced date combined with the shifted clock."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp arithmetic is correct: the referenced instant is 2026-08-02 00:00 in New York, and one hour later is 01:00. However, the plan selects Discord presentation format `t`; a transformed reference combining its date with a new clock should use `f` by default.","missingOrContradictedSignals":["Presentation format should be `f`, not `t`, for the referenced date combined with the shifted clock."]}}
+    ]},
+    {"path":".cache/luna-tool-contract-probe.json","requiredPassed":7,"requiredTotal":8,"diagnosticPassed":0,"diagnosticTotal":0,"source":{"started":"2026-11-19T11:45:55.5805325-05:00","pid":60052,"baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","dirtyParser":true,"graphSha256":"1A2B2611F4B01A35C6A96E1F192D8FA271E838BC48AF7F79CF8F605E1DEE58F9","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},"experiments":[{"label":"tool-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
+      {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected status resolved, got failed","status":"failed","validationWarnings":["The request specifies a 23-minute duration followed by rounding to the nearest 15-minute boundary. Keep both operations together in the supported duration-and-rounding calendar query. resolve_calendar_query returned no candidates for 23 minutes from now, then round to the nearest 15 minutes."],"queryArguments":["in 23 minutes, round to the nearest 15 minutes","23 minutes from now, then round to the nearest 15 minutes"]}
+    ]},
+    {"path":".cache/luna-query-contract-probe.json","requiredPassed":8,"requiredTotal":8,"diagnosticPassed":0,"diagnosticTotal":0,"limit":"Focused regression after query-separator and validator-payload repair, not full-catalog qualification.","source":{"pid":81880,"deterministicSha256":"102C8BA99D2669053EB7459FDFD3D66AA324A5F7EAACE96AECC83C403DCED172","baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","dirtyParser":true,"graphSha256":"1A2B2611F4B01A35C6A96E1F192D8FA271E838BC48AF7F79CF8F605E1DEE58F9","started":"2026-11-19T11:52:14.8310282-05:00"},"experiments":[{"label":"query-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],"failures":[
 
-      ]
-    }
+    ]}
   ]
 }
