@@ -5,10 +5,10 @@ import { Overlay } from "./components/Overlay";
 import { Settings } from "./components/Settings";
 import { UpdateChecker } from "./components/UpdateChecker";
 import "./App.css";
-import { getHostedClerk } from './lib/hosted-auth';
+import { getHostedAuthToken } from './lib/hosted-auth';
 
 function App() {
-  useEffect(() => { void getHostedClerk()?.catch(() => {}); }, []);
+  useEffect(() => { void getHostedAuthToken().catch(() => {}); }, []);
   const [showOverlay, setShowOverlay] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateChecker, setShowUpdateChecker] = useState(false);
@@ -45,11 +45,6 @@ function App() {
       setOverlayOpenToken((current) => current + 1);
       await appWindow.setAlwaysOnTop(true);
     }
-  };
-
-  const handleShowSettings = () => {
-    setShowSettings(true);
-    setShowOverlay(false);
   };
 
   const handleUpdateCheckerClose = async () => {
@@ -138,7 +133,7 @@ function App() {
 
   return (
     <div className="app">
-      {showOverlay && <Overlay onClose={handleClose} onShowSettings={handleShowSettings} openToken={overlayOpenToken} />}
+      {showOverlay && <Overlay onClose={handleClose} openToken={overlayOpenToken} />}
       {showSettings && <Settings onClose={handleSettingsClose} />}
       {showUpdateChecker && <UpdateChecker onClose={handleUpdateCheckerClose} />}
     </div>

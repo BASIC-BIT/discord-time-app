@@ -1,21 +1,27 @@
-import { isTauri } from '@tauri-apps/api/core';
-import type { Clerk } from '@clerk/clerk-js';
+import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
-export const hostedConfigured = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY && import.meta.env.VITE_CONVEX_URL);
-let clerkPromise: Promise<Clerk> | undefined;
+export interface HostedAuthStatus {
+  configured: boolean;
+  phase: 'signed_out' | 'pending' | 'signed_in';
+  userCode: string | null;
+  verificationUri: string | null;
+  verificationUriComplete: string | null;
+  expiresIn: number | null;
+  error: string | null;
+}
 
-export function getHostedClerk(): Promise<Clerk> | undefined {
-  if (!hostedConfigured) return undefined;
-  clerkPromise ??= (async () => {
-    const { ui } = await import('@clerk/ui');
-    if (isTauri()) {
-      const { initClerk, noopLogger } = await import('tauri-plugin-clerk');
-      return initClerk({ ui }, noopLogger());
-    }
-    const { Clerk } = await import('@clerk/clerk-js');
-    const clerk = new Clerk(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
-    await clerk.load({ ui });
-    return clerk;
-  })().catch(error => { clerkPromise = undefined; throw error; });
-  return clerkPromise;
+export const hostedConfigured = Boolean(import.meta.env.VITE_CONVEX_URL);
+export const getHostedAuthStatus = () => invoke<HostedAuthStatus>('get_hosted_auth_status');
+export const startHostedSignIn = () => invoke<HostedAuthStatus>('start_hosted_sign_in');
+export const cancelHostedSignIn = () => invoke<HostedAuthStatus>('cancel_hosted_sign_in');
+export const signOutHostedAuth = () => invoke<HostedAuthStatus>('sign_out_hosted_auth');
+export const getHostedAuthToken = () => invoke<string | null>('get_hosted_auth_token');
+
+export async function openHostedSignInBrowser(status: HostedAuthStatus): Promise<void> {
+  const url = status.verificationUriComplete ?? status.verificationUri;
+  if (status.phase !== 'pending' || !url || new URL(url).protocol !== 'https:') throw new Error('No browser sign-in is available.');
+  await getCurrentWindow().setAlwaysOnTop(false);
+  await openUrl(url);
 }

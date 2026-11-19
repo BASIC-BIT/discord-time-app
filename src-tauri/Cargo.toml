@@ -38,5 +38,7 @@ single-instance = "0.3"
 log = "0.4"
 getrandom = "0.3"
 tauri-plugin-notification = "2"
-tauri-plugin-clerk = "0.1.1"
-tauri-plugin-http = "=2.7.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+keyring = { version = "3", features = ["windows-native"] }
+base64 = "0.22"
+tokio = { version = "1", features = ["sync", "time"] }

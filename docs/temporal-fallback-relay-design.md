@@ -8,9 +8,23 @@ This follows the user's decision to keep the relay simple. The earlier Lambda st
 
 The hotkey immediately prewarms RunPod. While it warms, deterministic parsing runs first. A failure can use the hosted fallback if the user is signed in. Successful deterministic results and clarifications make no fallback call. Every model answer still passes Plan-IR execution and independent validation.
 
-Settings includes sign-in and sign-out. Local parsing works without an account. Native email-code sign-in is supported by the Clerk Tauri integration. Its default UI does not support OAuth or magic links.
+Settings and the inline fallback prompt offer Sign in with browser. Clerk's public OAuth device grant opens the default browser, where Google and other configured sign-in methods work. The overlay shows the confirmation code and supports cancellation and retry. Approval automatically resumes the original parse. Local parsing works without an account.
 
-Sessions currently last until app exit. The plugin's optional plaintext credential store is disabled. Persistent sign-in needs an encrypted store later.
+The Windows native process stores the refresh credential in Windows Credential Manager and keeps identity tokens in memory. Restarting silently refreshes the session. Credentials are isolated by app instance and OAuth client. Sign out removes the local credential and requests provider revocation when discovery advertises it. It does not sign the user out of their browser.
+
+### Browser sign-in journey
+
+```mermaid
+flowchart TD
+    O[Overlay fallback prompt] --> S[Sign in with browser]
+    A[Settings Account] --> S
+    S --> C[App requests device code and opens default browser]
+    C --> B[User signs in and approves HammerOverlay]
+    B --> P[Native polling receives tokens]
+    P --> R[Save refresh credential securely and resume parsing]
+    C --> E[Cancel, decline, or code expires]
+    E --> T[Show retry; local parsing remains available]
+```
 
 ```mermaid
 flowchart TD
@@ -27,7 +41,7 @@ flowchart TD
 ## Implementation
 
 - One Convex action accepts text, timezone, reference instant, and request ID. Server code fixes the model, prompts, schema, and reasoning. It rejects anonymous requests, invalid timezones, invalid reference times, and oversized input.
-- The desktop supplies a short-lived Clerk JWT with audience `convex`. The OpenAI key stays in Convex environment variables.
+- The desktop supplies a short-lived Clerk OIDC identity token with the desktop OAuth client as its audience. Convex verifies its signature, issuer, and audience. The OpenAI key stays in Convex environment variables.
 - Reuse the existing parser from `api/src/temporal`. Fastify and SQLite stay local. The relay is a Node action because this parser uses Node packages and APIs.
 - An internal mutation records user identity, token counts, latency, input length, and outcome. It does not save temporal input text. Users can query only their own aggregate usage.
 - The desktop preserves the reference time across local parsing and fallback, discards cancelled results, and skips redundant post-display LLM verification for server-validated results.
@@ -35,11 +49,11 @@ flowchart TD
 
 ## Development setup
 
-The current development project is `basic-bit/hammeroverlay`, deployment `effervescent-oyster-428`. The Clerk application is `app_3MJJje32108M4DP1qNgUkspF6wY`, development issuer `https://sterling-griffon-6475.clerk.accounts.dev`. Native API is already enabled. The `convex` JWT template has `aud: convex` and a 60-second lifetime.
+The current development project is `basic-bit/hammeroverlay`, deployment `effervescent-oyster-428`. The Clerk application is `app_3MJJje32108M4DP1qNgUkspF6wY`, development issuer `https://sterling-griffon-6475.clerk.accounts.dev`. The public HammerOverlay Desktop OAuth client is `XM0ds3RI7HGhMKAo`, with device authorization enabled and scopes `openid offline_access`.
 
-In ignored `.env.local`, set `CONVEX_DEPLOYMENT`, `VITE_CONVEX_URL`, and `VITE_CLERK_PUBLISHABLE_KEY`. The native build reads the same local publishable key; CI can supply it through the environment. The native HTTP capability permits only the configured Clerk development host. Update that capability when changing the issuer.
+In ignored `.env.local`, set `CONVEX_DEPLOYMENT`, `VITE_CONVEX_URL`, `VITE_CLERK_ISSUER`, and `VITE_CLERK_OAUTH_CLIENT_ID`. The native build reads the issuer and public client ID; CI can supply them through the environment. Native discovery requires HTTPS endpoints on the configured issuer's origin. Private device codes and refresh credentials never cross the webview boundary. The embedded Clerk SDK and transport plugins are removed.
 
-Configure server-only `OPENAI_API_KEY` and `CLERK_JWT_ISSUER_DOMAIN` through the Convex dashboard or `npx convex env set`. Never put the OpenAI key in a `VITE_` variable. Deploy development with `npx convex dev --once --typecheck enable`. Run `npm test`, `npm run build:api`, `npm run build`, and `cargo check --manifest-path src-tauri/Cargo.toml --locked`.
+Configure server-only `OPENAI_API_KEY`, `CLERK_JWT_ISSUER_DOMAIN`, and `CLERK_OAUTH_CLIENT_ID` through the Convex dashboard or `npx convex env set`. Never put the OpenAI key in a `VITE_` variable. Deploy development with `npx convex dev --once --typecheck enable`. Run `npm test`, `npm run build:api`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml --locked hosted_auth::tests`.
 
 For desktop tests of the cloud route, leave the local API's `OPENAI_API_KEY` unset. A locally configured OpenAI key intentionally retains the existing direct fallback path.
 
@@ -60,6 +74,8 @@ Luna correctly interpreted `5pm` and `5pms`, but initially emitted a clock-only 
 
 ## References
 
+November 19 browser-flow replacement: the embedded Google login could stall in WebView2. It is replaced by the supported Clerk device grant and default-browser approval. The public client and live device-authorization endpoint were verified, and the development Convex audience configuration was deployed. The full offline suite, strict API build, frontend build, frontend typecheck with the existing unused-local exception, native compilation, and four native auth tests passed. Five account UI tests cover browser handoff, cancellation, late responses, expiry, automatic resume, and browser-open failure. A temporary synthetic Windows credential was restored from a fresh native state and deleted. Real browser approval, a real account's refresh after restart, and actual native visual inspection remain pending. No installer or release was created.
+
 - [Clerk and Convex authentication](https://docs.convex.dev/auth/clerk)
-- [Clerk Tauri integration and limitations](https://github.com/Nipsuli/tauri-plugin-clerk)
+- [Clerk device authorization grant](https://clerk.com/docs/guides/configure/auth-strategies/oauth/device-authorization-grant)
 - [Convex actions](https://docs.convex.dev/functions/actions)

@@ -1,6 +1,6 @@
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../../convex/_generated/api';
-import { getHostedClerk } from './hosted-auth';
+import { getHostedAuthToken } from './hosted-auth';
 import { TimeParserAPIError, type ParseResponse } from './api-client';
 
 export function canUseHostedFallback(error: unknown): boolean {
@@ -9,10 +9,7 @@ export function canUseHostedFallback(error: unknown): boolean {
 
 export async function parseHostedTime(text: string, tz: string, now: string, requestId: string, signal: AbortSignal): Promise<ParseResponse | null> {
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  const clerk = await getHostedClerk();
-  // The main and Settings windows share native credentials, but Clerk JS state needs refreshing.
-  await clerk?.client?.reload();
-  const token = await clerk?.session?.getToken({ template: 'convex' });
+  const token = await getHostedAuthToken();
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
   if (!token) throw new TimeParserAPIError('Sign in to use smart parsing while the model warms up.', 401, 'sign_in_required');
   const client = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);

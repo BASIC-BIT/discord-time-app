@@ -13,6 +13,7 @@ import { createAPIClient, TimeParserAPIError, TimeParserTimeoutError, TimeParser
 import { parseFallback } from '../lib/parse';
 import { canUseHostedFallback, parseHostedTime } from '../lib/hosted-parser';
 import { loadClipboardText } from '../lib/clipboard';
+import { HostedAccount } from './HostedAccount';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 import {
   classifyDiscordTimestampInput,
@@ -109,11 +110,10 @@ function directRangeFromClassification(classification: DiscordTimestampClassific
 
 interface OverlayProps {
   onClose: () => void;
-  onShowSettings: () => void;
   openToken: number;
 }
 
-export function Overlay({ onClose, onShowSettings, openToken }: OverlayProps) {
+export function Overlay({ onClose, openToken }: OverlayProps) {
   const [inputText, setInputText] = useState('');
   const [epoch, setEpoch] = useState<number | null>(null);
   const [range, setRange] = useState<ParseRangeResult | null>(null);
@@ -739,12 +739,12 @@ export function Overlay({ onClose, onShowSettings, openToken }: OverlayProps) {
   const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
-  const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
+  const statusTone = error && !signInRequired ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
   const hasInlineStatus = error || hasClarification || showLowConfidence;
   const isBusy = loading || verifying;
   const showVerifyingTab = isBusy && !hasClarification && !error;
   const progressText = verifying ? 'Verifying' : parseProgressMessage ?? (hasResolvedResult ? 'Checking' : 'Parsing');
-  const overlayTone = error
+  const overlayTone = error && !signInRequired
     ? 'error'
     : hasClarification
       ? 'clarifying'
@@ -1015,8 +1015,8 @@ export function Overlay({ onClose, onShowSettings, openToken }: OverlayProps) {
         )}
         {draft === null && hasInlineStatus && (
           <div className={`status-card ${statusTone}`}>
-            {error && <div className="status-line">{error}</div>}
-            {error && signInRequired && <button type="button" className="clarification-option" onClick={onShowSettings}>Sign in</button>}
+            {error && !signInRequired && <div className="status-line">{error}</div>}
+            {signInRequired && <HostedAccount compact onSignedIn={() => { setSignInRequired(false); setError(null); setParseRequest(value => value + 1); }} />}
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>

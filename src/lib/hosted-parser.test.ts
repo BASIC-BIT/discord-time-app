@@ -2,9 +2,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { TimeParserAPIClient, TimeParserAPIError } from './api-client';
 import { canUseHostedFallback, parseHostedTime } from './hosted-parser';
 
-const fake = vi.hoisted(() => ({ action: vi.fn(), getToken: vi.fn(), setAuth: vi.fn(), reload: vi.fn(), invoke: vi.fn() }));
+const fake = vi.hoisted(() => ({ action: vi.fn(), getToken: vi.fn(), setAuth: vi.fn(), invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: fake.invoke }));
-vi.mock('./hosted-auth', () => ({ getHostedClerk: () => Promise.resolve({ session: { getToken: fake.getToken }, client: { reload: fake.reload } }) }));
+vi.mock('./hosted-auth', () => ({ getHostedAuthToken: fake.getToken }));
 vi.mock('convex/browser', () => ({ ConvexHttpClient: class { action = fake.action; setAuth = fake.setAuth; } }));
 const now = '2026-11-18T21:18:11.689Z';
 beforeEach(() => {

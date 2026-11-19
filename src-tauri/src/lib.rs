@@ -22,6 +22,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tauri_plugin_store::StoreBuilder;
 
 mod updater;
+mod hosted_auth;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -3630,6 +3631,11 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            hosted_auth::get_hosted_auth_status,
+            hosted_auth::start_hosted_sign_in,
+            hosted_auth::cancel_hosted_sign_in,
+            hosted_auth::get_hosted_auth_token,
+            hosted_auth::sign_out_hosted_auth,
             init_stats_db,
             get_format_stats,
             increment_format_usage,
@@ -3654,11 +3660,7 @@ pub fn run() {
             pull_local_slm_docker_image,
         ])
         .setup(|app| {
-            if let Some(key) = option_env!("VITE_CLERK_PUBLISHABLE_KEY").filter(|key| !key.is_empty()) {
-                app.handle().plugin(tauri_plugin_http::init())?;
-                // shortcut: sessions last until app exit; add an encrypted store when persistent sign-in is needed.
-                app.handle().plugin(tauri_plugin_clerk::ClerkPluginBuilder::new().publishable_key(key).build())?;
-            }
+            app.manage(hosted_auth::HostedAuth::new(APP_INSTANCE_ID)?);
             // Initialize logging
             log::info!("HammerOverlay starting up...");
             log::info!("Application version: {}", env!("CARGO_PKG_VERSION"));

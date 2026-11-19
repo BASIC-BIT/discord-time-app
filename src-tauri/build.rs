@@ -1,15 +1,18 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=HOSTED_SLM_DEFAULT_API_KEY");
-    println!("cargo:rerun-if-env-changed=VITE_CLERK_PUBLISHABLE_KEY");
     println!("cargo:rerun-if-changed=../.env.local");
-    // Share Vite's local public key with the native Clerk transport. CI supplies it through the environment.
-    if std::env::var("VITE_CLERK_PUBLISHABLE_KEY").is_err() {
+    for name in ["VITE_CLERK_ISSUER", "VITE_CLERK_OAUTH_CLIENT_ID"] {
+        println!("cargo:rerun-if-env-changed={name}");
+        if std::env::var(name).is_ok() {
+            continue;
+        }
         if let Ok(env) = std::fs::read_to_string("../.env.local") {
-            if let Some(key) = env.lines().find_map(|line| line.strip_prefix("VITE_CLERK_PUBLISHABLE_KEY=")) {
-                let key = key.trim().trim_matches('"').trim_matches('\'');
-                if key.starts_with("pk_") {
-                    println!("cargo:rustc-env=VITE_CLERK_PUBLISHABLE_KEY={key}");
-                }
+            if let Some(value) = env
+                .lines()
+                .find_map(|line| line.strip_prefix(&format!("{name}=")))
+            {
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                println!("cargo:rustc-env={name}={value}");
             }
         }
     }
