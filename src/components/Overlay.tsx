@@ -587,6 +587,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             throw error; // Re-throw abort errors
           }
           if (canUseHostedFallback(error)) {
+            clearProgressTimers();
+            setParseProgressMessage('Parsing with smart fallback. This may take a few seconds');
             try {
               result = await parseHostedTime(text, timezone, referenceInstant, requestId, abortController.signal);
               if (!active()) return;
@@ -1091,11 +1093,11 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
       <div className="footer">
         <div className="footer-status-slot" aria-live="polite">
-          <div className={`verifying-tab ${showVerifyingTab && !endpointWarming ? 'visible' : ''}`}>
+          <div className={`verifying-tab ${showVerifyingTab ? 'visible' : ''}`} role={showVerifyingTab ? 'status' : undefined}>
             <span className="progress-dot" />
             <span className="verifying-label">{progressText}</span>
           </div>
-          <div className={`warming-notice ${endpointWarming ? 'visible' : ''}`}>
+          <div className={`warming-notice ${endpointWarming && !isBusy && !hasResolvedResult && !hasInlineStatus ? 'visible' : ''}`}>
             Smart parsing is warming up. You can keep typing.
           </div>
         </div>
