@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { cancelHostedSignIn, getHostedAuthStatus, hostedConfigured, openHostedSignInBrowser, signOutHostedAuth, startHostedSignIn, type HostedAuthStatus } from '../lib/hosted-auth';
+import { cancelHostedSignIn, getHostedAuthStatus, hostedConfigured, openHostedSignInBrowser, restoreHostedSignInWindow, signOutHostedAuth, startHostedSignIn, type HostedAuthStatus } from '../lib/hosted-auth';
 
 export function HostedAccount({ compact = false, onSignedIn }: { compact?: boolean; onSignedIn?: () => void }) {
   const [status, setStatus] = useState<HostedAuthStatus | null>(null);
@@ -26,7 +26,11 @@ export function HostedAccount({ compact = false, onSignedIn }: { compact?: boole
     };
     void refresh();
     const unlisten = listen('hosted-auth-changed', () => { void refresh(); });
-    return () => { active = false; operationRef.current += 1; void unlisten.then(stop => stop()); };
+    return () => {
+      active = false; operationRef.current += 1;
+      void unlisten.then(stop => stop());
+      void restoreHostedSignInWindow().catch(() => console.warn('Could not restore the sign-in window.'));
+    };
   }, []);
 
   const start = async () => {

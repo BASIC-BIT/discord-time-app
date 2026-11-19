@@ -51,6 +51,15 @@ test('provider errors stay generic and still record an unsuccessful attempt', as
   await expect(t.action(api.temporal.parse, args)).rejects.toThrow('Hosted parsing is unavailable');
   expect(await t.query(api.usage.mine, {})).toEqual({ requests: 1, inputTokens: 0, outputTokens: 0 });
 });
+test('nonthrowing provider diagnostics and validation details do not cross into the client', async () => {
+  const t = convexTest(schema, modules); rateLimiter.register(t);
+  const privateMessage = 'Incorrect API key sk-synthetic-fragment at private-provider.example';
+  vi.mocked(parseTemporalExpression).mockResolvedValue({ status: 'failed', confidence: 0, method: 'fallback', assumptions: [], ambiguity: [], validation: { passed: false, warnings: [privateMessage], checks: [] }, debug: { finalValidation: { accepted: false, confidence: 0, reason: privateMessage, missingOrContradictedSignals: [] } } });
+  const result = await t.withIdentity({ subject: 'provider-warning' }).action(api.temporal.parse, args);
+  expect(JSON.stringify(result)).not.toContain(privateMessage);
+  expect(result.validation.warnings).toEqual(['Smart parsing could not verify this expression.']);
+  expect(result.debug?.finalValidation).toBeUndefined();
+});
 
 test('throttles duplicate bursts before model work and isolates accounts', async () => {
   const t = convexTest(schema, modules); rateLimiter.register(t);

@@ -39,11 +39,13 @@ export const parse = action({
         openaiModel: MODEL, openaiReasoningEffort: 'low',
         features: { planIr: true, deterministicPreflight: true, discordReferenceRouting: true },
         signal: AbortSignal.timeout(30_000),
+        deadlineMs: started + 30_000,
       });
       // Keep model traces and raw prompts out of the client response.
-      return { ...result, debug: {
+      return { ...result,
+        validation: { ...result.validation, warnings: result.validation.passed ? [] : ['Smart parsing could not verify this expression.'] },
+        debug: {
         model: MODEL, reasoningEffort: 'low',
-        finalValidation: result.debug?.finalValidation,
       } };
     } catch (error) {
       // Log diagnostic metadata without raw prompts, provider messages, or credentials.

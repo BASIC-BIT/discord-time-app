@@ -1502,6 +1502,74 @@
           "status": "needs_clarification"
         }
       ]
+    },
+    {
+      "path": ".cache/luna-bounded-full.json",
+      "source": {
+        "deterministicSha256": "E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1",
+        "workers": [
+          {
+            "pid": 114308,
+            "shard": 0
+          },
+          {
+            "pid": 76972,
+            "shard": 1
+          },
+          {
+            "pid": 77220,
+            "shard": 2
+          },
+          {
+            "pid": 112540,
+            "shard": 3
+          }
+        ],
+        "graphSha256": "F9BE2F35AC5D84B30B88DD931A1FA58F5E6B0FCD2093450988FE5485699B5EC2",
+        "baseCommit": "356c5d75c8d0fddcb1592e2b592cf2fe239eebcd",
+        "started": "2026-11-19T06:37:59.6871467-05:00"
+      },
+      "experiments": [
+        {
+          "label": "bounded-plan-repair",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 199,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 2626,
+      "p95Ms": 12608,
+      "failures": [
+        {
+          "caseId": "discord-reference-shift-prefix-hours-before-typo-befoer",
+          "text": "2 hours befoer <t:1785733200:F>",
+          "required": true,
+          "mismatch": "expected format 5, got 2",
+          "status": "resolved",
+          "epoch": 1785726000,
+          "suggestedFormatIndex": 2
+        },
+        {
+          "caseId": "discord-reference-shift-clock-ambiguity-spring-before",
+          "text": "2 o’clock, on the day preceding <t:1772951400:D>",
+          "required": true,
+          "mismatch": "expected status needs_clarification, got failed",
+          "status": "failed"
+        },
+        {
+          "caseId": "discord-reference-range-push-start",
+          "text": "<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later",
+          "required": true,
+          "mismatch": "expected status resolved, got failed",
+          "status": "failed"
+        }
+      ]
     }
   ]
 }

@@ -216,11 +216,26 @@ async function main() {
       assert.ok(planRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_requested'));
       assert.deepEqual(planRepair.debug?.trace?.map(step => step.index), planRepair.debug?.trace?.map((_, index) => index + 1));
 
+      firstProviderPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic wrong field.', plans: [{ label: 'Reference in text instead of query', finalStep: 0, steps: [{ op: 'resolve_calendar_query', text: '<t:1785643200:t>' }] }] });
+      providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Use the exact reference operand.', plans: [{ label: 'One hour later', finalStep: 1, steps: [{ op: 'resolve_calendar_query', query: '<t:1785643200:t>' }, { op: 'shift_datetime', baseStep: 0, delta: { hours: 1 } }] }] });
+      const beforeGuardRepair = llmCalls;
+      const guardRepair = await parseTemporalExpression({ text: '<t:1785643200:t> one hour later', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, langfuse: { enabled: false } });
+      assert.equal(guardRepair.status, 'resolved');
+      assert.equal(guardRepair.epoch, 1785646800);
+      assert.equal(llmCalls - beforeGuardRepair, 3, 'reference guard rejection receives the same bounded repair');
+      assert.ok(guardRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_requested'));
+      assert.equal(guardRepair.debug?.modelCalls, 3);
+
       providerPlan = invalidPlan;
       const beforeFailedRepair = llmCalls;
       const failedRepair = await parseTemporalExpression({ text: 'fuzzy evening marker', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, langfuse: { enabled: false } });
       assert.equal(failedRepair.status, 'failed');
       assert.equal(llmCalls - beforeFailedRepair, 2, 'repair is bounded to one attempt');
+      const beforeLateRepair = llmCalls;
+      const lateRepair = await parseTemporalExpression({ text: 'fuzzy evening marker', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, deadlineMs: Date.now() + 5_000, langfuse: { enabled: false } });
+      assert.equal(lateRepair.status, 'failed');
+      assert.equal(llmCalls - beforeLateRepair, 1, 'do not pay for repair without time to finish it');
+      assert.ok(lateRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_skipped'));
     } finally {
       if (previousBase === undefined) delete process.env.OPENAI_BASE_URL;
       else process.env.OPENAI_BASE_URL = previousBase;

@@ -16,7 +16,7 @@ import {
 import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalModelCostConfig, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
-import { resolveTimeZone } from './timezones';
+import { resolveTimeZone, stripResolvedTimeZoneText } from './timezones';
 import { parseTemporalPlanPlannerOutput, TEMPORAL_PLAN_MAX_PLANS, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
@@ -169,6 +169,7 @@ export interface TemporalGraphState {
 export interface TemporalGraphOptions {
   requestId?: string;
   signal?: AbortSignal;
+  deadlineMs?: number;
   maxAgentAttempts?: number;
   maxToolCalls?: number;
   openaiApiKey?: string;
@@ -1353,16 +1354,24 @@ async function runPlanIrPath(
 ): Promise<TemporalParseResponse> {
   const startedAt = nowMs();
   const first = await runPlanIrAttempt(request, options);
+  const plannerOutput = first.debug?.trace?.find((step) => step.name === 'plan_ir_planner')?.output as { planResult?: { outcome?: string } } | undefined;
   if (first.status !== 'failed'
     || (options.maxAgentAttempts ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxAgentAttempts) < 2
-    || !first.debug?.trace?.some((step) => step.name === 'plan_ir_plan_failed')) return first;
+    || !first.debug?.trace
+    || (plannerOutput?.planResult?.outcome !== 'plans' && plannerOutput?.planResult?.outcome !== 'clarification')) return first;
 
-  // One repair for an unexecutable plan; semantic rejection and no-plan stay terminal.
+  // One repair for a guard-rejected or unexecutable plan; final validation and no-plan stay terminal.
   const feedback = JSON.stringify({
     errors: first.validation.warnings,
     previousPlan: first.debug.trace.find((step) => step.name === 'plan_ir_planner')?.output,
   });
   const repairStartedAt = elapsedMs(startedAt);
+  const remainingMs = options.deadlineMs === undefined ? Infinity : options.deadlineMs - Date.now();
+  // Reserve a planner and validator round using observed planner latency.
+  if (remainingMs < Math.max(10_000, (first.debug.firstLlmResponseMs ?? repairStartedAt) * 2)) {
+    first.debug.trace.push({ index: first.debug.trace.length + 1, type: 'router', name: 'plan_ir_repair_skipped', output: { reason: 'insufficient_request_budget', remainingMs } });
+    return first;
+  }
   const repaired = await runPlanIrAttempt(request, options, feedback);
   const previous = first.debug;
   const next = repaired.debug ?? {};
@@ -2886,10 +2895,16 @@ async function deterministicParse(
   const candidate = parsed.candidates[0];
   if (!candidate) {
     const needsTimeClarification = parsed.parserNotes.some((note) => note.includes('unresolved time signal'));
-    const needsTimeZoneClarification = parsed.parserNotes.some((note) => note.toLowerCase().includes('ambiguous timezone') || note.startsWith('Which timezone'));
+    const timeZones = resolveTimeZone(request);
+    const needsTimeZoneClarification = timeZones.status === 'ambiguous';
     const needsClarification = needsTimeClarification || needsTimeZoneClarification;
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
-    const clarificationAlternatives = needsTimeClarification ? await bareHourAlternatives(request, implementations, features) : [];
+    const clarificationAlternatives = needsTimeZoneClarification
+      ? (await Promise.all(timeZones.candidates.map((zone) => clarificationAlternative(
+          `${stripResolvedTimeZoneText(request.text, zone)} in ${zone.timeZone}`,
+          zone.label, request, implementations, features,
+        )))).filter((alternative): alternative is TemporalClarificationAlternative => alternative !== null)
+      : needsTimeClarification ? await bareHourAlternatives(request, implementations, features) : [];
     const response: TemporalParseResponse = {
       status: needsClarification ? 'needs_clarification' : 'failed',
       confidence: 0,
@@ -4664,7 +4679,7 @@ Return only structured output matching the schema. Do not answer with prose.
 Every plan step must include every schema field. Set fields that do not apply to null. For delta, set unused units to null.
 
 Available plan operations:
-- resolve_calendar_query: use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", "May 24 at 13:37", Discord timestamps, and bare 10/13/16/19 digit epochs.
+- resolve_calendar_query: put the anchor in query, not text (text=null for this operation). Use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", "May 24 at 13:37", Discord timestamps, and bare 10/13/16/19 digit epochs.
 - resolve_weekday_anchor: use for every normalized weekday anchor, including an ordinary unqualified weekday (weekdayAnchor=upcoming); combine the clock separately with set_clock_time or combine_date_time. Do not send phrases such as "upcoming Tuesday at 10pm" to resolve_calendar_query. Also use this operation when weekday wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
 - resolve_holiday: use for holiday names; include year and normalized time when the user specified them. Unqualified names follow the configured regional calendar selected by the tool from country/locale or timezone context; do not introduce unrequested regional or religious alternatives.
 - resolve_clock_time: use for conventional numeric clock text like "13:37", "1pm", or "noon". It returns ONLY a clock, not a dated timestamp candidate. For spelled-out or semantic clock phrases, interpret the clock yourself and emit interpret_clock_phrase with a numeric 24-hour time; keep the original phrase and interpretation in the rationale.
@@ -4688,7 +4703,7 @@ Planning rules:
 - Product calendar conventions: date-only requests and whole-calendar-unit offsets (days/weeks/months/years without a supplied clock) use local noon. Resolve a date anchor such as today for those offsets; use now as an instant anchor for hour/minute offsets that must preserve the current clock.
 - Product shorthand vocabulary: tom, tmw, and tmrw mean tomorrow. An ordinary weekday abbreviation with a clear clock, such as tu with an explicit AM/PM time, uses the upcoming weekday. When a short date abbreviation is paired with conflicting clock meridiem letters, that combined shorthand is ambiguous even if the abbreviation alone usually names a weekday. Retain the full cross-product of the relative-day expansion (tomorrow), the current/upcoming weekday, and the following-week weekday, each paired with AM and PM. Do not prune a plausible date or meridiem by confidence or proximity. This can require six independent alternatives, which the schema supports.
 - When independently labelled event times are given, return clarification with a candidate for each event unless the text explicitly asks for one event or a continuous start/end range. Do not rank distinct event times and finalize just one.
-- Discord presentation meanings: d=numeric date, D=long date, t=short time, T=time with seconds, f=short date and time, F=full date including weekday and time, R=relative time. Preserve useful full-date/weekday context when the referenced source uses F; choose f when a time-only source acquires a date through calendar composition.
+- Discord presentation meanings: d=numeric date, D=long date, t=short time, T=time with seconds, f=short date and time, F=full date including weekday and time, R=relative time. A source F reference already includes weekday, date, and clock context: preserve F through shifts and clock replacement unless the user explicitly requests a different display style. choose f when a time-only source acquires a date through calendar composition.
 - A standalone clock expression does not require an explicit date from the user. Normalize the clock wording when needed and use resolve_calendar_query on the complete normalized expression; that operation supplies the date using the provided calendar context. Do not return no_plan or clarification solely because the user omitted a date.
 - Clock-only and timezone-only steps cannot be final answers. Either resolve the whole normalized expression through resolve_calendar_query, or resolve a date anchor and combine it with the clock through set_clock_time or combine_date_time. finalStep, startStep, and endStep must point to dated timestamp candidates, never resolve_clock_time, interpret_clock_phrase, or resolve_timezone.
 - Emit up to ${TEMPORAL_PLAN_MAX_PLANS} independent plans. The executor evaluates plans in parallel and also runs independent step dependencies in parallel.
@@ -4716,7 +4731,7 @@ Planning rules:
 - The router's signals identify possible hazards; they do not encode the requested arithmetic. Do not copy or infer a precomputed delta from routing context.
 - Never emit a plan whose final result is merely an unchanged referenced timestamp when meaningful residue transforms or relates it. If the entire intent cannot be represented confidently, use outcome "clarification" or "no_plan".
 - For transformed Discord references or explicit display requests only, presentationFormat may be d, D, t, T, f, F, or R. Ordinary non-reference requests must use null, including numeric durations from now: their existing default formatter owns presentation. Do not mechanically copy a referenced timestamp's source style.
-- For subday arithmetic around a Discord time-focused reference, prefer t (or T when seconds matter) unless calendar context is explicitly requested. Calendar-unit shifts on a reference with a clock must use f (or F when preserving weekday context), so both the changed date and retained clock remain visible; d or D would drop that clock. Combining a referenced date with a new clock uses f by default; use F only when preserving a source F weekday display or when the request explicitly includes weekday presentation. Source D is a long date without weekday context and does not require F when adding a clock. The arithmetic operand and the presentation choice are separate decisions.
+- For subday arithmetic around a Discord reference whose source style is t or T, prefer t (or T when seconds matter) unless calendar context is explicitly requested. Calendar-unit shifts on a reference with a clock must use f (or F when preserving weekday context), so both the changed date and retained clock remain visible; d or D would drop that clock. Combining a referenced date with a new clock uses f by default; use F only when preserving a source F weekday display or when the request explicitly includes weekday presentation. Source D is a long date without weekday context and does not require F when adding a clock. The arithmetic operand and the presentation choice are separate decisions.
 - finalStep should be a zero-based index pointing to the candidate-producing step that represents an instant answer. For time_range plans, set finalStep to null and set startStep/endStep to the candidate-producing endpoint steps.
 
 Calendar context:
@@ -4782,8 +4797,7 @@ function errorMessage(error: unknown): string {
 
 function shouldShortCircuitDeterministic(response: TemporalParseResponse): boolean {
   if (response.status === 'needs_clarification') {
-    return (response.clarificationAlternatives?.length ?? 0) > 0
-      || response.validation.warnings.some((note) => /ambiguous timezone|^Which timezone/i.test(note));
+    return (response.clarificationAlternatives?.length ?? 0) > 0;
   }
 
   return response.status === 'resolved'

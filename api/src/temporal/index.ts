@@ -17,6 +17,7 @@ export async function parseTemporalExpression(params: {
   modelCost?: TemporalModelCostConfig;
   requestId?: string;
   signal?: AbortSignal;
+  deadlineMs?: number;
 }): Promise<TemporalParseResponse> {
   const implementations = createDeterministicTemporalToolImplementations();
   const options: TemporalGraphOptions = params.openaiApiKey === undefined
@@ -39,6 +40,9 @@ export async function parseTemporalExpression(params: {
   }
   if (params.signal !== undefined) {
     options.signal = params.signal;
+  }
+  if (params.deadlineMs !== undefined) {
+    options.deadlineMs = params.deadlineMs;
   }
   if (params.openaiModel !== undefined && 'openaiApiKey' in options) {
     options.openaiModel = params.openaiModel;

@@ -4,10 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { HostedAccount } from './HostedAccount';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-const fake = vi.hoisted(() => ({ status: vi.fn(), start: vi.fn(), cancel: vi.fn(), open: vi.fn(), changed: (() => {}) as () => void }));
+const fake = vi.hoisted(() => ({ status: vi.fn(), start: vi.fn(), cancel: vi.fn(), open: vi.fn(), restore: vi.fn(async () => {}), changed: (() => {}) as () => void }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async (_: string, callback: () => void) => { fake.changed = callback; return () => {}; }) }));
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: vi.fn(async () => {}) }));
-vi.mock('../lib/hosted-auth', () => ({ hostedConfigured: true, getHostedAuthStatus: fake.status, startHostedSignIn: fake.start, cancelHostedSignIn: fake.cancel, openHostedSignInBrowser: fake.open, signOutHostedAuth: vi.fn() }));
+vi.mock('../lib/hosted-auth', () => ({ hostedConfigured: true, getHostedAuthStatus: fake.status, startHostedSignIn: fake.start, cancelHostedSignIn: fake.cancel, openHostedSignInBrowser: fake.open, restoreHostedSignInWindow: fake.restore, signOutHostedAuth: vi.fn() }));
 const signedOut = { configured: true, phase: 'signed_out', error: null };
 const pending = { ...signedOut, phase: 'pending', userCode: 'ABCD-EFGH', verificationUri: 'https://accounts.example/device' };
 let container: HTMLDivElement;
@@ -54,6 +54,11 @@ it('does not resume parsing merely because an already signed-in account panel mo
   const resumed = vi.fn(); await render(resumed);
   await act(async () => fake.changed());
   expect(resumed).not.toHaveBeenCalled();
+});
+it('restores the initiating window if the pending panel is removed', async () => {
+  await render(); await click('Sign in with browser');
+  await act(async () => root.render(null));
+  expect(fake.restore).toHaveBeenCalledOnce();
 });
 it('keeps the code and browser retry available if opening the browser fails', async () => {
   fake.open.mockRejectedValue(new Error('unavailable')); await render(); await click('Sign in with browser');

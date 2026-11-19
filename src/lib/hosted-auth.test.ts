@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: fake.invoke }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: fake.open }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => fake.window }));
 
-import { cancelHostedSignIn, getHostedAuthStatus, openHostedSignInBrowser, type HostedAuthStatus } from './hosted-auth';
+import { cancelHostedSignIn, getHostedAuthStatus, openHostedSignInBrowser, restoreHostedSignInWindow, type HostedAuthStatus } from './hosted-auth';
 
 const pending: HostedAuthStatus = {
   configured: true, phase: 'pending', userCode: 'ABCD-EFGH',
@@ -54,5 +54,24 @@ it('preserves settings window behavior', async () => {
   fake.invoke.mockResolvedValue({ ...pending, phase: 'signed_in' });
   await getHostedAuthStatus();
   expect(fake.window.setAlwaysOnTop).not.toHaveBeenCalled();
+  expect(fake.window.setFocus).not.toHaveBeenCalled();
+});
+it('restores an abandoned pending overlay without stealing focus on later approval', async () => {
+  await openHostedSignInBrowser(pending);
+  await restoreHostedSignInWindow();
+  expect(fake.window.setAlwaysOnTop).toHaveBeenLastCalledWith(true);
+  fake.invoke.mockResolvedValue({ ...pending, phase: 'signed_in' });
+  await getHostedAuthStatus();
+  expect(fake.window.setFocus).not.toHaveBeenCalled();
+});
+it('remembers cleanup while lowering the native window is still pending', async () => {
+  let lowered!: () => void;
+  fake.window.setAlwaysOnTop.mockImplementationOnce(() => new Promise<void>(resolve => { lowered = resolve; }));
+  const opened = openHostedSignInBrowser(pending);
+  await restoreHostedSignInWindow();
+  lowered(); await opened;
+  fake.invoke.mockResolvedValue({ ...pending, phase: 'signed_in' });
+  await getHostedAuthStatus();
+  expect(fake.window.setAlwaysOnTop).toHaveBeenLastCalledWith(true);
   expect(fake.window.setFocus).not.toHaveBeenCalled();
 });

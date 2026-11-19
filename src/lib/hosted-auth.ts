@@ -16,13 +16,17 @@ export const hostedConfigured = Boolean(import.meta.env.VITE_CONVEX_URL);
 let browserLoweredOverlay = false;
 
 async function restoreSignInWindow(status: HostedAuthStatus): Promise<HostedAuthStatus> {
-  if (browserLoweredOverlay && status.phase !== 'pending') {
+  if (status.phase !== 'pending') await restoreHostedSignInWindow(status.phase === 'signed_in');
+  return status;
+}
+
+export async function restoreHostedSignInWindow(focus = false): Promise<void> {
+  if (browserLoweredOverlay) {
     const window = getCurrentWindow();
     await window.setAlwaysOnTop(true);
     browserLoweredOverlay = false;
-    if (status.phase === 'signed_in') await window.setFocus();
+    if (focus) await window.setFocus();
   }
-  return status;
 }
 
 export const getHostedAuthStatus = async () => restoreSignInWindow(await invoke<HostedAuthStatus>('get_hosted_auth_status'));
@@ -35,13 +39,15 @@ export async function openHostedSignInBrowser(status: HostedAuthStatus): Promise
   const url = status.verificationUriComplete ?? status.verificationUri;
   if (status.phase !== 'pending' || !url || new URL(url).protocol !== 'https:') throw new Error('No browser sign-in is available.');
   const window = getCurrentWindow();
-  if (window.label === 'main') {
-    await window.setAlwaysOnTop(false);
-    browserLoweredOverlay = true;
+  try {
+    if (window.label === 'main') {
+      browserLoweredOverlay = true;
+      await window.setAlwaysOnTop(false);
+    }
+    await openUrl(url);
   }
-  try { await openUrl(url); }
   catch (error) {
-    await restoreSignInWindow({ ...status, phase: 'signed_out' });
+    await restoreHostedSignInWindow();
     throw error;
   }
 }
