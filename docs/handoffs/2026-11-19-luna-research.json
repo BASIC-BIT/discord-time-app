@@ -368,6 +368,21 @@
         {"caseId":"ordinal-weekday-shift-relative-noon","text":"the day after the first sunday of next month at one hour past noon and 10 minutes","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The first Sunday of next month is June 7, 2026; the day after is June 8. The stated clock phrase means 12:10 PM."]},
         {"caseId":"bare-24h-hour-after-target-rollover","text":"19","required":true,"mismatch":"expected status resolved, got failed","status":"failed","method":"agent+plan","validationWarnings":["The bare number “19” is neither a supported-length epoch timestamp nor an unambiguous clock expression."]}
       ]
+    },
+    {
+      "path": ".cache/luna-model-first-qualified-full.json",
+      "requiredPassed": 201,
+      "requiredTotal": 202,
+      "diagnosticPassed": 4,
+      "diagnosticTotal": 5,
+      "medianMs": 8615,
+      "p95Ms": 16407,
+      "source": {"started":"2026-11-19T09:58:18.8676300-05:00","graphSha256":"EAA7C59FCE4F5417854E183C85F75CCB20C2C4FB71358ED73158EA7E9BB8686C","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","workers":[{"shard":0,"pid":79936},{"shard":1,"pid":86552},{"shard":2,"pid":39884},{"shard":3,"pid":110664}],"deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","featureFlags":{"deterministicPreflight":false,"discordReferenceRouting":true,"planIr":true},"baseCommit":"3a234e6cf4c5ea3a8ec069190752c4a9ddce9c2f"},
+      "experiments": [{"label":"model-first-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+        {"caseId":"timezone-dst-gap-fail-closed","text":"2026-03-08 at 2:30am Eastern time","required":true,"mismatch":"expected status failed, got needs_clarification","status":"needs_clarification","validationWarnings":["2:30 AM does not occur in Eastern time on March 8, 2026, because clocks jump forward for daylight saving time."]},
+        {"caseId":"diagnostic-luna-standalone-clock-typo","text":"5pms","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The trailing “s” can reasonably be treated as a typo, yielding an unambiguous 5:00 PM. But the candidate places that time on November 19, when it is already 6:00 PM locally, so it is not the next occurrence of the requested clock time.","The selected 5:00 PM is earlier than the reference time; the next occurrence would be on a later date."]}
+      ]
     }
   ]
 }

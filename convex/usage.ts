@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internalMutation, query } from './_generated/server';
+import { SHARED_REQUESTS_PER_DAY } from './limits';
 
 export const record = internalMutation({
   returns: v.null(),
@@ -41,7 +42,7 @@ export const prune = internalMutation({
   returns: v.null(),
   handler: async ctx => {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    const oldest = await ctx.db.query('usage').order('asc').take(200);
+    const oldest = await ctx.db.query('usage').order('asc').take(2 * SHARED_REQUESTS_PER_DAY);
     for (const row of oldest) if (row._creationTime < cutoff) await ctx.db.delete(row._id);
     return null;
   },

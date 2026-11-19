@@ -103,7 +103,7 @@ fn valid_device(reply: &DeviceReply) -> bool {
         && reply.user_code.len() <= 64
         && reply.expires_in > 0
         && reply.expires_in <= 3600
-        && reply.interval.unwrap_or(5) > 0
+        && (1..=60).contains(&reply.interval.unwrap_or(5))
         && valid_url(&reply.verification_uri)
         && reply
             .verification_uri_complete
@@ -360,7 +360,11 @@ impl HostedAuth {
         };
         let mut interval = pending.interval;
         loop {
-            tokio::time::sleep(Duration::from_secs(interval)).await;
+            tokio::time::sleep(
+                Duration::from_secs(interval)
+                    .min(pending.deadline.saturating_duration_since(Instant::now())),
+            )
+            .await;
             if self
                 .inner
                 .lock()
@@ -389,7 +393,7 @@ impl HostedAuth {
             let response = match reply {
                 Ok(response) if !response.status().is_server_error() => response,
                 _ => {
-                    interval = (interval * 2).min(60).max(pending.interval);
+                    interval = interval.saturating_mul(2).min(60).max(pending.interval);
                     continue;
                 }
             };
@@ -407,7 +411,7 @@ impl HostedAuth {
             match reply.error.as_deref() {
                 Some("authorization_pending") => continue,
                 Some("slow_down") => {
-                    interval += 5;
+                    interval = interval.saturating_add(5);
                     continue;
                 }
                 Some("access_denied") => {
@@ -686,8 +690,14 @@ mod tests {
         reply.expires_in = 0;
         assert!(!valid_device(&reply));
         reply.expires_in = 600;
-        reply.interval = Some(0);
-        assert!(!valid_device(&reply));
+        for interval in [0, 61, u64::MAX] {
+            reply.interval = Some(interval);
+            assert!(!valid_device(&reply));
+        }
+        for interval in [1, 60] {
+            reply.interval = Some(interval);
+            assert!(valid_device(&reply));
+        }
         assert!(!same_https_origin(
             "http://issuer.example/token",
             "https://issuer.example"

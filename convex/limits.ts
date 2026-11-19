@@ -3,10 +3,12 @@ import { internalMutation } from './_generated/server';
 import { components } from './_generated/api';
 import { RateLimiter, MINUTE, DAY } from '@convex-dev/rate-limiter';
 
+export const SHARED_REQUESTS_PER_DAY = 100;
+
 export const rateLimiter = new RateLimiter(components.rateLimiter, {
   fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 3 },
   fallbackUserDaily: { kind: 'fixed window', rate: 20, period: DAY },
-  fallbackDaily: { kind: 'fixed window', rate: 100, period: DAY },
+  fallbackDaily: { kind: 'token bucket', rate: SHARED_REQUESTS_PER_DAY, period: DAY, capacity: SHARED_REQUESTS_PER_DAY },
 });
 
 export const admit = internalMutation({

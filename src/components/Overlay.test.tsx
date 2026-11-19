@@ -206,3 +206,43 @@ it('does not replace independent zones with one global timezone choice', async (
   await act(async () => vi.advanceTimersByTimeAsync(400));
   expect(container.querySelector('[aria-label="Choose timezone"]')).toBeNull();
 });
+
+it('honors the saved AI opt-out while local parsing remains available', async () => {
+  vi.mocked(invoke).mockResolvedValue({auto_load_clipboard:false,use_llm_parsing:false});
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input=container.querySelector('textarea')!;
+  const type=async(text:string)=>act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,text);input.dispatchEvent(new Event('input',{bubbles:true}));});
+  await type('5pms'); await act(async()=>vi.advanceTimersByTimeAsync(1200));
+  expect(fake.hosted).not.toHaveBeenCalled();
+  fake.parse.mockResolvedValue({epoch:1795125600,method:'deterministic',confidence:1,suggestedFormatIndex:0,debug:{serverValidated:true}});
+  await type('5pm'); await act(async()=>vi.advanceTimersByTimeAsync(400));
+  expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
+  expect(fake.hosted).not.toHaveBeenCalled();
+});
+
+it('does not send typed text to the cloud when saved settings cannot be read', async () => {
+  vi.mocked(invoke).mockRejectedValue(new Error('settings unavailable'));
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input=container.querySelector('textarea')!;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,'5pms');input.dispatchEvent(new Event('input',{bubbles:true}));});
+  await act(async()=>vi.advanceTimersByTimeAsync(1200));
+  expect(fake.hosted).not.toHaveBeenCalled();
+});
+
+it('waits for the AI preference and then parses the latest typed text without clipboard overwrite', async () => {
+  let finishSettings!: (value: unknown) => void;
+  vi.mocked(invoke).mockImplementation(command => command === 'get_settings' ? new Promise(resolve => {finishSettings=resolve;}) : Promise.resolve(undefined));
+  fake.hosted.mockResolvedValue({epoch:1795125600,method:'agent+plan',confidence:1,suggestedFormatIndex:0,debug:{serverValidated:true}});
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input=container.querySelector('textarea')!;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,'5pms');input.dispatchEvent(new Event('input',{bubbles:true}));});
+  await act(async()=>vi.advanceTimersByTimeAsync(1200));
+  expect(fake.hosted).not.toHaveBeenCalled();
+  await act(async()=>finishSettings({auto_load_clipboard:true,use_llm_parsing:true}));
+  await act(async()=>vi.advanceTimersByTimeAsync(1200));
+  expect(input.value).toBe('5pms');
+  expect(readText).not.toHaveBeenCalled();
+  expect(fake.hosted).toHaveBeenCalledOnce();
+  expect(fake.hosted.mock.calls[0][0]).toBe('5pms');
+  expect(vi.mocked(invoke).mock.calls.filter(call=>call[0]==='get_settings')).toHaveLength(1);
+});

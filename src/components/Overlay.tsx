@@ -24,6 +24,7 @@ import {
 const LOCAL_FALLBACK_CONFIDENCE = 0.65;
 
 interface AppSettings {
+  use_llm_parsing?: boolean;
   auto_load_clipboard: boolean;
   deterministic_preflight: boolean;
   discord_reference_routing: boolean;
@@ -131,6 +132,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [verifying, setVerifying] = useState(false);
   const [isClipboardText, setIsClipboardText] = useState(false);
   const [parseProgressMessage, setParseProgressMessage] = useState<string | null>(null);
+  const [useLlmParsing, setUseLlmParsing] = useState(false);
   const [deterministicPreflight, setDeterministicPreflight] = useState(false);
   const [discordReferenceRouting, setDiscordReferenceRouting] = useState(true);
   const [discordReferenceShadow, setDiscordReferenceShadow] = useState(false);
@@ -230,6 +232,15 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setInputText('');
     setIsClipboardText(false);
     setParseRequest(value => value + 1);
+    let disposed = false;
+    setUseLlmParsing(false);
+    const settingsPromise = invoke<AppSettings>('get_settings').then(settings => {
+      if (!disposed) setUseLlmParsing(settings.use_llm_parsing !== false);
+      return settings;
+    }, settingsError => {
+      console.log('Settings unavailable; cloud fallback and clipboard preload disabled:', settingsError);
+      return null;
+    });
     let focusTimer: number | undefined;
     const active = () => revisionRef.current === revision;
     const initialize = async () => {
@@ -239,15 +250,13 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         if (!active()) return;
 
         let autoLoadClipboard = false;
-        try {
-          const settings = await invoke<AppSettings>('get_settings');
-          if (!active()) return;
+        const settings = await settingsPromise;
+        if (!active()) return;
+        if (settings) {
           autoLoadClipboard = settings.auto_load_clipboard;
           setDeterministicPreflight(settings.deterministic_preflight);
           setDiscordReferenceRouting(settings.discord_reference_routing);
           setDiscordReferenceShadow(settings.discord_reference_shadow);
-        } catch (settingsError) {
-          console.log('Settings unavailable; clipboard preload skipped, using parser defaults:', settingsError);
         }
 
         // Load clipboard content (handle empty clipboard gracefully)
@@ -285,6 +294,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
     void initialize();
     return () => {
+      disposed = true;
       window.clearTimeout(focusTimer);
       invalidateWork();
     };
@@ -403,7 +413,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       selectionTouchedRef.current = false;
       setLoading(false);
     }
-  }, [inputText, discordReferenceRouting, discordReferenceShadow, parseRequest]);
+  }, [inputText, discordReferenceRouting, discordReferenceShadow, parseRequest, useLlmParsing]);
 
   // Observe editor validation as well as result changes, and fit the physical desktop.
   useEffect(() => {
@@ -589,8 +599,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
-          if (isFromClipboard && canUseHostedFallback(error)) setCanRetryFallback(true);
-          if (!isFromClipboard && canUseHostedFallback(error)) {
+          if (isFromClipboard && (useLlmParsing && canUseHostedFallback(error))) setCanRetryFallback(true);
+          if (!isFromClipboard && (useLlmParsing && canUseHostedFallback(error))) {
             const localMessage = error instanceof Error ? error.message : null;
             clearProgressTimers();
             setParseProgressMessage('Preparing smart fallback');
@@ -662,7 +672,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setConfidence(1);
           setSignInRequired(apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required');
           if (isFromClipboard && !hasDiscordReference) {
-            setError(canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
+            setError(useLlmParsing && canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
             setClarificationQuestion(apiError.message);
             setClarificationAlternatives(apiError.alternatives ?? []);

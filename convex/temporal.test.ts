@@ -149,3 +149,18 @@ test('retains 30 days of attempt rows while preserving lifetime usage totals', a
     expect(parseTemporalExpression).toHaveBeenCalledTimes(2);
   } finally {clock.mockRestore();}
 });
+
+test('shared exhaustion recovers with refill instead of waiting for a fixed daily boundary', async () => {
+  const t = convexTest(schema, modules); rateLimiter.register(t);
+  let now = new Date('2026-11-19T12:00:00Z').getTime();
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  vi.mocked(parseTemporalExpression).mockResolvedValue({status:'failed',confidence:0,method:'agent+plan',assumptions:[],ambiguity:[],validation:{passed:false,warnings:[],checks:[]}});
+  try {
+    for(let i=0;i<100;i++) await t.withIdentity({subject:'refill-'+i}).action(api.temporal.parse,args);
+    await expect(t.withIdentity({subject:'before-refill'}).action(api.temporal.parse,args)).rejects.toThrow('shared daily limit');
+    now += 15*60*1000;
+    await t.withIdentity({subject:'after-refill'}).action(api.temporal.parse,args);
+    await expect(t.withIdentity({subject:'no-second-token'}).action(api.temporal.parse,args)).rejects.toThrow('shared daily limit');
+    expect(parseTemporalExpression).toHaveBeenCalledTimes(101);
+  } finally {clock.mockRestore();}
+});
