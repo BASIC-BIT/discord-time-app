@@ -57,6 +57,14 @@ test('cancellation discards a cloud result without waiting for the provider', as
   await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
 });
 
+test('validated ranges survive fallback without requiring a singular epoch', async () => {
+  const range = { start: { epoch: 1795125600 }, end: { epoch: 1795129200 } };
+  fake.action.mockResolvedValue({ status: 'resolved', kind: 'time_range', range, method: 'agent+plan', confidence: 1, validation: { passed: true } });
+  await expect(parseHostedTime('from 5pm to 6pm', 'UTC', now, 'range-id', new AbortController().signal)).resolves.toMatchObject({ kind: 'time_range', range, debug: { serverValidated: true } });
+  fake.action.mockResolvedValue({ status: 'resolved', kind: 'time_range', validation: { passed: true } });
+  await expect(parseHostedTime('from 5pm to 6pm', 'UTC', now, 'bad-range', new AbortController().signal)).rejects.toThrow('Could not verify');
+});
+
 test('cancelling during token refresh never starts a model call', async () => {
   let resolveToken: (token: string) => void = () => {};
   fake.getToken.mockReturnValue(new Promise<string>(resolve => { resolveToken = resolve; }));

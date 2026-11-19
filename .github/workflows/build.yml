@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  VITE_CONVEX_URL: ${{ vars.VITE_CONVEX_URL }}
+  VITE_CLERK_ISSUER: ${{ vars.VITE_CLERK_ISSUER }}
+  VITE_CLERK_OAUTH_CLIENT_ID: ${{ vars.VITE_CLERK_OAUTH_CLIENT_ID }}
 
 jobs:
   build-test:
@@ -87,8 +90,7 @@ jobs:
         run: npm run eval:temporal
 
       - name: Run frontend tests
-        run: npm test -- --run --reporter=verbose
-        continue-on-error: true
+        run: npm test
 
       - name: Check frontend build
         run: npm run build

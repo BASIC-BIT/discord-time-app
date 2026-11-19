@@ -13,6 +13,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  VITE_CONVEX_URL: ${{ vars.VITE_CONVEX_URL }}
+  VITE_CLERK_ISSUER: ${{ vars.VITE_CLERK_ISSUER }}
+  VITE_CLERK_OAUTH_CLIENT_ID: ${{ vars.VITE_CLERK_OAUTH_CLIENT_ID }}
 
 jobs:
   build-and-release:
@@ -126,6 +129,16 @@ jobs:
             echo "::error::HOSTED_SLM_API_KEY secret is empty; a release built now would ship with SLM parsing off."
             exit 1
           fi
+
+      - name: Require browser sign-in configuration for releases
+        shell: bash
+        run: |
+          for name in VITE_CONVEX_URL VITE_CLERK_ISSUER VITE_CLERK_OAUTH_CLIENT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is empty; this release would ship without browser sign-in."
+              exit 1
+            fi
+          done
 
       - name: Build Tauri application
         env:

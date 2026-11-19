@@ -21,8 +21,8 @@ use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tauri_plugin_store::StoreBuilder;
 
-mod updater;
 mod hosted_auth;
+mod updater;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;

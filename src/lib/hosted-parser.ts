@@ -25,7 +25,8 @@ export async function parseHostedTime(text: string, tz: string, now: string, req
   try { result = await Promise.race([client.action(api.temporal.parse, { text, tz, now, requestId }), aborted]); }
   finally { signal.removeEventListener('abort', onAbort); }
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  if (result.status !== 'resolved' || result.epoch === undefined || !result.validation.passed) {
+  const hasResult = result.kind === 'time_range' ? result.range !== undefined : result.epoch !== undefined;
+  if (result.status !== 'resolved' || !hasResult || !result.validation.passed) {
     throw new TimeParserAPIError(result.clarificationQuestion ?? 'Could not verify that time. Try adding a date or AM/PM.', 400,
       result.status === 'needs_clarification' ? 'needs_clarification' : 'parse_failed', result.clarificationAlternatives, requestId);
   }
