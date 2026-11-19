@@ -318,6 +318,13 @@ export async function runTemporalCoalescingGraph(
       const planResult = options.planIrEndpoint === undefined
         ? await runPlanIrPath(request, options)
         : await runEndpointPlanIrPath(request, options);
+      if (fallback.debug?.modelCalls) {
+        attachModelUsageDebug(planResult,
+          fallback.debug.modelCalls + (planResult.debug?.modelCalls ?? 0),
+          (fallback.debug.inputTokens ?? 0) + (planResult.debug?.inputTokens ?? 0),
+          (fallback.debug.outputTokens ?? 0) + (planResult.debug?.outputTokens ?? 0),
+          options.modelCost);
+      }
       attachReferenceRoutingDebug(planResult, referenceRouting, options.features);
       attachTopLevelTiming(planResult, totalStartedAt, fallback.debug?.deterministicDurationMs, elapsedMs(agentStartedAt), options.features);
       if (!shouldEscalateAfterSemanticConsistencyGate(planResult) || options.openaiApiKey === undefined) {
@@ -1344,6 +1351,47 @@ async function runPlanIrPath(
   request: TemporalParseRequest,
   options: TemporalGraphOptions,
 ): Promise<TemporalParseResponse> {
+  const startedAt = nowMs();
+  const first = await runPlanIrAttempt(request, options);
+  if (first.status !== 'failed'
+    || (options.maxAgentAttempts ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxAgentAttempts) < 2
+    || !first.debug?.trace?.some((step) => step.name === 'plan_ir_plan_failed')) return first;
+
+  // One repair for an unexecutable plan; semantic rejection and no-plan stay terminal.
+  const feedback = JSON.stringify({
+    errors: first.validation.warnings,
+    previousPlan: first.debug.trace.find((step) => step.name === 'plan_ir_planner')?.output,
+  });
+  const repairStartedAt = elapsedMs(startedAt);
+  const repaired = await runPlanIrAttempt(request, options, feedback);
+  const previous = first.debug;
+  const next = repaired.debug ?? {};
+  repaired.debug = {
+    ...next,
+    agentAttempts: 2,
+    toolPasses: (previous.toolPasses ?? 0) + (next.toolPasses ?? 0),
+    ...(previous.firstLlmResponseMs === undefined ? {} : { firstLlmResponseMs: previous.firstLlmResponseMs }),
+    ...(next.firstCandidateMs === undefined ? {} : { firstCandidateMs: repairStartedAt + next.firstCandidateMs }),
+    finalResponseMs: elapsedMs(startedAt),
+    trace: [
+      ...previous.trace!,
+      { index: 0, type: 'router' as const, name: 'plan_ir_repair_requested', output: { errors: first.validation.warnings } },
+      ...(next.trace ?? []),
+    ].map((step, index) => ({ ...step, index: index + 1 })),
+  };
+  attachModelUsageDebug(repaired,
+    (previous.modelCalls ?? 0) + (next.modelCalls ?? 0),
+    (previous.inputTokens ?? 0) + (next.inputTokens ?? 0),
+    (previous.outputTokens ?? 0) + (next.outputTokens ?? 0),
+    options.modelCost);
+  return repaired;
+}
+
+async function runPlanIrAttempt(
+  request: TemporalParseRequest,
+  options: TemporalGraphOptions,
+  repairFeedback?: string,
+): Promise<TemporalParseResponse> {
   if (!options.openaiApiKey) {
     return responseFromFailedPlanIr('Plan IR requires an OpenAI API key.', [], 0, 0, 0);
   }
@@ -1385,10 +1433,12 @@ async function runPlanIrPath(
   };
 
   const llmStartedAt = nowMs();
-  const { parsed: structuredPlanResult, raw } = await planner.invoke([
+  const plannerMessages = [
     new SystemMessage(system),
     new HumanMessage(human),
-  ], {
+    ...(repairFeedback === undefined ? [] : [new HumanMessage(`The previous plan could not execute. Repair the operation/field/dependency error without dropping any input meaning. Reuse the existing operations; return no_plan if the meaning cannot be represented. Previous attempt: ${repairFeedback}`)]),
+  ];
+  const { parsed: structuredPlanResult, raw } = await planner.invoke(plannerMessages, {
     ...(callbacks === undefined ? {} : { callbacks }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     runName: 'temporal-plan-ir',
@@ -1411,9 +1461,9 @@ async function runPlanIrPath(
     name: 'plan_ir_planner',
     durationMs: elapsedMs(llmStartedAt),
     input: {
-      messageCount: 2,
+      messageCount: plannerMessages.length,
       systemPromptChars: system.length,
-      totalMessageChars: system.length + human.length,
+      totalMessageChars: plannerMessages.reduce((total, message) => total + contentChars(message.content), 0),
     },
     output: {
       planResult: summarizeValue(modelPlanResult),
@@ -3200,7 +3250,8 @@ async function validateDeterministicResolvedResponse(
 
   try {
     const finalValidationStartedAt = nowMs();
-    const finalValidation = await validateFinalAnswer(model, request, enriched, 'Deterministic temporal parse.', trace, callbacks, options.signal);
+    let usage = { inputTokens: 0, outputTokens: 0 };
+    const finalValidation = await validateFinalAnswer(model, request, enriched, 'Deterministic temporal parse.', trace, callbacks, options.signal, (value) => { usage = value; });
     trace.push({
       index: trace.length + 1,
       type: 'final_validation',
@@ -3209,7 +3260,7 @@ async function validateDeterministicResolvedResponse(
       output: finalValidation,
     });
     if (!finalValidation.accepted) {
-      return responseFromRejectedFinalValidation(
+      const rejected = responseFromRejectedFinalValidation(
         enriched,
         finalValidation,
         1,
@@ -3219,6 +3270,8 @@ async function validateDeterministicResolvedResponse(
         'deterministic',
         getLangfuseTraceId(langfuseHandler),
       );
+      attachModelUsageDebug(rejected, 1, usage.inputTokens, usage.outputTokens, options.modelCost);
+      return rejected;
     }
 
     const validated: TemporalParseResponse = {
@@ -3241,6 +3294,7 @@ async function validateDeterministicResolvedResponse(
       validated.debug = validated.debug ?? {};
       validated.debug.langfuseTraceId = traceId;
     }
+    attachModelUsageDebug(validated, 1, usage.inputTokens, usage.outputTokens, options.modelCost);
     return validated;
   } catch (error) {
     return {
@@ -4314,6 +4368,7 @@ Your job is not to be generous. Reject candidates that dropped, contradicted, or
 
 Validation rules:
 - An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
+- Unqualified holiday names use the holiday tool's configured regional calendar, selected from country/locale or timezone context. Validate the date against that calendar; do not reject solely because another religious or regional tradition exists elsewhere. Explicitly requested regions or traditions must still be preserved, and actual tool-reported ambiguity requires clarification.
 - Accept only if the candidate preserves every date and time signal in the input. Stating an assumption does not resolve competing temporal interpretations: reject if a materially different AM/PM, weekday, or timezone interpretation remains plausible.
 - Apply this product's calendar conventions: a date-only expression, including an offset in whole calendar days, weeks, months, or years without an explicit clock, is represented at 12:00 PM local time. Calendar-unit counts are not clock signals. Offsets in hours or minutes preserve the reference clock; an explicitly supplied clock must always be preserved.
 - Apply the executor's explicit numeric conventions: bare nonnegative integers of 10, 13, 16, or 19 digits are Unix timestamps in seconds, milliseconds, microseconds, or nanoseconds respectively; an all-zero bare integer is epoch zero. An epoch label is not required. A bare hour from 13 through 23 is an unambiguous 24-hour clock at minute zero. Reject unsupported numeric lengths instead of inventing another convention.
@@ -4611,15 +4666,17 @@ Every plan step must include every schema field. Set fields that do not apply to
 Available plan operations:
 - resolve_calendar_query: use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", "May 24 at 13:37", Discord timestamps, and bare 10/13/16/19 digit epochs.
 - resolve_weekday_anchor: use for every normalized weekday anchor, including an ordinary unqualified weekday (weekdayAnchor=upcoming); combine the clock separately with set_clock_time or combine_date_time. Do not send phrases such as "upcoming Tuesday at 10pm" to resolve_calendar_query. Also use this operation when weekday wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
-- resolve_holiday: use for holiday names; include year and normalized time when the user specified them.
+- resolve_holiday: use for holiday names; include year and normalized time when the user specified them. Unqualified names follow the configured regional calendar selected by the tool from country/locale or timezone context; do not introduce unrequested regional or religious alternatives.
 - resolve_clock_time: use for conventional numeric clock text like "13:37", "1pm", or "noon". It returns ONLY a clock, not a dated timestamp candidate. For spelled-out or semantic clock phrases, interpret the clock yourself and emit interpret_clock_phrase with a numeric 24-hour time; keep the original phrase and interpretation in the rationale.
 - For an ambiguous clock attached to a Discord timestamp reference, resolve_clock_time accepts options: an array of distinct {label,text} explicit AM/PM readings instead of a single text. The compact clock-choice contract requires exactly one plan and one option-bearing clock step feeding the final result. Keep the full reference/date arithmetic in that one plan; do not split its AM/PM readings into separate plans.
 - resolve_timezone: use for explicit timezone text. Reference it from date/time operations with timeZoneStep, or put exact IANA/fixed-offset text directly in timeZone.
 - interpret_clock_phrase: use when the clock phrase is semantic/fuzzy rather than conventional syntax, such as "leet time" or "133t time". You must set time to the interpreted 24-hour clock. It returns ONLY a clock, not a dated timestamp candidate.
 - shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Use time or timeStep when the final clock is known.
+- Set either timeStep or a literal time, never both. When combining a resolved clock dependency, set timeStep to its index and time=null. Never fill unused time fields with 00:00; that is an actual midnight override, not a placeholder.
 - set_clock_time: apply a normalized clock time to a prior candidate step.
 - combine_date_time: same semantics as set_clock_time, preferred when combining a date anchor or weekday-anchor candidate set with a separate clock step.
 - A date step can contain multiple candidates and a clock step can contain options. combine_date_time produces their combinations, so preserve independent date and clock ambiguities together rather than selecting one dimension first.
+- A numeric clock from 1 through 12 without meridiem, including colon minutes, remains AM/PM ambiguous even after correcting surrounding date spelling. Correcting a month or date does not supply a meridiem.
 - For clock ambiguity without a Discord reference, use separate plans for the explicit clock readings. Each plan may combine its clock with multiple date candidates from resolve_weekday_anchor. Conflicting meridiem signals require alternatives; never discard one as an accidental character merely to select a single clock.
 - propose_candidate: last resort for explicit epoch/ISO timestamps only; do not guess remembered holiday dates or weekday math.
 

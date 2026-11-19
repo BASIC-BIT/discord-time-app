@@ -71,6 +71,21 @@ test('cancellation discards a cloud result without waiting for the provider', as
   controller.abort();
   await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
 });
+test('the action rejection remains handled after cancellation wins the race', async () => {
+  let rejectAction!: (error: Error) => void;
+  fake.action.mockReturnValue(new Promise((_, reject) => { rejectAction = reject; }));
+  const unhandled = vi.fn(); process.on('unhandledRejection', unhandled);
+  try {
+    const controller = new AbortController();
+    const promise = parseHostedTime('test', 'UTC', now, 'id', controller.signal);
+    await vi.waitFor(() => expect(fake.action).toHaveBeenCalled());
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    rejectAction(new Error('late provider failure'));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally { process.off('unhandledRejection', unhandled); }
+});
 
 test('validated ranges survive fallback without requiring a singular epoch', async () => {
   const range = { start: { epoch: 1795125600 }, end: { epoch: 1795129200 } };

@@ -1436,6 +1436,72 @@
           "status": "needs_clarification"
         }
       ]
+    },
+    {
+      "path": ".cache/luna-product-full.json",
+      "source": {
+        "baseCommit": "8ecdbf1dbf10d3c44ecd765fb6285a9022e7c38c",
+        "workers": [
+          {
+            "shard": 0,
+            "pid": 93852
+          },
+          {
+            "shard": 1,
+            "pid": 96916
+          },
+          {
+            "shard": 2,
+            "pid": 81496
+          },
+          {
+            "shard": 3,
+            "pid": 63688
+          }
+        ],
+        "graphSha256": "2BA4CB6A7D4F3AD81AC645ABA3804A254352175BD88E406F41EEAE5582A9C397",
+        "started": "2026-11-19T06:20:56.9808756-05:00",
+        "deterministicSha256": "E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"
+      },
+      "experiments": [
+        {
+          "label": "product-contract",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 200,
+      "requiredTotal": 202,
+      "diagnosticPassed": 4,
+      "diagnosticTotal": 5,
+      "medianMs": 2676,
+      "p95Ms": 13053,
+      "failures": [
+        {
+          "caseId": "compound-typo-cultural-clock",
+          "text": "day after a week from tomorrow at 133t time",
+          "required": true,
+          "mismatch": "expected status resolved, got needs_clarification",
+          "status": "needs_clarification"
+        },
+        {
+          "caseId": "diagnostic-month-typo-suffix-bare-minute-clarification",
+          "text": "first of Febuarysdf 2:30",
+          "required": false,
+          "mismatch": "expected status needs_clarification, got failed",
+          "status": "failed"
+        },
+        {
+          "caseId": "explicit-year-holiday",
+          "text": "easter 2026 noon",
+          "required": true,
+          "mismatch": "expected status resolved, got needs_clarification",
+          "status": "needs_clarification"
+        }
+      ]
     }
   ]
 }

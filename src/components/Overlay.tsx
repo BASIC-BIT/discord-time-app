@@ -588,7 +588,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
-          if (canUseHostedFallback(error)) {
+          if (isFromClipboard && canUseHostedFallback(error)) setCanRetryFallback(true);
+          if (!isFromClipboard && canUseHostedFallback(error)) {
             const localMessage = error instanceof Error ? error.message : null;
             clearProgressTimers();
             setParseProgressMessage('Preparing smart fallback');
@@ -660,7 +661,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setConfidence(1);
           setSignInRequired(apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required');
           if (isFromClipboard && !hasDiscordReference) {
-            setError(null);
+            setError(canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
             setClarificationQuestion(apiError.message);
             setClarificationAlternatives(apiError.alternatives ?? []);
@@ -751,7 +752,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
-  const statusTone = error && !signInRequired ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
+  const statusTone = error && !signInRequired && !(isClipboardText && canRetryFallback) ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
   const hasInlineStatus = error || hasClarification || showLowConfidence;
   const isBusy = loading || verifying;
   const showVerifyingTab = isBusy && !hasClarification && !error;
@@ -1029,7 +1030,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           <div className={`status-card ${statusTone}`}>
             {error && <div className="status-line">{error}</div>}
             {signInRequired && <HostedAccount compact onSignedIn={() => { setSignInRequired(false); setError(null); setParseRequest(value => value + 1); }} />}
-            {error && canRetryFallback && <button type="button" className="secondary-button account-button" disabled={loading} onClick={() => setParseRequest(value => value + 1)}>Try smart parsing again</button>}
+            {error && canRetryFallback && <button type="button" className="secondary-button account-button" disabled={loading} onClick={() => { setIsClipboardText(false); setParseRequest(value => value + 1); }}>{isClipboardText ? 'Parse clipboard with smart parsing' : 'Try smart parsing again'}</button>}
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>

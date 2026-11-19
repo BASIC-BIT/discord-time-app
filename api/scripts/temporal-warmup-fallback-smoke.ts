@@ -39,6 +39,7 @@ async function main() {
     steps: [{ op: 'resolve_calendar_query', query: 'November 18 2026 5pm', precision: 'datetime' }],
   }] });
   let providerPlan = plan;
+  let firstProviderPlan: typeof plan | undefined;
   const llm = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
@@ -67,9 +68,11 @@ async function main() {
       return fn.name;
     });
     const planning = raw.includes('"outcome"');
+    const selectedPlan = firstProviderPlan ?? providerPlan;
     const args = planning
-      ? { ...providerPlan, plans: providerPlan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
+      ? { ...selectedPlan, plans: selectedPlan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
       : { accepted: verdict === 'accept' && !rejectNextValidation, confidence: 0.9, reason: 'Synthetic independent validation.', missingOrContradictedSignals: [] };
+    if (planning) firstProviderPlan = undefined;
     if (!planning) rejectNextValidation = false;
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
@@ -189,11 +192,35 @@ async function main() {
       assert.equal(repaired.method, 'agent+plan');
       assert.equal(repaired.canonical?.isoInstant, '2026-05-30T16:00:00Z');
       assert.equal(llmCalls - beforeRepair, 3, 'reject heuristic, plan repair, independently validate repair');
+      assert.equal(repaired.debug?.modelCalls, 3, 'include the rejected preflight validation in usage');
+      assert.equal(repaired.debug?.inputTokens, 3);
+      assert.equal(repaired.debug?.outputTokens, 3);
       rejectNextValidation = true;
       const beforeLegacy = llmCalls;
       const rejected = await parseTemporalExpression({ text: 'tomorrow at 5pm', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: false, deterministicPreflight: true }, langfuse: { enabled: false } });
       assert.equal(rejected.status, 'needs_clarification');
       assert.equal(llmCalls - beforeLegacy, 1, 'a rejected answer cannot escalate into the unvalidated legacy agent');
+
+      const invalidPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic empty final step.', plans: [{ label: 'Broken plan', finalStep: 0, steps: [{ op: 'propose_candidate', precision: 'datetime' }] }] });
+      firstProviderPlan = invalidPlan;
+      providerPlan = plan;
+      const beforePlanRepair = llmCalls;
+      const planRepair = await parseTemporalExpression({ text: 'fuzzy evening marker', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, langfuse: { enabled: false } });
+      assert.equal(planRepair.status, 'resolved');
+      assert.equal(llmCalls - beforePlanRepair, 3, 'broken plan, feedback repair, independent validation');
+      assert.equal(planRepair.debug?.agentAttempts, 2);
+      assert.equal(planRepair.debug?.modelCalls, 3);
+      assert.equal(planRepair.debug?.inputTokens, 3);
+      assert.equal(planRepair.debug?.outputTokens, 3);
+      assert.ok(planRepair.debug?.trace?.some(step => step.name === 'plan_ir_plan_failed'));
+      assert.ok(planRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_requested'));
+      assert.deepEqual(planRepair.debug?.trace?.map(step => step.index), planRepair.debug?.trace?.map((_, index) => index + 1));
+
+      providerPlan = invalidPlan;
+      const beforeFailedRepair = llmCalls;
+      const failedRepair = await parseTemporalExpression({ text: 'fuzzy evening marker', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, langfuse: { enabled: false } });
+      assert.equal(failedRepair.status, 'failed');
+      assert.equal(llmCalls - beforeFailedRepair, 2, 'repair is bounded to one attempt');
     } finally {
       if (previousBase === undefined) delete process.env.OPENAI_BASE_URL;
       else process.env.OPENAI_BASE_URL = previousBase;

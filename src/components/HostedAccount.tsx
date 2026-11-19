@@ -20,7 +20,7 @@ export function HostedAccount({ compact = false, onSignedIn }: { compact?: boole
         const next = await getHostedAuthStatus();
         if (!active) return;
         setStatus(next);
-        if (next.phase === 'signed_in' && phaseRef.current !== 'signed_in') onSignedInRef.current?.();
+        if (next.phase === 'signed_in' && phaseRef.current !== null && phaseRef.current !== 'signed_in') onSignedInRef.current?.();
         phaseRef.current = next.phase;
       } catch { if (active) setError('Could not load your account. Please try again.'); }
     };
@@ -36,6 +36,7 @@ export function HostedAccount({ compact = false, onSignedIn }: { compact?: boole
       const next = await startHostedSignIn();
       if (operation !== operationRef.current) return;
       setStatus(next);
+      phaseRef.current = next.phase;
       if (next.phase === 'pending') {
         try { await openHostedSignInBrowser(next); }
         catch { setError('Could not open your browser. Use Open browser below, or visit the address and enter your code.'); }

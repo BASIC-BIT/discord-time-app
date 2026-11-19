@@ -22,6 +22,8 @@ let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   vi.clearAllMocks(); fake.eligible = true;
+  vi.mocked(invoke).mockResolvedValue({ auto_load_clipboard: false });
+  vi.mocked(readText).mockResolvedValue('');
   vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   fake.parse.mockRejectedValue(new Error('cold endpoint'));
@@ -103,6 +105,22 @@ it('does not read the clipboard when its saved preference cannot be loaded', asy
   vi.mocked(invoke).mockRejectedValueOnce(new Error('settings unavailable'));
   await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
   expect(readText).not.toHaveBeenCalled();
+});
+it('requires an explicit action before sending auto-loaded clipboard text to the relay', async () => {
+  vi.mocked(invoke).mockResolvedValue({ auto_load_clipboard: true });
+  vi.mocked(readText).mockResolvedValue('Synthetic clipboard prose');
+  fake.hosted.mockResolvedValue({ epoch: 1795125600, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } });
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(fake.parse).toHaveBeenCalled();
+  expect(fake.hosted).not.toHaveBeenCalled();
+  expect(container.querySelector('.status-line')?.textContent).toContain('clipboard text in the cloud');
+  const retry = [...container.querySelectorAll('button')].find(button => button.textContent === 'Parse clipboard with smart parsing')!;
+  expect(retry).toBeDefined();
+  await act(async () => retry.click());
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(fake.hosted).toHaveBeenCalledOnce();
+  expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
 });
 
 it('accepts finished input after a prefix call starts and ignores its late result', async () => {

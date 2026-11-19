@@ -49,6 +49,12 @@ it('automatically resumes once the browser approval completes', async () => {
   await act(async () => fake.changed()); await act(async () => fake.changed());
   expect(resumed).toHaveBeenCalledOnce(); expect(container.textContent).toContain('You’re connected');
 });
+it('does not resume parsing merely because an already signed-in account panel mounts', async () => {
+  fake.status.mockResolvedValue({ ...signedOut, phase: 'signed_in' });
+  const resumed = vi.fn(); await render(resumed);
+  await act(async () => fake.changed());
+  expect(resumed).not.toHaveBeenCalled();
+});
 it('keeps the code and browser retry available if opening the browser fails', async () => {
   fake.open.mockRejectedValue(new Error('unavailable')); await render(); await click('Sign in with browser');
   expect(container.textContent).toContain('ABCD-EFGH'); expect(container.querySelector('[role=alert]')?.textContent).toContain('Could not open');
