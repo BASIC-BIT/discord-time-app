@@ -39,6 +39,9 @@ export default defineConfig(async () => ({
           if (!id.includes("node_modules")) {
             return undefined;
           }
+          if (id.includes("@clerk/") || id.includes("tauri-plugin-clerk")) {
+            return "clerk-auth";
+          }
           if (id.includes("react") || id.includes("react-dom")) {
             return "react-vendor";
           }

@@ -1,0 +1,34 @@
+import { v } from 'convex/values';
+import { internalMutation, query } from './_generated/server';
+
+export const record = internalMutation({
+  args: {
+    requestId: v.string(), model: v.string(), status: v.string(),
+    durationMs: v.number(), inputLength: v.number(),
+    inputTokens: v.number(), outputTokens: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Sign in to use hosted parsing.');
+    const existing = await ctx.db.query('users').withIndex('by_identity', q => q.eq('identity', identity.tokenIdentifier)).unique();
+    const totals = {
+      lastSeenAt: Date.now(),
+      requests: (existing?.requests ?? 0) + 1,
+      inputTokens: (existing?.inputTokens ?? 0) + args.inputTokens,
+      outputTokens: (existing?.outputTokens ?? 0) + args.outputTokens,
+    };
+    const userId = existing?._id ?? await ctx.db.insert('users', { identity: identity.tokenIdentifier, ...totals });
+    if (existing) await ctx.db.patch(existing._id, totals);
+    await ctx.db.insert('usage', { userId, ...args });
+  },
+});
+
+export const mine = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const user = await ctx.db.query('users').withIndex('by_identity', q => q.eq('identity', identity.tokenIdentifier)).unique();
+    return user ? { requests: user.requests, inputTokens: user.inputTokens, outputTokens: user.outputTokens } : { requests: 0, inputTokens: 0, outputTokens: 0 };
+  },
+});

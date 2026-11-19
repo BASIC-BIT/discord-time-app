@@ -4605,15 +4605,17 @@ Available plan operations:
 - resolve_calendar_query: use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", "May 24 at 13:37", Discord timestamps, and bare 10/13/16/19 digit epochs.
 - resolve_weekday_anchor: use for weekday-only anchoring when wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
 - resolve_holiday: use for holiday names; include year and normalized time when the user specified them.
-- resolve_clock_time: use for conventional explicit clock text like "13:37", "1pm", "noon", or "one hour past noon and 10 minutes".
+- resolve_clock_time: use for conventional numeric clock text like "13:37", "1pm", or "noon". It returns ONLY a clock, not a dated timestamp candidate. For spelled-out or semantic clock phrases, interpret the clock yourself and emit interpret_clock_phrase with a numeric 24-hour time; keep the original phrase and interpretation in the rationale.
 - resolve_timezone: use for explicit timezone text. Reference it from date/time operations with timeZoneStep, or put exact IANA/fixed-offset text directly in timeZone.
-- interpret_clock_phrase: use when the clock phrase is semantic/fuzzy rather than conventional syntax, such as "leet time" or "133t time". You must set time to the interpreted 24-hour clock.
+- interpret_clock_phrase: use when the clock phrase is semantic/fuzzy rather than conventional syntax, such as "leet time" or "133t time". You must set time to the interpreted 24-hour clock. It returns ONLY a clock, not a dated timestamp candidate.
 - shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Use time or timeStep when the final clock is known.
 - set_clock_time: apply a normalized clock time to a prior candidate step.
 - combine_date_time: same semantics as set_clock_time, preferred when combining a date anchor or weekday-anchor candidate set with a separate clock step.
 - propose_candidate: last resort for explicit epoch/ISO timestamps only; do not guess remembered holiday dates or weekday math.
 
 Planning rules:
+- A standalone clock expression does not require an explicit date from the user. Normalize the clock wording when needed and use resolve_calendar_query on the complete normalized expression; that operation supplies the date using the provided calendar context. Do not return no_plan or clarification solely because the user omitted a date.
+- Clock-only and timezone-only steps cannot be final answers. Either resolve the whole normalized expression through resolve_calendar_query, or resolve a date anchor and combine it with the clock through set_clock_time or combine_date_time. finalStep, startStep, and endStep must point to dated timestamp candidates, never resolve_clock_time, interpret_clock_phrase, or resolve_timezone.
 - Emit up to four independent plans. The executor evaluates plans in parallel and also runs independent step dependencies in parallel.
 - Prefer one clear plan when the input has one intended meaning.
 - For a time range like "tomorrow 3pm-5pm", emit one plan with kind="time_range", startStep pointing to the start candidate, and endStep pointing to the end candidate. The start and end candidates should both preserve date, clock, and timezone evidence.
@@ -5835,7 +5837,7 @@ function ensureGenerationId(response: TemporalParseResponse): void {
 }
 
 function createChatModel(apiKey: string, model: string, reasoningEffort: string): ChatOpenAI {
-  if (model.startsWith('gpt-5')) {
+  if (model.startsWith('gpt-5') || model.startsWith('gpt-6')) {
     return new ChatOpenAI({ apiKey, model, reasoning: { effort: normalizeReasoningEffort(reasoningEffort), summary: 'auto' }, useResponsesApi: true });
   }
   return new ChatOpenAI({ apiKey, model, temperature: 0 });

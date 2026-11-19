@@ -3654,6 +3654,11 @@ pub fn run() {
             pull_local_slm_docker_image,
         ])
         .setup(|app| {
+            if let Some(key) = option_env!("VITE_CLERK_PUBLISHABLE_KEY").filter(|key| !key.is_empty()) {
+                app.handle().plugin(tauri_plugin_http::init())?;
+                // shortcut: sessions last until app exit; add an encrypted store when persistent sign-in is needed.
+                app.handle().plugin(tauri_plugin_clerk::ClerkPluginBuilder::new().publishable_key(key).build())?;
+            }
             // Initialize logging
             log::info!("HammerOverlay starting up...");
             log::info!("Application version: {}", env!("CARGO_PKG_VERSION"));

@@ -163,6 +163,7 @@ async function main() {
           assert.equal((await pending).status, 499);
         } else {
           assert.equal(fallback.status, 400);
+          assert.equal(result.debug?.endpointWarming, true, 'credential-free clients need the warming signal to use the relay');
           assert.equal(llmCalls, before, 'missing credentials must not call the LLM');
         }
       } finally {

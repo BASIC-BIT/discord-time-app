@@ -1,15 +1,19 @@
-import { useState, useEffect } from "react";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { useState, useEffect, useRef } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Overlay } from "./components/Overlay";
 import { Settings } from "./components/Settings";
 import { UpdateChecker } from "./components/UpdateChecker";
 import "./App.css";
+import { getHostedClerk } from './lib/hosted-auth';
 
 function App() {
+  useEffect(() => { void getHostedClerk()?.catch(() => {}); }, []);
   const [showOverlay, setShowOverlay] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateChecker, setShowUpdateChecker] = useState(false);
+  const alternateViewRef = useRef(false);
+  alternateViewRef.current = showSettings || showUpdateChecker;
   const [overlayOpenToken, setOverlayOpenToken] = useState(0);
   const appWindow = getCurrentWindow();
   const windowLabel = appWindow.label;
@@ -108,7 +112,7 @@ function App() {
       setupWindow();
 
       const unlistenFocus = appWindow.onFocusChanged(({ payload: focused }) => {
-        if (focused) {
+        if (focused && !alternateViewRef.current) {
           setShowOverlay(true);
           // Settings reloads shortcuts after saving. Reloading on hotkey focus
           // can deadlock Linux unregistration against the key-release callback.
@@ -134,7 +138,7 @@ function App() {
 
   return (
     <div className="app">
-      {showOverlay && <Overlay onClose={handleClose} openToken={overlayOpenToken} />}
+      {showOverlay && <Overlay onClose={handleClose} onShowSettings={handleShowSettings} openToken={overlayOpenToken} />}
       {showSettings && <Settings onClose={handleSettingsClose} />}
       {showUpdateChecker && <UpdateChecker onClose={handleUpdateCheckerClose} />}
     </div>

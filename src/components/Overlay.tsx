@@ -11,6 +11,8 @@ import { formatDiscordRange, formats, getFormatLabel, getRangeLabel, rangeFormat
 import { getUserTimezone } from '../lib/prompt';
 import { createAPIClient, TimeParserAPIError, TimeParserTimeoutError, TimeParserUnavailableError, type ParseAlternative, type ParseRangeResult, type ParseResponse } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
+import { canUseHostedFallback, parseHostedTime } from '../lib/hosted-parser';
+import { loadClipboardText } from '../lib/clipboard';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 import {
   classifyDiscordTimestampInput,
@@ -20,6 +22,7 @@ import {
 const LOCAL_FALLBACK_CONFIDENCE = 0.65;
 
 interface AppSettings {
+  auto_load_clipboard: boolean;
   deterministic_preflight: boolean;
   discord_reference_routing: boolean;
   discord_reference_shadow: boolean;
@@ -106,16 +109,18 @@ function directRangeFromClassification(classification: DiscordTimestampClassific
 
 interface OverlayProps {
   onClose: () => void;
+  onShowSettings: () => void;
   openToken: number;
 }
 
-export function Overlay({ onClose, openToken }: OverlayProps) {
+export function Overlay({ onClose, onShowSettings, openToken }: OverlayProps) {
   const [inputText, setInputText] = useState('');
   const [epoch, setEpoch] = useState<number | null>(null);
   const [range, setRange] = useState<ParseRangeResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signInRequired, setSignInRequired] = useState(false);
   const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
   const [clarificationAlternatives, setClarificationAlternatives] = useState<ParseAlternative[]>([]);
   const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
@@ -231,9 +236,11 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         await initStats();
         if (!active()) return;
 
+        let autoLoadClipboard = false;
         try {
           const settings = await invoke<AppSettings>('get_settings');
           if (!active()) return;
+          autoLoadClipboard = settings.auto_load_clipboard;
           setDeterministicPreflight(settings.deterministic_preflight);
           setDiscordReferenceRouting(settings.discord_reference_routing);
           setDiscordReferenceShadow(settings.discord_reference_shadow);
@@ -242,13 +249,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         }
         
         // Load clipboard content (handle empty clipboard gracefully)
-        let clipboardText = '';
-        try {
-          clipboardText = await readText();
-        } catch (clipboardError) {
-          console.log('Clipboard is empty or unavailable:', clipboardError);
-          clipboardText = '';
-        }
+        const clipboardText = await loadClipboardText(autoLoadClipboard, readText);
         
         if (!active()) return;
         setInputText(clipboardText);
@@ -512,6 +513,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   }, []);
 
   const parseInput = async (text: string, isFromClipboard: boolean, revision: number) => {
+    setSignInRequired(false);
     if (revisionRef.current !== revision) return;
     // Create new abort controller for this request
     const abortController = new AbortController();
@@ -559,12 +561,15 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       // Prefer the supervised parser when available; local chrono is an offline fallback.
       let result: ParseResponse | null = null;
       let apiError: Error | null = null;
+      const requestId = crypto.randomUUID();
+      const referenceInstant = new Date().toISOString();
       
       if (apiClient) {
         startBackendProgress(displayedFallback, revision);
         try {
           result = await apiClient.parseTime(text, timezone, abortController.signal, {
-            requestId: crypto.randomUUID(),
+            requestId,
+            now: referenceInstant,
             deterministicPreflight,
             discordReferenceRouting,
             discordReferenceShadow,
@@ -581,12 +586,27 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
-          apiError = error instanceof Error ? error : new Error('Unknown API parsing error');
-          if (error instanceof TimeParserAPIError) {
-            setGenerationId(error.generationId ?? null);
+          if (canUseHostedFallback(error)) {
+            try {
+              result = await parseHostedTime(text, timezone, referenceInstant, requestId, abortController.signal);
+              if (!active()) return;
+              if (result) {
+                setGenerationId(result.generationId);
+                setEndpointWarming(true);
+                warmingTextRef.current = null;
+              }
+            } catch (hostedError) {
+              if (hostedError instanceof Error && hostedError.name === 'AbortError') throw hostedError;
+              error = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
+            }
           }
-          console.error('API parsing failed:', error);
-          // Fall through to chrono-node fallback
+          if (!result) {
+            apiError = error instanceof Error ? error : new Error('Unknown API parsing error');
+            if (error instanceof TimeParserAPIError) {
+              setGenerationId(error.generationId ?? null);
+            }
+            console.error('API parsing failed:', error);
+          }
         }
       } else {
         setParseProgressMessage(null);
@@ -626,6 +646,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setEpoch(null);
           setRange(null);
           setConfidence(1);
+          setSignInRequired(apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required');
           if (isFromClipboard && !hasDiscordReference) {
             setError(null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
@@ -661,7 +682,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   };
 
   const verifyDisplayedResult = async (apiClient: Awaited<ReturnType<typeof createAPIClient>>, text: string, timezone: string, result: ParseResponse, revision: number) => {
-    if (revisionRef.current !== revision || !apiClient || result.method !== 'agent+plan' || result.kind === 'time_range') {
+    if (revisionRef.current !== revision || !apiClient || result.debug?.serverValidated || result.method !== 'agent+plan' || result.kind === 'time_range') {
       return;
     }
 
@@ -995,6 +1016,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         {draft === null && hasInlineStatus && (
           <div className={`status-card ${statusTone}`}>
             {error && <div className="status-line">{error}</div>}
+            {error && signInRequired && <button type="button" className="clarification-option" onClick={onShowSettings}>Sign in</button>}
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>

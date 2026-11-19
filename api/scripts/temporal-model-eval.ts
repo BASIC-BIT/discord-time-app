@@ -1549,6 +1549,24 @@ function buildTemporalEvalCases(): TemporalEvalCase[] {
     expected: { status: 'resolved', epoch: 1795039200 },
   },
   {
+    id: 'diagnostic-luna-spelled-clock-warmup',
+    text: 'tmrw at seventeen hundred',
+    category: 'diagnostic-spelled-clock',
+    required: false,
+    referenceInstant: '2026-11-18T21:18:11.689Z',
+    timeZone: 'America/Indianapolis',
+    expected: { status: 'resolved', epoch: 1795125600 },
+  },
+  {
+    id: 'diagnostic-luna-standalone-clock-typo',
+    text: '5pms',
+    category: 'diagnostic-standalone-clock',
+    required: false,
+    referenceInstant: '2026-11-19T18:00:00Z',
+    timeZone: 'America/Indianapolis',
+    expected: { status: 'resolved', epoch: 1795125600 },
+  },
+  {
     id: 'diagnostic-month-typo-suffix-bare-minute-clarification',
     text: 'first of Febuarysdf 2:30',
     category: 'diagnostic-month-typo-bare-minute',
@@ -3227,7 +3245,7 @@ function parseEndpointResponseFormat(value: string | undefined): EndpointPlanSpe
 }
 
 function createChatModel(model: string, reasoningEffort: string): ChatOpenAI {
-  if (model.startsWith('gpt-5')) {
+  if (model.startsWith('gpt-5') || model.startsWith('gpt-6')) {
     return new ChatOpenAI({ apiKey: openaiApiKey!, model, reasoning: { effort: normalizeReasoningEffort(reasoningEffort), summary: 'auto' }, useResponsesApi: true });
   }
   return new ChatOpenAI({ apiKey: openaiApiKey!, model, temperature: 0 });

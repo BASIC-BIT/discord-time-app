@@ -200,6 +200,7 @@ const errorResponseSchema = {
     error: { type: 'string' },
     message: { type: 'string' },
     generationId: { type: 'string' },
+    debug: parseResponseSchema.properties.debug,
     alternatives: {
       type: 'array',
       items: {
@@ -529,6 +530,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
         error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,
+        ...(endpointWarming ? { debug: { endpointWarming: true } } : {}),
         alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
           label: alternative.label,
           kind: alternative.kind,
