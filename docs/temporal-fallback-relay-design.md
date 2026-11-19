@@ -46,7 +46,7 @@ flowchart TD
 - The desktop supplies a short-lived Clerk OIDC identity token with the desktop OAuth client as its audience. Convex verifies its signature, issuer, and audience. The OpenAI key stays in Convex environment variables.
 - Reuse the existing parser from `api/src/temporal`. Fastify and SQLite stay local. The relay is a Node action because this parser uses Node packages and APIs.
 - An internal mutation records user identity, token counts, latency, input length, and outcome. It does not save temporal input text. Users can query only their own aggregate usage.
-- Ambiguous timezone abbreviations reuse the existing zone registry to offer validated choices without an LLM call when the rest of the expression is resolvable. No timezone is silently selected.
+- Ambiguous timezone abbreviations remain question-only parser responses, preserving the required catalog contract. The overlay reuses the existing zone registry for explicit zone buttons. Choosing one replaces the abbreviation with its IANA name and reparses; no timestamp or timezone is silently selected. A structured debug flag replaces matching clarification prose.
 - The desktop preserves the reference time across local parsing and fallback, discards cancelled results, and skips redundant post-display LLM verification for server-validated results.
 - A 30-second server timeout bounds stalled requests. It is a safety guard, not the five-second product SLO. Client cancellation cannot stop a running Convex action.
 - Provider failures log diagnostic name/status without raw prompts or credentials. Returned validation warnings are generic, and raw final-validation details stay off the client. Usage tracking is best effort and cannot replace a successful parse. Structured auth and throttle failures retain their actionable client messages. Deployment requires both Clerk issuer and OAuth audience configuration.
@@ -69,7 +69,7 @@ For desktop tests of the cloud route, leave the local API's `OPENAI_API_KEY` uns
 
 Checked November 19, 2026:
 
-- The full offline suite passes, including cancellation, fake-provider warmup, validation rejection/repair, and 51/51 reference-routing cases. All 39 related frontend and relay tests pass. API, frontend, and Convex strict typechecks pass, and the frontend production build passes without exceptions for unused declarations.
+- The full offline suite passes, including cancellation, fake-provider warmup, validation rejection/repair, and 51/51 reference-routing cases. All 40 related frontend and relay tests pass. API, frontend, and Convex strict typechecks pass, and the frontend production build passes without exceptions for unused declarations.
 - Earlier native validation passed compilation, 66 Rust tests, clippy, formatting, and four auth-specific tests. A synthetic Windows credential survived a fresh native state and was deleted. These tests do not prove installed-app authentication.
 - The explicitly approved synthetic Clerk user called the deployed relay successfully with a real JWT. Anonymous requests were rejected. The successful request took 13,371 ms and recorded 5,268 input and 786 output tokens. Its test session was revoked. The named synthetic user remains available for repeat tests.
 - The user confirmed default-browser sign-in and a local-overlay result resolving 5pms to 5 PM. Real-account refresh after restart, cross-window behavior, and exact installed-MSI acceptance remain unverified. The previous MSI install was canceled; it was not accepted as installed proof.

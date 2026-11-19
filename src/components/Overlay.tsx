@@ -14,6 +14,7 @@ import { parseFallback } from '../lib/parse';
 import { canUseHostedFallback, parseHostedTime } from '../lib/hosted-parser';
 import { loadClipboardText } from '../lib/clipboard';
 import { HostedAccount } from './HostedAccount';
+import { resolveTimeZone, stripResolvedTimeZoneText } from '../../api/src/temporal/timezones';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 import {
   classifyDiscordTimestampInput,
@@ -750,6 +751,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
   const hasClarification = clarificationQuestion !== null;
   const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
+  const clarificationZones = hasClarification ? resolveTimeZone({ text: inputText, calendarContext: { referenceInstant: new Date().toISOString(), timeZone: getUserTimezone() } }) : null;
+  const timeZoneChoices = clarificationZones?.status === 'ambiguous' ? clarificationZones.candidates : [];
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
   const statusTone = error && !signInRequired && !(isClipboardText && canRetryFallback) ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
@@ -924,11 +927,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setSelectedIndex(index);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInputChange = (newValue: string) => {
     invalidateWork();
     ownershipRef.current = 'text';
     setManual(false);
-    const newValue = e.target.value;
     
     // A real edit ends clipboard ownership; the browser already applied the edit.
     if (isClipboardText && newValue !== inputText) {
@@ -999,7 +1001,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           disabled={draft !== null}
           aria-label="Time expression"
           value={inputText}
-          onChange={handleInputChange}
+          onChange={event => handleInputChange(event.target.value)}
           placeholder="Enter date/time (e.g., 'tomorrow at 2pm', 'next Friday')"
           className="input-textarea"
           rows={2}
@@ -1056,7 +1058,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
                     </div>
                   </>
                 ) : (
-                  <div className="clarification-help">Add the missing detail in the expression above.</div>
+                  <>
+                    <div className="clarification-help">{timeZoneChoices.length ? 'Choose a timezone, or edit the expression above.' : 'Add the missing detail in the expression above.'}</div>
+                    {timeZoneChoices.length > 0 && <div className="account-actions" role="group" aria-label="Choose timezone">
+                      {timeZoneChoices.map(zone => <button key={zone.timeZone} type="button" className="secondary-button account-button" onClick={() => handleInputChange(`${stripResolvedTimeZoneText(inputText, zone)} in ${zone.timeZone}`)}>{zone.label}</button>)}
+                    </div>}
+                  </>
                 )}
               </div>
             )}

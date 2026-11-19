@@ -41,3 +41,5 @@ Both directories also include connected and expired-code states for Settings and
 - No installer, release, or merge was performed. Installed-MSI smoke and full live parser qualification remain outside this visual pass.
 
 The local capture harness is `.cache/capture-sign-in.mjs`. It launches a temporary Vite server on loopback port 1437, uses the installed Playwright runtime from basic-life, mocks only the auth/native boundaries, captures each state, then closes its own browser and server. It is a local evidence tool, not a shipped app entry point.
+
+The timezone-choice preview was captured November 19 at 12:09 UTC in a dedicated Windows headless Chrome 157 session, at 480px width. It renders the current Overlay component and CSS with synthetic API/native/auth/stats/clipboard boundaries. No real clipboard, account, or provider was accessed. It preserves the question-only parser response and presents zone buttons that clarify the input before a new parse. See timezone-preview-receipt.json for source hash and capture details. This is not native Windows or installed-MSI evidence.

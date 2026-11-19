@@ -122,6 +122,28 @@ it('requires an explicit action before sending auto-loaded clipboard text to the
   expect(fake.hosted).toHaveBeenCalledOnce();
   expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
 });
+it('lets the user clarify a timezone before parsing a timestamp', async () => {
+  fake.eligible = false;
+  fake.parse.mockRejectedValue(new TimeParserAPIError('Which timezone did you mean by CST?', 400, 'needs_clarification', []));
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'tomorrow at 5pm CST');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(400));
+  const choices = container.querySelector('[aria-label="Choose timezone"]')!;
+  expect(choices.querySelectorAll('button')).toHaveLength(3);
+  expect(container.querySelectorAll('.row')).toHaveLength(0);
+  fake.parse.mockResolvedValue({ epoch: 1795125600, method: 'deterministic', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } });
+  const central = [...choices.querySelectorAll('button')].find(button => button.textContent === 'US Central time')!;
+  await act(async () => central.click());
+  await act(async () => vi.advanceTimersByTimeAsync(400));
+  expect(input.value).toBe('tomorrow at 5pm in America/Chicago');
+  expect(fake.parse).toHaveBeenLastCalledWith(input.value, expect.anything(), expect.anything(), expect.anything());
+  expect(fake.hosted).not.toHaveBeenCalled();
+  expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
+});
 
 it('accepts finished input after a prefix call starts and ignores its late result', async () => {
   let finishPrefix!: (value: unknown) => void;

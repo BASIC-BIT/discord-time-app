@@ -16,7 +16,7 @@ import {
 import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, TemporalAgentContext, TemporalClarificationAlternative, TemporalAgentTraceStep, TemporalFeatureFlags, TemporalFinalValidation, TemporalMethod, TemporalModelCostConfig, TemporalParseRequest, TemporalParseResponse, TemporalPlanIrEndpointConfig, TemporalPlanIrInstructionPreset, TemporalRangeEndpoint, TemporalRangeResult, TemporalSemanticConsistencyGateResult, TemporalValidation, TimeZoneResolutionCandidate } from './types';
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
-import { resolveTimeZone, stripResolvedTimeZoneText } from './timezones';
+import { resolveTimeZone } from './timezones';
 import { parseTemporalPlanPlannerOutput, TEMPORAL_PLAN_MAX_PLANS, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
@@ -2899,12 +2899,7 @@ async function deterministicParse(
     const needsTimeZoneClarification = timeZones.status === 'ambiguous';
     const needsClarification = needsTimeClarification || needsTimeZoneClarification;
     const warning = parsed.parserNotes[0] ?? 'No deterministic parse candidate found.';
-    const clarificationAlternatives = needsTimeZoneClarification
-      ? (await Promise.all(timeZones.candidates.map((zone) => clarificationAlternative(
-          `${stripResolvedTimeZoneText(request.text, zone)} in ${zone.timeZone}`,
-          zone.label, request, implementations, features,
-        )))).filter((alternative): alternative is TemporalClarificationAlternative => alternative !== null)
-      : needsTimeClarification ? await bareHourAlternatives(request, implementations, features) : [];
+    const clarificationAlternatives = needsTimeClarification ? await bareHourAlternatives(request, implementations, features) : [];
     const response: TemporalParseResponse = {
       status: needsClarification ? 'needs_clarification' : 'failed',
       confidence: 0,
@@ -2912,7 +2907,7 @@ async function deterministicParse(
       assumptions: [],
       ambiguity: needsClarification ? [warning] : [],
       validation: { passed: false, warnings: parsed.parserNotes, checks: needsClarification ? ['deterministic_preflight'] : [] },
-      debug: { candidateCount: 0, deterministicDurationMs: elapsedMs(startedAt) },
+      debug: { candidateCount: 0, deterministicDurationMs: elapsedMs(startedAt), ambiguousTimeZone: needsTimeZoneClarification },
     };
     if (needsClarification) {
       response.clarificationQuestion = needsTimeZoneClarification
@@ -4384,6 +4379,7 @@ Your job is not to be generous. Reject candidates that dropped, contradicted, or
 Validation rules:
 - An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
 - Unqualified holiday names use the holiday tool's configured regional calendar, selected from country/locale or timezone context. Validate the date against that calendar; do not reject solely because another religious or regional tradition exists elsewhere. Explicitly requested regions or traditions must still be preserved, and actual tool-reported ambiguity requires clarification.
+- Candidate facts (weekday, ISO date, timezone offset) come from deterministic calendar arithmetic. Use those computed facts to compare against the user's requested meaning; do not replace them with a mentally recomputed weekday or remembered calendar. If the user explicitly names a weekday, compare it with facts.weekday.
 - Accept only if the candidate preserves every date and time signal in the input. Stating an assumption does not resolve competing temporal interpretations: reject if a materially different AM/PM, weekday, or timezone interpretation remains plausible.
 - Apply this product's calendar conventions: a date-only expression, including an offset in whole calendar days, weeks, months, or years without an explicit clock, is represented at 12:00 PM local time. Calendar-unit counts are not clock signals. Offsets in hours or minutes preserve the reference clock; an explicitly supplied clock must always be preserved.
 - Apply the executor's explicit numeric conventions: bare nonnegative integers of 10, 13, 16, or 19 digits are Unix timestamps in seconds, milliseconds, microseconds, or nanoseconds respectively; an all-zero bare integer is epoch zero. An epoch label is not required. A bare hour from 13 through 23 is an unambiguous 24-hour clock at minute zero. Reject unsupported numeric lengths instead of inventing another convention.
@@ -4697,6 +4693,7 @@ Available plan operations:
 
 Planning rules:
 - Reference-day clock composition has no implicit arithmetic: forms such as "<reference> day at <clock>", "<reference> that day at <clock>", or "<clock> on the same day as <reference>" use the anchor date plus set_clock_time/combine_date_time. The word day names the date part; it does not mean add one day. A shift requires an actual offset or direction.
+- Preserve the year when normalizing relative dates into named calendar dates. A month/day query without its intended year can roll into a future year. Prefer the original relative anchor wording when the tool supports it; if you substitute an explicit date, include the context-derived year in query.
 - Decompose compound calendar arithmetic into an anchor and shift_datetime operations. resolve_calendar_query is an anchor resolver, not a general composition planner: normalize the anchor words, then express each offset in the plan instead of passing the entire compound sentence to that operation.
 - Set presentationFormat to null for ordinary non-Discord expressions without an explicit presentation request, so the application applies its existing default format. Choose a non-null format when transforming a Discord reference or when the user explicitly requests a display style.
 - A relative duration followed by "on the hour" has both operations: shift by that duration, then round up to the next whole-hour boundary if smaller units remain. Do not ask the user to choose between the explicitly requested duration and boundary. Without a boundary qualifier, preserve smaller units.
@@ -4797,7 +4794,7 @@ function errorMessage(error: unknown): string {
 
 function shouldShortCircuitDeterministic(response: TemporalParseResponse): boolean {
   if (response.status === 'needs_clarification') {
-    return (response.clarificationAlternatives?.length ?? 0) > 0;
+    return (response.clarificationAlternatives?.length ?? 0) > 0 || response.debug?.ambiguousTimeZone === true;
   }
 
   return response.status === 'resolved'

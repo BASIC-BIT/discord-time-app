@@ -3031,8 +3031,8 @@ async function main() {
   const ambiguousTimeZone = await parseTemporalExpression({ text: 'tomorrow at 5pm CST', timeZone, referenceInstant, openaiApiKey: 'sk-test', features: { deterministicPreflight: true, planIr: true } });
   assert.equal(ambiguousTimeZone.status, 'needs_clarification');
   assert.equal(ambiguousTimeZone.debug?.modelCalls, undefined);
-  assert.equal(ambiguousTimeZone.clarificationAlternatives?.length, 3);
-  assert.deepEqual(new Set(ambiguousTimeZone.clarificationAlternatives?.map(choice => choice.canonical?.timeZone)), new Set(['America/Chicago', 'Asia/Shanghai', 'America/Havana']));
+  assert.equal(ambiguousTimeZone.clarificationAlternatives?.length ?? 0, 0);
+  assert.equal(ambiguousTimeZone.debug?.ambiguousTimeZone, true);
 
   const explicitDatedRange = await parseTemporalExpression({
     text: 'June 10 2026 3pm-5pm America/Los_Angeles',

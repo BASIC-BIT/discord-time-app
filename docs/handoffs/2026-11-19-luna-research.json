@@ -1570,6 +1570,72 @@
           "status": "failed"
         }
       ]
+    },
+    {
+      "path": ".cache/luna-guard-full.json",
+      "source": {
+        "graphSha256": "C4A648C65CBF0280DF7EC6F0F4ACEC7EDBC37B8A2B06D04F00E3CD624A40715D",
+        "baseCommit": "4330fd1b0d57a8cbdb2f4518e86fb4e4d82befc0",
+        "deterministicSha256": "E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1",
+        "started": "2026-11-19T06:55:59.9189400-05:00",
+        "workers": [
+          {
+            "shard": 0,
+            "pid": 50048
+          },
+          {
+            "shard": 1,
+            "pid": 91396
+          },
+          {
+            "shard": 2,
+            "pid": 41372
+          },
+          {
+            "shard": 3,
+            "pid": 77676
+          }
+        ]
+      },
+      "experiments": [
+        {
+          "label": "guard-repair",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 199,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 2337,
+      "p95Ms": 11153,
+      "failures": [
+        {
+          "caseId": "month-boundary-leading-clock-first-of-last-month",
+          "text": "5pm the first of last month",
+          "required": true,
+          "mismatch": "expected status resolved, got needs_clarification",
+          "status": "needs_clarification"
+        },
+        {
+          "caseId": "relative-offset-from-now-100-years",
+          "text": "100 years from now",
+          "required": true,
+          "mismatch": "expected status resolved, got needs_clarification",
+          "status": "needs_clarification"
+        },
+        {
+          "caseId": "timezone-ambiguous-cst",
+          "text": "tomorrow at 5pm CST",
+          "required": true,
+          "mismatch": "expected alternatives , got 1779699600,1779742800,1779746400",
+          "status": "needs_clarification"
+        }
+      ]
     }
   ]
 }
