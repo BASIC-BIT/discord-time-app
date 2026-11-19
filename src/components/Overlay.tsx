@@ -609,7 +609,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             } catch (hostedError) {
               if (hostedError instanceof Error && hostedError.name === 'AbortError') throw hostedError;
               const failure = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
-              const message = failure.code === 'sign_in_required' ? localMessage ?? failure.message : [localMessage, failure.message].filter(Boolean).join(' ');
+              const message = failure.code === 'needs_clarification' ? failure.message : failure.code === 'sign_in_required' ? localMessage ?? failure.message : [localMessage, failure.message].filter(Boolean).join(' ');
               error = new TimeParserAPIError(message, failure.status, failure.code, failure.alternatives, failure.generationId, failure.endpointWarming);
               setCanRetryFallback(failure.status === 429 || (failure.status ?? 0) >= 500);
             }

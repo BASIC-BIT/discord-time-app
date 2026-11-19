@@ -1367,8 +1367,8 @@ async function runPlanIrPath(
   });
   const repairStartedAt = elapsedMs(startedAt);
   const remainingMs = options.deadlineMs === undefined ? Infinity : options.deadlineMs - Date.now();
-  // Reserve a planner and validator round using observed planner latency.
-  if (remainingMs < Math.max(10_000, (first.debug.firstLlmResponseMs ?? repairStartedAt) * 2)) {
+  // Observed planner/validator rounds peaked at 13.8s; reserve 15s or twice the planner latency.
+  if (remainingMs < Math.max(15_000, (first.debug.firstLlmResponseMs ?? repairStartedAt) * 2)) {
     first.debug.trace.push({ index: first.debug.trace.length + 1, type: 'router', name: 'plan_ir_repair_skipped', output: { reason: 'insufficient_request_budget', remainingMs } });
     return first;
   }
@@ -2911,7 +2911,7 @@ async function deterministicParse(
     };
     if (needsClarification) {
       response.clarificationQuestion = needsTimeZoneClarification
-        ? warning
+        ? timeZones.clarificationQuestion ?? warning
         : clarificationAlternatives.length > 0
         ? 'Which time did you mean?'
         : 'Please include AM or PM, or use 24-hour time like 13:00.';
@@ -4388,7 +4388,7 @@ Validation rules:
 - Reject if the candidate's displayed date, weekday, timezone, or clock time conflicts with the user's text.
 - Do not reject solely because the final weekday differs from a mentioned weekday when the input uses that weekday as an anchor for a relative offset, such as "day after next Saturday" or "two days before Friday". In those cases, validate the full phrase semantics instead of requiring the anchor weekday to equal the final weekday.
 - Validate the interpreted meaning, including supported typo corrections, rather than demanding literal preservation of every misspelled character. A contextual spelling correction with no competing temporal meaning is allowed when the rationale explains it. Conflicting AM/PM letters or competing date meanings still require alternatives; a correction cannot discard those meanings. Reject unresolved trailing tokens that materially affect the timestamp.
-- A top-level next-weekday request, including corrected spelling or shorthand, requires clarification between materially different weekday conventions unless the input explicitly selects upcoming, this week, or the week after. A correct weekday alone does not resolve that ambiguity. A next-weekday phrase used only as an internal anchor inside an offset follows the executor convention instead.
+- A top-level next-weekday request, including corrected spelling or shorthand, requires clarification between materially different weekday conventions unless the input explicitly selects upcoming, this week, or the week after. A correct weekday alone does not resolve that ambiguity. A next-weekday phrase used only as an internal anchor inside an offset follows the standalone anchor resolver convention instead. Verify the outer offset from that anchor; accepting an opaque compound query is not proof that it used the same week.
 - Do not reject solely because leetspeak is obfuscated. If the input uses a leet/l33t/133t time phrase and the agent explicitly interprets it as the cultural clock phrase 13:37, treat that interpretation as supported.
 - Do not return a corrected timestamp; only accept or reject this exact candidate.`),
     new HumanMessage(JSON.stringify({
@@ -4712,7 +4712,7 @@ Planning rules:
 - For date-span or schedule-block wording like "Tuesday through Thursday" or "Tuesday through Thursday 3-5pm", use outcome "no_plan" unless the request clearly means one continuous event range with exact start and end timestamps.
 - Use outcome "clarification" with alternative plans when AM/PM, "next weekday", or shorthand ambiguity materially changes the timestamp.
 - For a top-level request whose intended wording is "next <weekday>", including corrected typos or shorthand, bare dates, conventional clocks, and fuzzy clocks, treat the weekday convention as materially ambiguous unless surrounding wording explicitly says "upcoming", "this", or "the week after". Use resolve_weekday_anchor with weekdayAnchor=next_ambiguous, combine any clock separately, and return clarification. Normalizing a typo must not silently choose a weekday convention.
-- If "next <weekday>" is only an internal anchor inside a larger offset expression such as "day after next saturday", prefer resolve_calendar_query and the deterministic parser's calendar convention.
+- If "next <weekday>" is an internal anchor inside a larger offset expression, resolve ONLY that normalized weekday anchor through resolve_calendar_query, then apply the outer offset with shift_datetime. Do not pass the compound offset phrase to resolve_calendar_query: its opaque parse can select a different week. Combine any supplied clock after the explicit offset.
 - For fuzzy cultural clock cases, resolve the semantic clock, but keep any independent date ambiguity as clarification alternatives.
 - For explicit timezone names or abbreviations, preserve timezone intent. Use IANA/regional timezones for named regions so DST is date-specific. Use fixed offsets only for explicit UTC/GMT offsets. For ambiguous abbreviations such as CST, IST, or BST, use outcome "clarification" rather than choosing.
 - Phrases like "sunday after next" are ambiguous. Do not choose one silently; use resolve_weekday_anchor with weekdayAnchor=after_next_ambiguous and outcome "clarification".

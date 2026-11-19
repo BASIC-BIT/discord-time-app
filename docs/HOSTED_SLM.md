@@ -262,7 +262,7 @@ Clerk's public OAuth device grant opens the user's default browser. Native code 
 
 The overlay shows active smart-parsing progress, preserves the local diagnosis when the relay fails, and offers retry after throttling or an outage. Superseded input cannot replace the current result. Cancellation discards a client result but cannot stop a Convex action already running.
 
-The owner chose a small relay without a custom spend ledger, billing platform, or separate AI gateway. The per-user limiter is not a deployment-wide dollar cap. Development access configuration and remaining acceptance evidence are recorded in [the relay design](temporal-fallback-relay-design.md).
+The owner chose a small relay without a custom spend ledger, billing platform, or separate AI gateway. The maintained rate limiter enforces ten calls per minute per identity (burst three) and 100 admitted requests per fixed 24-hour window across the deployment. Failed and timed-out model attempts consume that shared allowance. These are request limits, not a dollar cap. Development access configuration and remaining acceptance evidence are recorded in [the relay design](temporal-fallback-relay-design.md).
 
 The original full Luna qualification failed at 148/202 required cases. Contract repairs subsequently reached 200/202; both remaining mismatches in that experiment were display formats, with expected timestamps. These runs remain research evidence, not qualification or release approval. Live fallback calls have also exceeded the five-second product SLO. See [qualification evidence](handoffs/2026-11-19-luna-qualification.md) for the baseline and follow-up status.
 

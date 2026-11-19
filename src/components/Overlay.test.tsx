@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'te
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ readText: vi.fn(), writeText: vi.fn() }));
 vi.mock('@tauri-apps/plugin-notification', () => ({ sendNotification: vi.fn() }));
 vi.mock('../lib/stats', () => ({ initStats: vi.fn(), getFormatStats: vi.fn(async () => []), getMostUsedFormatIndex: () => 0, incrementFormatUsage: vi.fn() }));
-vi.mock('../lib/hosted-parser', () => ({ canUseHostedFallback: () => fake.eligible, parseHostedTime: fake.hosted }));
+vi.mock('../lib/hosted-parser', () => ({ canUseHostedFallback: (error: unknown) => fake.eligible && !(error && typeof error === 'object' && 'code' in error && error.code === 'needs_clarification'), parseHostedTime: fake.hosted }));
 vi.mock('./HostedAccount', () => ({ HostedAccount: () => null }));
 vi.mock('../lib/api-client', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/api-client')>(),
@@ -142,6 +142,37 @@ it('lets the user clarify a timezone before parsing a timestamp', async () => {
   expect(input.value).toBe('tomorrow at 5pm in America/Chicago');
   expect(fake.parse).toHaveBeenLastCalledWith(input.value, expect.anything(), expect.anything(), expect.anything());
   expect(fake.hosted).not.toHaveBeenCalled();
+  expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
+});
+it('shows a relay clarification without prepending the local failure', async () => {
+  fake.hosted.mockRejectedValue(new TimeParserAPIError('Did you mean AM or PM?', 400, 'needs_clarification', []));
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '5pma');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(container.querySelector('.clarification-title')?.textContent).toBe('Did you mean AM or PM?');
+  expect(container.querySelector('.status-line')).toBeNull();
+});
+it('can use the model for a fuzzy clock after the user clarifies its timezone', async () => {
+  fake.parse.mockRejectedValueOnce(new TimeParserAPIError('Which timezone did you mean by CST?', 400, 'needs_clarification', []))
+    .mockRejectedValue(new Error('cold endpoint'));
+  fake.hosted.mockResolvedValue({ epoch: 1795125600, method: 'agent+plan', confidence: 1, suggestedFormatIndex: 0, debug: { serverValidated: true } });
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'tmrw at seventeen hundred CST');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(400));
+  expect(fake.hosted).not.toHaveBeenCalled();
+  const central = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Choose timezone"] button')].find(button => button.textContent === 'US Central time')!;
+  await act(async () => central.click());
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(fake.hosted).toHaveBeenCalledOnce();
+  expect(fake.hosted.mock.calls[0][0]).toBe('tmrw at seventeen hundred in America/Chicago');
   expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
 });
 

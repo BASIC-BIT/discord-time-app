@@ -232,10 +232,17 @@ async function main() {
       assert.equal(failedRepair.status, 'failed');
       assert.equal(llmCalls - beforeFailedRepair, 2, 'repair is bounded to one attempt');
       const beforeLateRepair = llmCalls;
-      const lateRepair = await parseTemporalExpression({ text: 'fuzzy evening marker', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, deadlineMs: Date.now() + 5_000, langfuse: { enabled: false } });
+      const lateRepair = await parseTemporalExpression({ text: 'fuzzy evening marker', timeZone: 'America/New_York', referenceInstant: '2026-11-18T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: false }, deadlineMs: Date.now() + 12_000, langfuse: { enabled: false } });
       assert.equal(lateRepair.status, 'failed');
       assert.equal(llmCalls - beforeLateRepair, 1, 'do not pay for repair without time to finish it');
       assert.ok(lateRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_skipped'));
+      rejectNextValidation = true;
+      providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'no_plan', reason: 'Synthetic unrepresentable interpretation.', plans: [] });
+      const beforeNoPlan = llmCalls;
+      const noPlan = await parseTemporalExpression({ text: 'tomorrow at 5pm', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: true, deterministicPreflight: true }, langfuse: { enabled: false } });
+      assert.equal(noPlan.status, 'failed');
+      assert.equal(noPlan.epoch, undefined, 'failed repair must not restore a rejected timestamp');
+      assert.equal(llmCalls - beforeNoPlan, 2, 'no-plan remains terminal after rejected preflight validation');
     } finally {
       if (previousBase === undefined) delete process.env.OPENAI_BASE_URL;
       else process.env.OPENAI_BASE_URL = previousBase;

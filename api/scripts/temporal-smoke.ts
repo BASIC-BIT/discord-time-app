@@ -3033,6 +3033,7 @@ async function main() {
   assert.equal(ambiguousTimeZone.debug?.modelCalls, undefined);
   assert.equal(ambiguousTimeZone.clarificationAlternatives?.length ?? 0, 0);
   assert.equal(ambiguousTimeZone.debug?.ambiguousTimeZone, true);
+  assert.equal(ambiguousTimeZone.clarificationQuestion, 'Which timezone did you mean by CST?');
 
   const explicitDatedRange = await parseTemporalExpression({
     text: 'June 10 2026 3pm-5pm America/Los_Angeles',
@@ -3051,7 +3052,7 @@ async function main() {
     assert.equal(result.kind, 'time_range', text);
     assert.ok(result.range!.end.epoch > result.range!.start.epoch, text);
   }
-  for (const text of ['Tuesday through Thursday 3pm-5pm', 'Tuesday through Thursday']) {
+  for (const text of ['Tuesday through Thursday 3pm-5pm', 'Tuesday through Thursday', 'tomorrow at 5pm, confirmed Nov 1']) {
     const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
     assert.notEqual(result.status, 'resolved', `Partial text must not finalize: ${text}`);
   }

@@ -1,39 +1,55 @@
 # Luna fallback qualification, November 19
 
-The full maintained live evaluation **failed: 148/202 required cases passed**. Four of five diagnostic cases passed, including standalone `5pm`, `5pms`, and the spelled-out clock example. This is not sufficient to promote the parser defaults or release the fallback.
+The latest complete run, **042a250, passed 201/202 required cases and 5/5 diagnostics**. It is not qualified for promotion: the remaining case returned the wrong week. The subsequent compound-anchor contract repair passed its two targeted cases; a new complete run is required.
 
-The tested source was `f02fe387ba416f51808a9ceee89b3f927ee17368`, with `gpt-6-luna`, low reasoning, and `planIr=true,deterministicPreflight=true,discordReferenceRouting=true`. There were no provider exceptions. Median final latency was 2,929 ms and P95 was 13,497 ms. Cost estimates were unconfigured, so the reported zero is not a measured dollar cost.
+All runs use `gpt-6-luna`, low reasoning. The selected hybrid keeps `planIr=true,deterministicPreflight=true,discordReferenceRouting=true`. No required input, reference instant, timezone, expected answer, or category changed from main at `d14afbab826d74b13fd16551c71c5470accfa36a`. A structural comparison of all 202 required rows passed; their normalized SHA-256 is `a689b0e20fc1bed448ce8868fcbc752479081ba5a1a3426a93ed3a628599960a`.
 
-Of 54 required mismatches, 16 returned failure, 26 returned clarification, and 12 returned a resolved answer. Nine resolved mismatches concerned the selected Discord format. Three resolved an input that should have failed or required clarification. Several failures ran through deterministic parsing plus model validation, so this result is not purely a Plan-IR planner score. It does not establish which misses predate the prompt changes.
+## Complete measurements
 
-The [case-level evidence](2026-11-19-luna-qualification.json) preserves all 54 failures and the diagnostics. The full local report is `.cache/luna-required-eval.json`. No expected answers, validation checks, deterministic semantics, or required-case designations were weakened to improve this score.
+| Source or experiment | Required | Diagnostics |
+| --- | ---: | ---: |
+| Initial hybrid, f02fe387 | 148/202 | 4/5 |
+| Deterministic comparison | 125/202 | 1/5 |
+| Model-only comparison | 131/202 | 4/5 |
+| First repaired hybrid | 200/202 | 5/5 |
+| Display-contract revision | 197/202 | 4/5 |
+| Product-contract head 8ecdbf1 | 200/202 | 4/5 |
+| Bounded repair, 356c5d7 | 199/202 | 5/5 |
+| Guard repair and timezone timestamp choices, 4330fd1 | 199/202 | 5/5 |
+| Calendar contract and timezone UI, 042a250 | 201/202 | 5/5 |
 
-Reproduce from `api/` with an authorized `OPENAI_API_KEY` available:
+The [initial case-level evidence](2026-11-19-luna-qualification.json) preserves the first 54 required failures. The [research evidence](2026-11-19-luna-research.json) preserves later scores, failed cases, and source hashes. Intermediate snapshots are distinct implementations, not an unchanged-build passing streak. Partial probes stopped after an edit assertion or offline regression failure are not qualification results.
+
+The initial failures included 12 resolved mismatches: nine display formats and three answers that should have failed or requested clarification. Calendar-only and model-only lanes are comparisons, not accepted alternatives or a paired comparison of the final implementation. Deterministic preflight remains enabled.
+
+## Latest failure and repair
+
+`day aftr next satturday at 13:37` should resolve to epoch `1780249020`. The 042a250 run returned `1780853820`, one week late, and independent validation accepted it. Its plan sent the whole compound offset to `resolve_calendar_query`, whose opaque parse selected a different week.
+
+The repaired instruction resolves only the normalized weekday anchor and applies the outer offset with `shift_datetime`. Validation must check that composition instead of assuming an opaque compound query used the same anchor week. The unchanged typo case and its clean counterpart both passed the targeted run. This does not establish full qualification.
+
+Other repairs address output-type contracts, year preservation, calendar facts, display-format ownership, range clocks, schema-required nulls, and alternative-plan counts. No deterministic typo dictionary or phrase-specific timestamp override was added. The CST contract remains a question with no timestamp alternatives; the overlay's explicit zone buttons clarify the input before a new parse.
+
+A guard-rejected or unexecutable plan can receive one error-guided repair. Independent final-validation rejection, provider errors, and no-plan remain terminal. Both attempts and their usage stay in diagnostics. The relay's 30-second abort is unchanged. Repair reserves at least 15 seconds, or twice the observed planner latency if larger; the previous complete run's single planner/validator rounds had P95 11,765 ms and maximum 13,742 ms. An insufficient budget returns the original failure without another model call.
+
+## Limits and remaining acceptance
+
+All offline suites, 43 related frontend/relay tests, API/frontend/Convex strict typechecks, and the production frontend build pass. The daily rate-limit regression uses distinct identities and proves the 101st admitted request cannot call the model. Failed or timed-out attempts still consume the 100-request shared fixed-window allowance.
+
+Live calls still exceed the five-second product SLO. Correctness evals do not impose the relay deadline; latency and deadline behaviour are separate measurements. Dollar cost estimates are unconfigured. Earlier snapshots omitted deterministic-validation token usage; current accounting includes accepted/rejected validation and repair, but provider usage may be unavailable on errors. Token totals are not a billing ledger, and daily enforcement does not depend on them.
+
+Exact installed-MSI authentication acceptance and real-account refresh after restart remain open. A previous isolated review install was canceled. Component previews and successful backend calls do not establish installed-app or native browser-flow proof. No release or merge has been made.
+
+## Reproduce
+
+From `api/`, with an authorized `OPENAI_API_KEY` available:
 
 ```powershell
 $env:TEMPORAL_EVAL_MODELS = 'gpt-6-luna:low'
-$env:TEMPORAL_EVAL_EXPERIMENTS = 'plan-ir:planIr=true,deterministicPreflight=true,discordReferenceRouting=true'
+$env:TEMPORAL_EVAL_EXPERIMENTS = 'qualification:planIr=true,deterministicPreflight=true,discordReferenceRouting=true'
 $env:TEMPORAL_EVAL_REQUIRE_OPENAI = '1'
 $env:TEMPORAL_EVAL_PROGRESS_EVERY = '10'
 $env:TEMPORAL_EVAL_OUTPUT = '../.cache/luna-required-eval.json'
 $env:LANGFUSE_ENABLED = 'false'
 npm run eval:temporal
 ```
-
-The next decision is whether to keep the new fallback off by default while it is qualified, or continue the parser experiment before landing it. Exact installed-MSI authentication acceptance also remains open: the isolated review MSI was built and hashed, but its UAC installation was canceled.
-
-The user selected continued parser research. The first targeted contract repair passed 43/59 required cases sampled from all original failures plus controls, leaving 16 failures. It exposed missing calendar-default instructions, a dropped OpenAI presentation-format argument, meridiem truncation in range syntax, premature single-candidate acceptance of ranges and unexplained residue, and stopping after rejected deterministic validation instead of attempting Plan-IR repair. Repairs preserve the original expected answers and deterministic execution checks. Full qualification is still pending; the model-only and repaired-preflight lanes are being compared rather than silently changing the relay default.
-
-The later complete hybrid experiment reached **200/202 required, 5/5 diagnostic**, then a display-contract revision regressed to **197/202 required, 4/5 diagnostic**. The latter exposed stochastic disagreements about boundary qualifiers, supported bare epochs, choice-outcome metadata, short-date ambiguity, and display style. These are distinct source snapshots, not repeated attempts at one unchanged build. Both complete reports and their source hashes are summarized in [research evidence](2026-11-19-luna-research.json). No parser default is qualified by these scores.
-
-The model-only comparison scored 131/202 required, and deterministic-only scored 125/202. They are comparison snapshots, not a paired comparison of the final source and not accepted alternatives. Deterministic preflight remains enabled. Planner and validator contract research continues with Luna low; the required catalog and its expected answers remain unchanged.
-
-Exact head 8ecdbf1 scored **200/202 required and 4/5 diagnostic**. The remaining required failures were `compound-typo-cultural-clock` (a midnight literal overrode a 13:37 clock dependency) and `explicit-year-holiday` (the validator rejected the configured regional holiday calendar). The full report is `.cache/luna-product-full.json`, summarized with source hashes in the research artifact. No required mismatch returned a wrong singular answer in this run.
-
-Further targeted testing exposed an empty `propose_candidate` appended to an otherwise correct compound plan. The follow-up permits one error-guided repair of an unexecutable OpenAI plan, retains both traces and complete token counts, and independently validates the repaired result. Semantic validation rejection and no-plan do not receive this retry. Fake-provider tests prove the one-repair bound and usage accounting; the targeted live cases passed 2/2 required and 1/1 diagnostic. A new full qualification is required. Partial probes stopped after an edit assertion or offline accounting failure are not qualification results.
-
-Exact head 356c5d7 scored **199/202 required and 5/5 diagnostic**. Its misses were one Discord presentation choice and two plans rejected before execution by existing reference/clock guards. The initial repair trigger only handled execution failures; it now covers guard-rejected plans while keeping those guards unchanged. All three targeted cases passed, and a real clock-choice case exercised successful error-guided repair in 26 seconds. The relay's deadline now prevents starting a repair without a conservative budget for another planner/validator round. Full correctness evaluation does not impose that relay deadline; latency and deadline behavior are separate measurements.
-
-The current source also uses the existing timezone registry to provide explicit, validated zone alternatives for an otherwise resolvable expression, rather than matching clarification prose. No new timezone aliases or typo rules were added. Earlier evaluation snapshots omitted deterministic-validation token usage; current accounting includes accepted and rejected validation calls and bounded repair. Dollar cost remains unconfigured.
-
-Exact head 4330fd1 scored **199/202 required and 5/5 diagnostic**. One planner normalized a past date without its year and rolled into the following year. One validator incorrectly disputed a library-computed weekday (May 24, 2126 is Friday). The third mismatch was an unintended contract change: the required CST case explicitly expects a question without timestamp alternatives. That expectation is retained; timezone choice now happens in the overlay by inserting an explicit IANA zone before reparsing. The planner now preserves the year in normalized dates, and the validator uses computed calendar facts rather than mental weekday arithmetic. All three unchanged cases passed their targeted retest. The complete qualification remains open.

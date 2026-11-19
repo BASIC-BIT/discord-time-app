@@ -1636,6 +1636,60 @@
           "status": "needs_clarification"
         }
       ]
+    },
+    {
+      "path": ".cache/luna-calendar-full.json",
+      "source": {
+        "baseCommit": "042a250363db4715d9fd200e11d4ae05259f9809",
+        "started": "2026-11-19T07:12:05.6632501-05:00",
+        "graphSha256": "974A013C991C164A060CB4F79A73687D4C078E07C072FB870E1E5E351229B7BB",
+        "workers": [
+          {
+            "pid": 36512,
+            "shard": 0
+          },
+          {
+            "pid": 101936,
+            "shard": 1
+          },
+          {
+            "pid": 78904,
+            "shard": 2
+          },
+          {
+            "pid": 71740,
+            "shard": 3
+          }
+        ],
+        "deterministicSha256": "E227CEFE2C29F16F66AE3B1B4A680DB7FAA481A534363760A3B51ACBC9BE96E1"
+      },
+      "experiments": [
+        {
+          "label": "calendar-contract",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 201,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 2659,
+      "p95Ms": 11638,
+      "failures": [
+        {
+          "caseId": "anchor-offset-typo-weekday-relative-clock",
+          "text": "day aftr next satturday at 13:37",
+          "required": true,
+          "mismatch": "expected epoch 1780249020, got 1780853820",
+          "status": "resolved",
+          "epoch": 1780853820,
+          "suggestedFormatIndex": 4
+        }
+      ]
     }
   ]
 }

@@ -3,7 +3,7 @@
 import { v, ConvexError } from 'convex/values';
 import { action } from './_generated/server';
 import { components, internal } from './_generated/api';
-import { RateLimiter, MINUTE } from '@convex-dev/rate-limiter';
+import { RateLimiter, MINUTE, DAY } from '@convex-dev/rate-limiter';
 import { parseTemporalExpression } from '../api/src/temporal/index';
 import { DISCORD_TIMESTAMP_MAX_INPUT_CHARS } from '@hammer-overlay/discord-timestamp-routing';
 import type { TemporalParseResponse } from '../api/src/temporal/types';
@@ -12,6 +12,7 @@ import { Temporal } from '@js-temporal/polyfill';
 const MODEL = 'gpt-6-luna';
 const rateLimiter = new RateLimiter(components.rateLimiter, {
   fallback: { kind: 'token bucket', rate: 10, period: MINUTE, capacity: 3 },
+  fallbackDaily: { kind: 'fixed window', rate: 100, period: DAY },
 });
 
 export const parse = action({
@@ -30,6 +31,8 @@ export const parse = action({
     if (!apiKey) throw new ConvexError('Hosted parsing is not configured yet.');
     const limit = await rateLimiter.limit(ctx, 'fallback', { key: identity.tokenIdentifier });
     if (!limit.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing is busy. Wait a few seconds, then try again.' });
+    const daily = await rateLimiter.limit(ctx, 'fallbackDaily');
+    if (!daily.ok) throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing has reached its shared daily limit. Try again later.' });
     const started = Date.now();
     let result: TemporalParseResponse | undefined;
     try {

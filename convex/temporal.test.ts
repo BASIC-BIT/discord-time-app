@@ -74,6 +74,15 @@ test('throttles duplicate bursts before model work and isolates accounts', async
   await b.action(api.temporal.parse, args);
   expect(parseTemporalExpression).toHaveBeenCalledTimes(4);
 });
+test('bounds deployment-wide model calls even across distinct admitted identities', async () => {
+  const t = convexTest(schema, modules); rateLimiter.register(t);
+  vi.mocked(parseTemporalExpression).mockResolvedValue({ status: 'failed', confidence: 0, method: 'agent+plan', assumptions: [], ambiguity: [], validation: { passed: false, warnings: [], checks: [] } });
+  for (let index = 0; index < 100; index += 1) {
+    await t.withIdentity({ subject: `daily-${index}` }).action(api.temporal.parse, args);
+  }
+  await expect(t.withIdentity({ subject: 'one-more-account' }).action(api.temporal.parse, args)).rejects.toThrow('shared daily limit');
+  expect(parseTemporalExpression).toHaveBeenCalledTimes(100);
+});
 
 test('tracking failure cannot replace a successful validated result', async () => {
   const t = convexTest(schema, modules); rateLimiter.register(t);
