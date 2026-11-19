@@ -162,3 +162,23 @@ test('shared exhaustion recovers with refill instead of waiting for a fixed dail
     expect(parseTemporalExpression).toHaveBeenCalledTimes(101);
   } finally {clock.mockRestore();}
 });
+
+test.each([false, true])('reports the server deadline distinctly, including late parser returns (%s)', async lateReturn => {
+  const t=convexTest(schema,modules); rateLimiter.register(t);
+  const controller=new AbortController();
+  const timeout=vi.spyOn(AbortSignal,'timeout').mockReturnValue(controller.signal);
+  vi.mocked(parseTemporalExpression).mockImplementation(async params=>{
+    expect(params.signal).toBe(controller.signal);
+    params.onModelUsage?.({inputTokens:10,outputTokens:2});
+    controller.abort(new DOMException('private timeout diagnostic','TimeoutError'));
+    if(!lateReturn) throw controller.signal.reason;
+    return {status:'resolved',epoch:1,confidence:1,method:'agent+plan',assumptions:[],ambiguity:[],validation:{passed:true,warnings:[],checks:[]}};
+  });
+  try {
+    const user=t.withIdentity({subject:'timeout-user'});
+    await expect(user.action(api.temporal.parse,args)).rejects.toMatchObject({data:expect.objectContaining({code:'parse_timeout'})});
+    expect(timeout).toHaveBeenCalledWith(30000);
+    expect(await user.query(api.usage.mine,{})).toEqual({requests:1,inputTokens:10,outputTokens:2});
+    await t.run(async ctx=>{const [usage]=await ctx.db.query('usage').collect();expect(usage.status).toBe('timeout');});
+  } finally {timeout.mockRestore();}
+});

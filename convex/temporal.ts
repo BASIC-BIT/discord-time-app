@@ -25,6 +25,7 @@ export const parse = action({
     if (!apiKey) throw new ConvexError('Hosted parsing is not configured yet.');
     await ctx.runMutation(internal.limits.admit, {});
     const started = Date.now();
+    const deadline = AbortSignal.timeout(30_000);
     let result: TemporalParseResponse | undefined;
     let usageEvents = 0;
     let inputTokens = 0;
@@ -36,7 +37,7 @@ export const parse = action({
         requestId: args.requestId, openaiApiKey: apiKey,
         openaiModel: MODEL, openaiReasoningEffort: 'low',
         features: { planIr: true, deterministicPreflight: true, discordReferenceRouting: true },
-        signal: AbortSignal.timeout(30_000),
+        signal: deadline,
         deadlineMs: started + 30_000,
         onModelUsage(usage) {
           usageEvents += 1;
@@ -44,6 +45,7 @@ export const parse = action({
           else { inputTokens += usage.inputTokens; outputTokens += usage.outputTokens; }
         },
       });
+      deadline.throwIfAborted();
       // Keep model traces and raw prompts out of the client response.
       const { clarificationQuestion, ...publicResult } = result;
       return { ...publicResult,
@@ -57,10 +59,11 @@ export const parse = action({
       // Log diagnostic metadata without raw prompts, provider messages, or credentials.
       console.error('Hosted parsing failed', { requestId: args.requestId, name: error instanceof Error ? error.name : 'UnknownError',
         status: error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : null });
+      if (deadline.aborted) throw new ConvexError({ code: 'parse_timeout', message: 'Smart parsing took too long. Try rewording the expression or choose the date and time.' });
       throw new ConvexError('Hosted parsing is unavailable. Try again shortly.');
     } finally {
       try { await ctx.runMutation(internal.usage.record, {
-        requestId: args.requestId, model: MODEL, status: result?.status ?? 'error',
+        requestId: args.requestId, model: MODEL, status: deadline.aborted ? 'timeout' : result?.status ?? 'error',
         durationMs: Date.now() - started, inputLength: args.text.length,
         inputTokens: usageEvents ? inputTokens : result?.debug?.inputTokens ?? 0,
         outputTokens: usageEvents ? outputTokens : result?.debug?.outputTokens ?? 0,

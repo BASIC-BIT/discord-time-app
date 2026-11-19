@@ -116,3 +116,8 @@ test('native and HTTP errors do not trigger a second hosted attempt after local 
   const http = new TimeParserAPIClient('http://127.0.0.1:8857','test-local-key','unavailable',false);
   await expect(http.parseTime('test','UTC')).rejects.toSatisfy((error: TimeParserAPIError) => error.llmFallbackAttempted && !canUseHostedFallback(error));
 });
+
+test('preserves a server deadline as parse_timeout instead of a generic provider outage', async()=>{
+  fake.action.mockRejectedValue(new ConvexError({code:'parse_timeout',message:'Smart parsing took too long.'}));
+  await expect(parseHostedTime('test','UTC',now,'timeout',new AbortController().signal)).rejects.toMatchObject({code:'parse_timeout',status:504});
+});

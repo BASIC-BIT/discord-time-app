@@ -259,3 +259,14 @@ it('keeps the browser sign-in panel mounted while another parse is in flight', a
   await type('6pms'); await act(async()=>vi.advanceTimersByTimeAsync(400));
   expect(container.querySelector('[aria-label="Account"]')).toBe(account);
 });
+
+it('explains a hosted deadline without offering another paid retry', async()=>{
+  fake.hosted.mockRejectedValue(new TimeParserAPIError('Smart parsing took too long.',504,'parse_timeout'));
+  await act(async()=>root.render(<Overlay openToken={0} onClose={()=>{}} />));
+  const input=container.querySelector('textarea')!;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,'5pms');input.dispatchEvent(new Event('input',{bubbles:true}));});
+  await act(async()=>vi.advanceTimersByTimeAsync(1200));
+  expect(container.querySelector('.status-line')?.textContent).toContain('Smart parsing took too long.');
+  expect([...container.querySelectorAll('button')].some(button=>button.textContent==='Try smart parsing again')).toBe(false);
+  expect(fake.hosted).toHaveBeenCalledOnce();
+});
