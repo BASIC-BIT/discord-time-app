@@ -572,7 +572,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (!active()) return;
           setGenerationId(result.generationId);
           if (result.debug?.endpointWarming === true) {
-            warmingTextRef.current = text;
+            warmingTextRef.current = result.method.startsWith('agent+') ? null : text;
             setEndpointWarming(true);
           }
           console.log("API Result: ", result);
@@ -1074,7 +1074,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
             <span className="verifying-label">{progressText}</span>
           </div>
           <div className={`warming-notice ${endpointWarming ? 'visible' : ''}`}>
-            Smart parsing is warming up, usually under a minute. Showing basic results meanwhile.
+            Smart parsing is warming up. You can keep typing.
           </div>
         </div>
         <span className="hint">{footerHint}</span>

@@ -23,6 +23,7 @@ const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
 const OpenAiTemporalPlanSchema = TemporalPlanSchema.extend({
   kind: z.enum(['instant', 'time_range']).nullable(),
+  presentationFormat: TemporalPlanSchema.shape.presentationFormat.unwrap(),
   startStep: z.number().int().min(0).nullable(),
   endStep: z.number().int().min(0).nullable(),
 });

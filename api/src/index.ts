@@ -63,7 +63,7 @@ const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.
 const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
 const activeParseRequests = new Map<string, AbortController>();
 const planIrEndpointWarmth = new PlanIrEndpointWarmth(config.temporalPlanIrEndpoint, config.temporalPlanIrWarmup);
-const PLAN_IR_WARMING_WARNING = 'Plan-IR endpoint is warming up; returned the deterministic result.';
+const PLAN_IR_WARMING_WARNING = 'Plan-IR endpoint is warming up; used deterministic parsing with LLM fallback when configured.';
 
 const CORS_ORIGINS = ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
 
@@ -460,7 +460,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
         ...(request.body.features?.discordReferenceShadow === undefined ? {} : { discordReferenceShadow: request.body.features.discordReferenceShadow }),
       },
     };
-    // While the endpoint is not known warm, skip every model path so the reply is immediate.
+    // Keep the cold endpoint out of the parse path while it warms in the background.
     const endpointWarming = planIrEndpointWarmth.shouldShortCircuit();
     const planIrEndpoint = config.temporalPlanIrEndpoint;
     if (endpointWarming) {
@@ -473,7 +473,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
     if (now !== undefined) {
       parseInput.referenceInstant = now;
     }
-    if (config.openaiApiKey !== undefined && !endpointWarming) {
+    if (config.openaiApiKey !== undefined) {
       parseInput.openaiApiKey = config.openaiApiKey;
       parseInput.openaiModel = config.openaiModel;
       parseInput.openaiReasoningEffort = config.openaiReasoningEffort;
@@ -485,7 +485,11 @@ server.post<{ Body: ParseRequest }>('/parse', {
       }
     }
 
-    const parsed = await parseTemporalExpression(parseInput);
+    const { openaiApiKey, ...withoutLlm } = parseInput;
+    let parsed = await parseTemporalExpression(endpointWarming ? withoutLlm : parseInput);
+    if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
+      parsed = await parseTemporalExpression({ ...parseInput, features: { ...parseInput.features, planIr: true } });
+    }
     if (endpointWarming) {
       parsed.debug = { ...parsed.debug, endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' };
       parsed.validation.warnings.push(PLAN_IR_WARMING_WARNING);

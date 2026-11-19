@@ -1,0 +1,186 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseTemporalPlanPlannerOutput } from '../src/temporal/plan-ir';
+
+async function listen(server: ReturnType<typeof createServer>) {
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert(address !== null && typeof address === 'object');
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function checkStrictSchema(value: unknown): void {
+  if (value === null || typeof value !== 'object') return;
+  if ('properties' in value && value.properties !== null && typeof value.properties === 'object') {
+    assert('required' in value && Array.isArray(value.required));
+    assert.deepEqual([...value.required].sort(), Object.keys(value.properties).sort());
+  }
+  for (const nested of Object.values(value)) checkStrictSchema(nested);
+}
+
+async function main() {
+  const directory = await mkdtemp(join(tmpdir(), 'temporal-warmup-fallback-'));
+  assert(directory.startsWith(join(tmpdir(), 'temporal-warmup-fallback-')));
+  let llmCalls = 0;
+  let slmCalls = 0;
+  let verdict: 'accept' | 'reject' | 'unavailable' | 'pending' = 'accept';
+  let slmReady = false;
+  const plan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic clock interpretation.', plans: [{
+    label: '5 PM', confidence: 0.9, finalStep: 0,
+    steps: [{ op: 'resolve_calendar_query', query: 'November 18 2026 5pm', precision: 'datetime' }],
+  }] });
+  const llm = createServer(async (request, response) => {
+    let raw = '';
+    for await (const chunk of request) raw += chunk;
+    llmCalls += 1;
+    if (verdict === 'pending') return;
+    if (verdict === 'unavailable') {
+      response.writeHead(401, { 'content-type': 'application/json' });
+      response.end('{"error":{"message":"test provider unavailable","type":"authentication_error"}}');
+      return;
+    }
+    const body: unknown = JSON.parse(raw);
+    assert(body !== null && typeof body === 'object');
+    try {
+      checkStrictSchema(body);
+    } catch {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      response.end('{"error":{"message":"Structured-output schema must require every property","type":"invalid_request_error"}}');
+      return;
+    }
+    const tools = 'tools' in body ? body.tools : [];
+    assert(Array.isArray(tools));
+    const names = tools.map((entry: unknown) => {
+      assert(entry !== null && typeof entry === 'object' && 'function' in entry);
+      const fn = entry.function;
+      assert(fn !== null && typeof fn === 'object' && 'name' in fn && typeof fn.name === 'string');
+      return fn.name;
+    });
+    const planning = raw.includes('"outcome"');
+    const args = planning
+      ? { ...plan, plans: plan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
+      : { accepted: verdict === 'accept', confidence: 0.9, reason: 'Synthetic independent validation.', missingOrContradictedSignals: [] };
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      id: `test-${llmCalls}`, object: 'chat.completion', created: 1, model: 'test-llm',
+      choices: [{ index: 0, finish_reason: names.length ? 'tool_calls' : 'stop', message: { role: 'assistant', content: names.length ? null : JSON.stringify(args),
+        ...(names.length ? { tool_calls: [{ id: `tool-${llmCalls}`, type: 'function', function: { name: names[0], arguments: JSON.stringify(args) } }] } : {}),
+      } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }));
+  });
+  const slm = createServer((_request, response) => {
+    slmCalls += 1;
+    response.writeHead(slmReady ? 200 : 503, { 'content-type': 'application/json' });
+    response.end(slmReady ? JSON.stringify({ choices: [{ message: { content: JSON.stringify(plan) } }] }) : 'warming');
+  });
+  const llmUrl = await listen(llm);
+  const slmUrl = await listen(slm);
+  try {
+    for (const { configured, warming } of [
+      { configured: true, warming: true },
+      { configured: false, warming: true },
+      { configured: true, warming: false },
+    ]) {
+      slmReady = !warming;
+      const reservation = createServer();
+      const apiUrl = await listen(reservation);
+      await new Promise<void>((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
+      const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+        cwd: fileURLToPath(new URL('..', import.meta.url)),
+        env: { ...process.env, NODE_ENV: 'production', PORT: new URL(apiUrl).port,
+          STATIC_API_KEY: 'test-local-key', DB_PATH: join(directory, `${configured}-${warming}.db`), LANGFUSE_ENABLED: 'false',
+          TELEMETRY_HMAC_KEY: 'test-warmup-telemetry-key',
+          OPENAI_API_KEY: configured ? 'sk-test-llm-key' : '', OPENAI_MODEL: 'test-llm', OPENAI_BASE_URL: `${llmUrl}/v1`,
+          TEMPORAL_FEATURE_PLAN_IR: 'true', TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT: 'false',
+          TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: 'false',
+          TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: slmUrl, TEMPORAL_PLAN_IR_ENDPOINT_MODEL: 'test-cold-slm',
+          TEMPORAL_PLAN_IR_ENDPOINT_API: 'chat', TEMPORAL_PLAN_IR_ENDPOINT_WARMUP: String(warming),
+        }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', data => { output += String(data); });
+      child.stderr.on('data', data => { output += String(data); });
+      try {
+        const deadline = Date.now() + 15_000;
+        while (!output.includes('Server listening on port')) {
+          assert(child.exitCode === null && Date.now() < deadline, output);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        const parse = (text: string) => fetch(`${apiUrl}/parse`, {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'test-local-key', 'x-api-version': '1' },
+          body: JSON.stringify({ requestId: 'warmup-fallback-test', text, tz: 'America/Indianapolis', now: '2026-11-18T21:18:11.689Z', features: { deterministicPreflight: false } }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const before = llmCalls;
+        const resolved = await parse('5pm');
+        assert.equal(resolved.status, 200);
+        const resolvedBody = await resolved.json();
+        assert.equal(resolvedBody.epoch, 1795039200);
+        if (!warming) {
+          assert.equal(resolvedBody.method, 'agent+plan');
+          assert.equal(resolvedBody.debug?.endpointWarming, undefined);
+          assert.equal(llmCalls, before, 'the normal RunPod path must not invoke the LLM');
+          continue;
+        }
+        const clarification = await parse('tomorrow at 3');
+        assert.equal(clarification.status, 400);
+        assert.equal((await clarification.json()).error, 'needs_clarification');
+        assert.equal(llmCalls, before, 'resolved and clarification results must not call an LLM');
+
+        verdict = 'accept';
+        const fallback = await parse('fuzzy evening marker');
+        const result = await fallback.json();
+        if (configured) {
+          assert.equal(fallback.status, 200, JSON.stringify(result));
+          assert.equal(result.method, 'agent+plan');
+          assert.equal(result.epoch, 1795039200);
+          assert.equal(result.debug?.endpointWarming, true);
+          assert.equal(llmCalls - before, 2, 'agent proposal and independent validation must both run');
+          verdict = 'reject';
+          assert.equal((await parse('fuzzy evening marker')).status, 400, 'rejected LLM answers must stay failed');
+          verdict = 'unavailable';
+          assert.equal((await parse('fuzzy evening marker')).status, 400, 'provider failure must stay failed');
+          verdict = 'pending';
+          const callsBeforeCancellation = llmCalls;
+          const pending = parse('fuzzy evening marker');
+          const cancellationDeadline = Date.now() + 5_000;
+          while (llmCalls === callsBeforeCancellation) {
+            assert(Date.now() < cancellationDeadline, 'LLM fallback did not start');
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          const cancellation = await fetch(`${apiUrl}/parse/cancel`, {
+            method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'test-local-key', 'x-api-version': '1' },
+            body: JSON.stringify({ requestId: 'warmup-fallback-test' }),
+          });
+          assert.equal((await cancellation.json()).cancelled, true);
+          assert.equal((await pending).status, 499);
+        } else {
+          assert.equal(fallback.status, 400);
+          assert.equal(llmCalls, before, 'missing credentials must not call the LLM');
+        }
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill();
+          await once(child, 'exit');
+        }
+      }
+    }
+    assert(slmCalls > 0, 'RunPod warming must continue alongside parsing');
+    console.log('HTTP warmup fallback smoke passed: deterministic, clarification, LLM success/rejection/failure, cancellation, missing key, background warming, normal SLM route.');
+  } finally {
+    llm.closeAllConnections();
+    slm.closeAllConnections();
+    llm.close();
+    slm.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1; });
