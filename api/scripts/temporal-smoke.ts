@@ -166,6 +166,18 @@ async function executeModelReferenceShiftClockClarification(
 }
 
 async function main() {
+  for (const text of [
+    'in 23 minutes round to nearest 15 minutes',
+    'in 23 minutes, round to nearest 15 minutes',
+    '23 minutes from now, then round to the nearest 15 minutes',
+    '23 minutes from now then round to nearest quarter hour',
+  ]) {
+    const parsed = await parseExpression({ text, calendarContext: { referenceInstant: '2026-06-02T18:55:00Z', timeZone: 'America/New_York' } });
+    assert.equal(parsed.candidates.length, 1, text);
+    assert.equal(Temporal.Instant.compare(parsed.candidates[0]!.isoInstant, '2026-06-02T19:15:00Z'), 0, text);
+    assert(parsed.parserNotes.includes('Matched relative boundary snap expression.'), text);
+  }
+
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
   const epochZeroWithPreflightDisabled = await parseTemporalExpression({

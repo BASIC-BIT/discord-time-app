@@ -30,6 +30,7 @@ async function main() {
   const directory = await mkdtemp(join(tmpdir(), 'temporal-warmup-fallback-'));
   assert(directory.startsWith(join(tmpdir(), 'temporal-warmup-fallback-')));
   let llmCalls = 0;
+  let semanticPayloadChecks = 0;
   let slmCalls = 0;
   let verdict: 'accept' | 'reject' | 'unavailable' | 'pending' = 'accept';
   let slmReady = false;
@@ -72,6 +73,13 @@ async function main() {
       for (const message of body.messages) {
         if (message.role !== 'user' || typeof message.content !== 'string') continue;
         const packet = JSON.parse(message.content);
+        if (packet.candidate && packet.agentTrace) {
+          assert.equal('formats' in packet, false);
+          assert.equal(JSON.stringify(packet).includes('"presentationFormat":'), false);
+          assert.equal(typeof packet.candidate.isoInstant, 'string');
+          assert.equal(typeof packet.facts.calendarDayOffsetFromReference, 'number');
+          semanticPayloadChecks += 1;
+        }
         if (packet.originalText === 'May 26th (Tuesday) 2026 at 5pm') {
           assert.equal(packet.facts.referenceLocalDate, '2026-05-15');
           assert.equal(packet.facts.calendarDayOffsetFromReference, 11);
@@ -286,6 +294,7 @@ async function main() {
       if (previousBase === undefined) delete process.env.OPENAI_BASE_URL;
       else process.env.OPENAI_BASE_URL = previousBase;
     }
+    assert(semanticPayloadChecks > 0, 'semantic validation still receives candidate facts without display metadata');
     console.log('HTTP warmup fallback smoke passed: deterministic, clarification, LLM success/rejection/failure, cancellation, missing key, background warming, normal SLM route.');
   } finally {
     llm.closeAllConnections();

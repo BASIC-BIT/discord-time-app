@@ -547,6 +547,50 @@
       "failures": [
 
       ]
+    },
+    {
+      "path": ".cache/luna-context-full.json",
+      "requiredPassed": 197,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 7865,
+      "p95Ms": 13344,
+      "overThirtySeconds": 0,
+      "source": {"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","featureFlags":{"deterministicPreflight":false,"planIr":true,"discordReferenceRouting":true},"graphSha256":"D4B3A86F0424F2F42DA86780EA8ABA899C140D9B3554F903FFA3A46CB62E8133","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","agentTimeoutMs":120000,"workers":[{"pid":32424,"shard":0},{"pid":66388,"shard":1},{"pid":90936,"shard":2},{"pid":68636,"shard":3}],"started":"2026-11-19T11:34:00.8289111-05:00"},
+      "experiments": [{"label":"context-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+        {"caseId":"month-boundary-first-of-month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","validationWarnings":[],"finalValidation":{"accepted":true,"confidence":0.99,"reason":"The unqualified “first of the month” resolves by convention to the next future first-of-month at local noon. From June 2, 2026 in America/New_York, that is July 1, 2026 at 12:00 PM local time, matching the candidate.","missingOrContradictedSignals":[]}},
+        {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected status resolved, got failed","status":"failed","validationWarnings":["The requested 23-minute shift can be represented, but the available operations cannot round the resulting timestamp to the nearest 15-minute boundary."]},
+        {"caseId":"discord-reference-shift-suffix","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp is correctly shifted one hour from the Discord timestamp, but the plan incorrectly preserves the source’s `t` format. For a Discord-referenced date combined with a new clock, the default presentation format is `f`.","The plan uses presentationFormat `t` instead of the required default `f` for a Discord timestamp shifted to a new clock time."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp is correctly shifted one hour from the Discord timestamp, but the plan incorrectly preserves the source’s `t` format. For a Discord-referenced date combined with a new clock, the default presentation format is `f`.","missingOrContradictedSignals":["The plan uses presentationFormat `t` instead of the required default `f` for a Discord timestamp shifted to a new clock time."]}},
+        {"caseId":"discord-reference-shift-suffix-word-number-four","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp is correct: the Discord reference resolves to midnight in America/New_York, and four hours later is 2026-08-02 at 4:00 AM. However, the plan selects presentationFormat `t`. For a transformed Discord reference that combines the referenced date with a new clock, the default presentation format is `f`.","The selected presentation format `t` does not follow the required `f` default for a referenced date combined with a new clock."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp is correct: the Discord reference resolves to midnight in America/New_York, and four hours later is 2026-08-02 at 4:00 AM. However, the plan selects presentationFormat `t`. For a transformed Discord reference that combines the referenced date with a new clock, the default presentation format is `f`.","missingOrContradictedSignals":["The selected presentation format `t` does not follow the required `f` default for a referenced date combined with a new clock."]}},
+        {"caseId":"discord-reference-shift-prefix","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The timestamp arithmetic is correct: the referenced instant is 2026-08-02 00:00 in New York, and one hour later is 01:00. However, the plan selects Discord presentation format `t`; a transformed reference combining its date with a new clock should use `f` by default.","Presentation format should be `f`, not `t`, for the referenced date combined with the shifted clock."],"finalValidation":{"accepted":false,"confidence":0.99,"reason":"The timestamp arithmetic is correct: the referenced instant is 2026-08-02 00:00 in New York, and one hour later is 01:00. However, the plan selects Discord presentation format `t`; a transformed reference combining its date with a new clock should use `f` by default.","missingOrContradictedSignals":["Presentation format should be `f`, not `t`, for the referenced date combined with the shifted clock."]}}
+      ]
+    },
+    {
+      "path": ".cache/luna-tool-contract-probe.json",
+      "requiredPassed": 7,
+      "requiredTotal": 8,
+      "diagnosticPassed": 0,
+      "diagnosticTotal": 0,
+      "source": {"started":"2026-11-19T11:45:55.5805325-05:00","pid":60052,"baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","dirtyParser":true,"graphSha256":"1A2B2611F4B01A35C6A96E1F192D8FA271E838BC48AF7F79CF8F605E1DEE58F9","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"},
+      "experiments": [{"label":"tool-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+        {"caseId":"boundary-snap-relative-nearest-quarter","required":true,"mismatch":"expected status resolved, got failed","status":"failed","validationWarnings":["The request specifies a 23-minute duration followed by rounding to the nearest 15-minute boundary. Keep both operations together in the supported duration-and-rounding calendar query. resolve_calendar_query returned no candidates for 23 minutes from now, then round to the nearest 15 minutes."],"queryArguments":["in 23 minutes, round to the nearest 15 minutes","23 minutes from now, then round to the nearest 15 minutes"]}
+      ]
+    },
+    {
+      "path": ".cache/luna-query-contract-probe.json",
+      "requiredPassed": 8,
+      "requiredTotal": 8,
+      "diagnosticPassed": 0,
+      "diagnosticTotal": 0,
+      "limit": "Focused regression after query-separator and validator-payload repair, not full-catalog qualification.",
+      "source": {"pid":81880,"deterministicSha256":"102C8BA99D2669053EB7459FDFD3D66AA324A5F7EAACE96AECC83C403DCED172","baseCommit":"b558384585ac7ad1fe78a9ed2ab523470d30698e","dirtyParser":true,"graphSha256":"1A2B2611F4B01A35C6A96E1F192D8FA271E838BC48AF7F79CF8F605E1DEE58F9","started":"2026-11-19T11:52:14.8310282-05:00"},
+      "experiments": [{"label":"query-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+
+      ]
     }
   ]
 }
