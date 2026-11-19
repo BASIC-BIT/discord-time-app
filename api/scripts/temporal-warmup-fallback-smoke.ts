@@ -189,6 +189,11 @@ async function main() {
       assert.equal(repaired.method, 'agent+plan');
       assert.equal(repaired.canonical?.isoInstant, '2026-05-30T16:00:00Z');
       assert.equal(llmCalls - beforeRepair, 3, 'reject heuristic, plan repair, independently validate repair');
+      rejectNextValidation = true;
+      const beforeLegacy = llmCalls;
+      const rejected = await parseTemporalExpression({ text: 'tomorrow at 5pm', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: false, deterministicPreflight: true }, langfuse: { enabled: false } });
+      assert.equal(rejected.status, 'needs_clarification');
+      assert.equal(llmCalls - beforeLegacy, 1, 'a rejected answer cannot escalate into the unvalidated legacy agent');
     } finally {
       if (previousBase === undefined) delete process.env.OPENAI_BASE_URL;
       else process.env.OPENAI_BASE_URL = previousBase;

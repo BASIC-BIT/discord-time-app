@@ -13,15 +13,35 @@ export interface HostedAuthStatus {
 }
 
 export const hostedConfigured = Boolean(import.meta.env.VITE_CONVEX_URL);
-export const getHostedAuthStatus = () => invoke<HostedAuthStatus>('get_hosted_auth_status');
+let browserLoweredOverlay = false;
+
+async function restoreSignInWindow(status: HostedAuthStatus): Promise<HostedAuthStatus> {
+  if (browserLoweredOverlay && status.phase !== 'pending') {
+    const window = getCurrentWindow();
+    await window.setAlwaysOnTop(true);
+    browserLoweredOverlay = false;
+    if (status.phase === 'signed_in') await window.setFocus();
+  }
+  return status;
+}
+
+export const getHostedAuthStatus = async () => restoreSignInWindow(await invoke<HostedAuthStatus>('get_hosted_auth_status'));
 export const startHostedSignIn = () => invoke<HostedAuthStatus>('start_hosted_sign_in');
-export const cancelHostedSignIn = () => invoke<HostedAuthStatus>('cancel_hosted_sign_in');
-export const signOutHostedAuth = () => invoke<HostedAuthStatus>('sign_out_hosted_auth');
+export const cancelHostedSignIn = async () => restoreSignInWindow(await invoke<HostedAuthStatus>('cancel_hosted_sign_in'));
+export const signOutHostedAuth = async () => restoreSignInWindow(await invoke<HostedAuthStatus>('sign_out_hosted_auth'));
 export const getHostedAuthToken = () => invoke<string | null>('get_hosted_auth_token');
 
 export async function openHostedSignInBrowser(status: HostedAuthStatus): Promise<void> {
   const url = status.verificationUriComplete ?? status.verificationUri;
   if (status.phase !== 'pending' || !url || new URL(url).protocol !== 'https:') throw new Error('No browser sign-in is available.');
-  await getCurrentWindow().setAlwaysOnTop(false);
-  await openUrl(url);
+  const window = getCurrentWindow();
+  if (window.label === 'main') {
+    await window.setAlwaysOnTop(false);
+    browserLoweredOverlay = true;
+  }
+  try { await openUrl(url); }
+  catch (error) {
+    await restoreSignInWindow({ ...status, phase: 'signed_out' });
+    throw error;
+  }
 }

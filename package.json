@@ -21,7 +21,7 @@
     "start": "tauri dev",
     "test:desktop": "python3 scripts/desktop_smoke.py",
     "test:manual": "node --test src/lib/manualDateTime.test.ts",
-    "test:relay": "vitest run convex/temporal.test.ts src/lib/hosted-parser.test.ts src/lib/clipboard.test.ts src/components/HostedAccount.test.tsx src/components/Overlay.test.tsx"
+    "test:relay": "vitest run convex/temporal.test.ts src/lib/hosted-parser.test.ts src/lib/hosted-auth.test.ts src/lib/clipboard.test.ts src/components/HostedAccount.test.tsx src/components/Overlay.test.tsx"
   },
   "dependencies": {
     "@convex-dev/rate-limiter": "0.4.3",

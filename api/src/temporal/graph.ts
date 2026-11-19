@@ -17,7 +17,7 @@ import type { AgentDecision, CalendarContext, Candidate, EnrichedCandidate, Temp
 import type { TemporalToolImplementations } from './tools';
 import { candidateFromProposal, candidateToEpoch, collectTemporalAgentContext } from './deterministic';
 import { resolveTimeZone } from './timezones';
-import { parseTemporalPlanPlannerOutput, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
+import { parseTemporalPlanPlannerOutput, TEMPORAL_PLAN_MAX_PLANS, PLAN_MONTH_NAMES, PLAN_WEEKDAYS, PLAN_WEEKDAY_INDEX, TemporalPlanPlannerSchema, TemporalPlanSchema, TimeOfDaySchema, type PlanPresentationFormat, type RawTemporalPlanStep, type TemporalPlan, type TemporalPlanPlannerOutput, type TemporalPlanStep } from './plan-ir';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 const DEFAULT_OPENAI_REASONING_EFFORT = 'low';
@@ -290,7 +290,7 @@ export async function runTemporalCoalescingGraph(
         const validated = await validateDeterministicResolvedResponse(request, fallback, options);
         attachReferenceRoutingDebug(validated, referenceRouting, options.features);
         attachTopLevelTiming(validated, totalStartedAt, fallback.debug.deterministicDurationMs, elapsedMs(validationStartedAt), options.features);
-        if (validated.status === 'resolved') return validated;
+        if (validated.status === 'resolved' || !planIrEnabled(options.features)) return validated;
         fallback = validated;
       } else {
         applyReferenceFormatPreference(fallback, referenceRouting);
@@ -4313,15 +4313,16 @@ async function validateFinalAnswer(
 Your job is not to be generous. Reject candidates that dropped, contradicted, or guessed around temporal signals in the original input.
 
 Validation rules:
+- An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
 - Accept only if the candidate preserves every date and time signal in the input. Stating an assumption does not resolve competing temporal interpretations: reject if a materially different AM/PM, weekday, or timezone interpretation remains plausible.
 - Apply this product's calendar conventions: a date-only expression, including an offset in whole calendar days, weeks, months, or years without an explicit clock, is represented at 12:00 PM local time. Calendar-unit counts are not clock signals. Offsets in hours or minutes preserve the reference clock; an explicitly supplied clock must always be preserved.
-- Apply the executor's explicit numeric conventions: an all-zero bare integer is Unix epoch zero, and a bare hour from 13 through 23 is an unambiguous 24-hour clock at minute zero. Do not reject these solely for omitting an epoch label or AM/PM.
-- Distinguish boundary snapping from duration arithmetic. In this product, "previous hour" means the most recent whole-hour boundary (round down), and "next hour" means the next whole-hour boundary. A duration such as "one hour ago" subtracts an hour while preserving minutes. Validate the requested operation instead of substituting the duration interpretation for a boundary request.
+- Apply the executor's explicit numeric conventions: bare nonnegative integers of 10, 13, 16, or 19 digits are Unix timestamps in seconds, milliseconds, microseconds, or nanoseconds respectively; an all-zero bare integer is epoch zero. An epoch label is not required. A bare hour from 13 through 23 is an unambiguous 24-hour clock at minute zero. Reject unsupported numeric lengths instead of inventing another convention.
+- Distinguish boundary snapping from duration arithmetic. In this product, "previous hour" means the most recent whole-hour boundary (round down), and "next hour" means the next whole-hour boundary. A duration followed by "on the hour" adds the duration, then rounds up to the whole-hour boundary if minutes or seconds remain. Without a boundary qualifier, duration arithmetic preserves smaller units. A duration such as "one hour ago" subtracts an hour while preserving minutes. Validate the requested operation instead of substituting the duration interpretation for a boundary request.
 - Reject if a date-only noon default is used while the input contains a possible time signal, including an unconsumed bare number like "1" after a date phrase.
 - Reject if the candidate's displayed date, weekday, timezone, or clock time conflicts with the user's text.
 - Do not reject solely because the final weekday differs from a mentioned weekday when the input uses that weekday as an anchor for a relative offset, such as "day after next Saturday" or "two days before Friday". In those cases, validate the full phrase semantics instead of requiring the anchor weekday to equal the final weekday.
-- Reject when AM/PM ambiguity, fuzzy shorthand, or trailing tokens materially affect the timestamp and were not handled by the agent.
-- Do not reject solely because a weekday qualifier like "next Saturday" has multiple colloquial interpretations when the deterministic tool chain resolved it and the candidate weekday is correct.
+- Validate the interpreted meaning, including supported typo corrections, rather than demanding literal preservation of every misspelled character. A contextual spelling correction with no competing temporal meaning is allowed when the rationale explains it. Conflicting AM/PM letters or competing date meanings still require alternatives; a correction cannot discard those meanings. Reject unresolved trailing tokens that materially affect the timestamp.
+- A top-level next-weekday request, including corrected spelling or shorthand, requires clarification between materially different weekday conventions unless the input explicitly selects upcoming, this week, or the week after. A correct weekday alone does not resolve that ambiguity. A next-weekday phrase used only as an internal anchor inside an offset follows the executor convention instead.
 - Do not reject solely because leetspeak is obfuscated. If the input uses a leet/l33t/133t time phrase and the agent explicitly interprets it as the cultural clock phrase 13:37, treat that interpretation as supported.
 - Do not return a corrected timestamp; only accept or reject this exact candidate.`),
     new HumanMessage(JSON.stringify({
@@ -4609,7 +4610,7 @@ Every plan step must include every schema field. Set fields that do not apply to
 
 Available plan operations:
 - resolve_calendar_query: use for corrected or explicit anchor phrases the deterministic parser can parse, such as "tomorrow", "next saturday", "May 24 at 13:37", Discord timestamps, and bare 10/13/16/19 digit epochs.
-- resolve_weekday_anchor: use for weekday-only anchoring when wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
+- resolve_weekday_anchor: use for every normalized weekday anchor, including an ordinary unqualified weekday (weekdayAnchor=upcoming); combine the clock separately with set_clock_time or combine_date_time. Do not send phrases such as "upcoming Tuesday at 10pm" to resolve_calendar_query. Also use this operation when weekday wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
 - resolve_holiday: use for holiday names; include year and normalized time when the user specified them.
 - resolve_clock_time: use for conventional numeric clock text like "13:37", "1pm", or "noon". It returns ONLY a clock, not a dated timestamp candidate. For spelled-out or semantic clock phrases, interpret the clock yourself and emit interpret_clock_phrase with a numeric 24-hour time; keep the original phrase and interpretation in the rationale.
 - For an ambiguous clock attached to a Discord timestamp reference, resolve_clock_time accepts options: an array of distinct {label,text} explicit AM/PM readings instead of a single text. The compact clock-choice contract requires exactly one plan and one option-bearing clock step feeding the final result. Keep the full reference/date arithmetic in that one plan; do not split its AM/PM readings into separate plans.
@@ -4623,16 +4624,20 @@ Available plan operations:
 - propose_candidate: last resort for explicit epoch/ISO timestamps only; do not guess remembered holiday dates or weekday math.
 
 Planning rules:
+- Reference-day clock composition has no implicit arithmetic: forms such as "<reference> day at <clock>", "<reference> that day at <clock>", or "<clock> on the same day as <reference>" use the anchor date plus set_clock_time/combine_date_time. The word day names the date part; it does not mean add one day. A shift requires an actual offset or direction.
+- Decompose compound calendar arithmetic into an anchor and shift_datetime operations. resolve_calendar_query is an anchor resolver, not a general composition planner: normalize the anchor words, then express each offset in the plan instead of passing the entire compound sentence to that operation.
+- Set presentationFormat to null for ordinary non-Discord expressions without an explicit presentation request, so the application applies its existing default format. Choose a non-null format when transforming a Discord reference or when the user explicitly requests a display style.
+- A relative duration followed by "on the hour" has both operations: shift by that duration, then round up to the next whole-hour boundary if smaller units remain. Do not ask the user to choose between the explicitly requested duration and boundary. Without a boundary qualifier, preserve smaller units.
 - Product calendar conventions: date-only requests and whole-calendar-unit offsets (days/weeks/months/years without a supplied clock) use local noon. Resolve a date anchor such as today for those offsets; use now as an instant anchor for hour/minute offsets that must preserve the current clock.
-- Product shorthand vocabulary: tom, tmw, and tmrw are conventional tomorrow forms. The short form tu is ambiguous between tomorrow and Tuesday; keep both readings, including unresolved current-week/next-week weekday conventions, rather than selecting one.
+- Product shorthand vocabulary: tom, tmw, and tmrw mean tomorrow. An ordinary weekday abbreviation with a clear clock, such as tu with an explicit AM/PM time, uses the upcoming weekday. When a short date abbreviation is paired with conflicting clock meridiem letters, that combined shorthand is ambiguous even if the abbreviation alone usually names a weekday. Retain the full cross-product of the relative-day expansion (tomorrow), the current/upcoming weekday, and the following-week weekday, each paired with AM and PM. Do not prune a plausible date or meridiem by confidence or proximity. This can require six independent alternatives, which the schema supports.
 - When independently labelled event times are given, return clarification with a candidate for each event unless the text explicitly asks for one event or a continuous start/end range. Do not rank distinct event times and finalize just one.
 - Discord presentation meanings: d=numeric date, D=long date, t=short time, T=time with seconds, f=short date and time, F=full date including weekday and time, R=relative time. Preserve useful full-date/weekday context when the referenced source uses F; choose f when a time-only source acquires a date through calendar composition.
 - A standalone clock expression does not require an explicit date from the user. Normalize the clock wording when needed and use resolve_calendar_query on the complete normalized expression; that operation supplies the date using the provided calendar context. Do not return no_plan or clarification solely because the user omitted a date.
 - Clock-only and timezone-only steps cannot be final answers. Either resolve the whole normalized expression through resolve_calendar_query, or resolve a date anchor and combine it with the clock through set_clock_time or combine_date_time. finalStep, startStep, and endStep must point to dated timestamp candidates, never resolve_clock_time, interpret_clock_phrase, or resolve_timezone.
-- Emit up to four independent plans. The executor evaluates plans in parallel and also runs independent step dependencies in parallel.
+- Emit up to ${TEMPORAL_PLAN_MAX_PLANS} independent plans. The executor evaluates plans in parallel and also runs independent step dependencies in parallel.
 - Prefer one clear plan when the input has one intended meaning.
 - Do not treat conventional temporal shorthand or an incomplete spelling as automatically unresolvable. Infer the intended temporal word from this time-expression context when it has one clear interpretation, normalize it in the plan, and state the interpretation. If shorthand has competing plausible date or clock meanings, preserve them as alternative plans instead.
-- Short day abbreviations can refer to a weekday or to a relative day. Consider both expansions when plausible. If an abbreviated weekday also leaves the current-week versus next-week convention unresolved, use resolve_weekday_anchor with next_ambiguous; combine all anchor possibilities with all clock possibilities.
+
 - For a time range like "tomorrow 3pm-5pm", emit one plan with kind="time_range", startStep pointing to the start candidate, and endStep pointing to the end candidate. The start and end candidates should both preserve date, clock, and timezone evidence.
 - For same-day ranges, resolve the shared date once, resolve each endpoint clock separately, then combine both clocks with the same date. For overnight ranges like "Friday 11pm-1am", explicitly shift the end candidate by one day so the final end is after the start.
 - For date-span or schedule-block wording like "Tuesday through Thursday" or "Tuesday through Thursday 3-5pm", use outcome "no_plan" unless the request clearly means one continuous event range with exact start and end timestamps.
@@ -4650,10 +4655,11 @@ Planning rules:
 - Preserve every date, time, holiday, weekday, offset, and timezone signal. If you cannot express the full meaning with the operations, use outcome "no_plan".
 - Discord timestamp references in routing context are exact, immutable anchor operands. When route is "model", use each required reference's exact raw token in resolve_calendar_query, interpret the surrounding language yourself, and represent transformations with operations such as shift_datetime.
 - A reference can supply its calendar date without any arithmetic. Selecting the reference's day and setting its clock does not itself request a day shift. Emit a delta only when the text actually specifies an offset or direction; do not invent arithmetic merely because a date part is mentioned.
+- A clock step containing multiple options requires outcome=clarification and a non-null clarificationQuestion, even when the surrounding date arithmetic has a single clear meaning. outcome=plans is invalid for that step.
 - The router's signals identify possible hazards; they do not encode the requested arithmetic. Do not copy or infer a precomputed delta from routing context.
 - Never emit a plan whose final result is merely an unchanged referenced timestamp when meaningful residue transforms or relates it. If the entire intent cannot be represented confidently, use outcome "clarification" or "no_plan".
-- For instant plans, presentationFormat may be d, D, t, T, f, F, or R. Choose it from the requested result context; do not mechanically copy a referenced timestamp's source style.
-- For subday arithmetic around a time-focused reference, prefer t (or T when seconds matter) unless calendar context is explicitly requested. Calendar-unit shifts should make the changed date visible. Combining a referenced date with a new clock should use f or F. The arithmetic operand and the presentation choice are separate decisions.
+- For transformed Discord references or explicit display requests only, presentationFormat may be d, D, t, T, f, F, or R. Ordinary non-reference requests must use null, including numeric durations from now: their existing default formatter owns presentation. Do not mechanically copy a referenced timestamp's source style.
+- For subday arithmetic around a Discord time-focused reference, prefer t (or T when seconds matter) unless calendar context is explicitly requested. Calendar-unit shifts on a reference with a clock must use f (or F when preserving weekday context), so both the changed date and retained clock remain visible; d or D would drop that clock. Combining a referenced date with a new clock uses f by default; use F only when preserving a source F weekday display or when the request explicitly includes weekday presentation. Source D is a long date without weekday context and does not require F when adding a clock. The arithmetic operand and the presentation choice are separate decisions.
 - finalStep should be a zero-based index pointing to the candidate-producing step that represents an instant answer. For time_range plans, set finalStep to null and set startStep/endStep to the candidate-producing endpoint steps.
 
 Calendar context:
@@ -4719,7 +4725,8 @@ function errorMessage(error: unknown): string {
 
 function shouldShortCircuitDeterministic(response: TemporalParseResponse): boolean {
   if (response.status === 'needs_clarification') {
-    return true;
+    return (response.clarificationAlternatives?.length ?? 0) > 0
+      || response.validation.warnings.some((note) => /ambiguous timezone|^Which timezone/i.test(note));
   }
 
   return response.status === 'resolved'

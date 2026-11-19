@@ -151,6 +151,7 @@ type EvalResult = {
   instructionPreset?: string;
   error?: string;
   mismatch?: string;
+  failureResponse?: EvalParsed;
   clarificationAlternativeCount?: number;
   unsafeDiagnosticMismatch?: boolean;
   metrics?: {
@@ -1920,6 +1921,7 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       clientReferenceRouteReason: routeCheck?.clientReason,
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
+      ...(mismatch === undefined ? {} : { failureResponse: parsed }),
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
       unsafeDiagnosticMismatch: unsafeTemporalDiagnosticMismatch(evalCase.expected, parsed),
       metrics: metricsFromResponse(parsed, evalCase, durationMs),

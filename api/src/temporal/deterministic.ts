@@ -1414,15 +1414,14 @@ function isPartialChronoParse(text: string, parsedText: string, start: chrono.Pa
   }
 
   const remainder = removeParsedText(text, parsedText)
-    .replace(TWELVE_HOUR_TIME_PATTERN, ' ')
-    .replace(COMPACT_MERIDIEM_TIME_PATTERN, ' ')
-    .replace(TWENTY_FOUR_HOUR_TIME_PATTERN, ' ')
     .replace(/\b(?:please|pls|for|me|us|remind|reminder|meeting|event|schedule|set)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  return /[\p{L}\p{N}]/u.test(remainder);
+  return TEMPORAL_SIGNAL_PATTERN.test(remainder);
 }
+
+const TEMPORAL_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|noon|midnight|morning|afternoon|evening|day|days|week|weeks|month|months|year|years|hour|hours|minute|minutes|after|before|from|next|last|this|coming|upcoming|at|around|about|by|time|clock)\b|\b\d{1,2}\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b/i;
 
 const LEADING_BARE_HOUR_BEFORE_DATE_PATTERN = /^\s*(?:0?[1-9]|1[0-2])\s+(?=(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|next|last|this|coming|upcoming)\b)/i;
 
