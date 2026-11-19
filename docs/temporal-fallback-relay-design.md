@@ -80,7 +80,7 @@ Checked November 19, 2026:
 
 The shared limit is a request ceiling, not a dollar cap. Token counters are a lower bound when provider usage is unavailable on errors; daily enforcement does not depend on those counters. Clerk signup mode is unchanged after the proposed invite-only change was rejected by automatic approval review for lacking explicit owner approval.
 
-Development Clerk and Convex configuration is deployed. The 70b68dd qualified parser and shared daily limiter were deployed to effervescent-oyster-428 on November 19 at 12:49 UTC. A real unauthenticated request was rejected with sign_in_required after that deployment; authenticated installed-app proof remains open. No Windows release has been made, and this PR is not merge-ready until current-head checks/review and installed-MSI acceptance are complete.
+Development Clerk and Convex configuration is deployed. The 57cc336 qualified parser, partial usage reporting, and per-user/shared daily limits were deployed to effervescent-oyster-428 on November 19 at 13:31 UTC. A real unauthenticated request was rejected with sign_in_required after that deployment; authenticated installed-app proof remains open. No Windows release has been made, and this PR is not merge-ready until current-head checks/review and installed-MSI acceptance are complete.
 
 ## References
 

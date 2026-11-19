@@ -23,601 +23,87 @@
       "medianMs": 3,
       "p95Ms": 7,
       "failures": [
-        {
-          "caseId": "month-boundary-leading-clock-first-of-last-month",
-          "text": "5pm the first of last month",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "relative-shorthand-tom-date",
-          "text": "tom",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "relative-shorthand-tmw-date",
-          "text": "tmw",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "relative-shorthand-tom-clock",
-          "text": "tom at 5pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "relative-shorthand-tmw-clock",
-          "text": "tmw at 5pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "range-relative-same-day-from-to",
-          "text": "tomorrow from 3pm to 5pm",
-          "required": true,
-          "mismatch": "expected time range kind, got none",
-          "status": "resolved",
-          "epoch": 1779735600,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "range-weekday-same-day",
-          "text": "Friday 8pm-10:30pm",
-          "required": true,
-          "mismatch": "expected time range kind, got none",
-          "status": "resolved",
-          "epoch": 1780099200,
-          "suggestedFormatIndex": 5
-        },
-        {
-          "caseId": "range-explicit-date-same-day",
-          "text": "May 29 2026 8pm-10:30pm",
-          "required": true,
-          "mismatch": "expected time range kind, got none",
-          "status": "resolved",
-          "epoch": 1780099200,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "range-overnight-explicit",
-          "text": "Friday 11pm-1am",
-          "required": true,
-          "mismatch": "expected status resolved, got ambiguous",
-          "status": "ambiguous",
-          "epoch": 1780110000,
-          "suggestedFormatIndex": 5
-        },
-        {
-          "caseId": "range-next-weekday-clarification",
-          "text": "next saturday 3pm-5pm",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got resolved",
-          "status": "resolved",
-          "epoch": 1780167600,
-          "suggestedFormatIndex": 5
-        },
-        {
-          "caseId": "range-date-span-unsupported",
-          "text": "Tuesday through Thursday",
-          "required": true,
-          "mismatch": "expected status failed, got resolved",
-          "status": "resolved",
-          "epoch": 1779811200,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "range-schedule-block-unsupported",
-          "text": "Tuesday through Thursday 3pm-5pm",
-          "required": true,
-          "mismatch": "expected status failed, got resolved",
-          "status": "resolved",
-          "epoch": 1779822000,
-          "suggestedFormatIndex": 5
-        },
-        {
-          "caseId": "bare-hour-clarification",
-          "text": "tom 430",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "anchor-offset-date",
-          "text": "day after next saturday",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "anchor-offset-clock",
-          "text": "day after next saturday at 13:37",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-suffix",
-          "text": "<t:1785643200:t> 1 hour later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-suffix-word-number-four",
-          "text": "<t:1785643200:t> four hours later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-suffix-day-earlier",
-          "text": "<t:1785643200:t> 1 day earlier",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-suffix-day-earlier-typo-ebefore",
-          "text": "<t:1785643200:t> 1 day ebefore",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-prefix-hours-before-typo-befoer",
-          "text": "2 hours befoer <t:1785733200:F>",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-prefix-hours-after-typo-afetr",
-          "text": "3 hours afetr <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-prefix",
-          "text": "1 hour after <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-infix",
-          "text": "one hour earlier than <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-day-at",
-          "text": "<t:1785643200:t> day at 12 pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-same-day-prefix",
-          "text": "6:30pm on the same day as <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-set-to",
-          "text": "set <t:1785733200:F> to 21:15",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-spring-forward-day",
-          "text": "<t:1772951400:D> that day at noon",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-fall-back-day",
-          "text": "use the date from <t:1793511000:R> at noon",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-held-out-wording",
-          "text": "keep <t:1785643200:t>'s date and use noon",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-ambiguous-bare-hour",
-          "text": "<t:1785643200:t> day at 12",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-midnight-presentation",
-          "text": "<t:1785643200:t> that day at midnight",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-five-am-presentation",
-          "text": "<t:1785643200:t> that day at 5 am",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-clean",
-          "text": "<t:1785643200:t> 1 day earlier at 2",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-typo-ebefore-three",
-          "text": "<t:1785643200:t> a day ebefore at 3",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-typo-later-three",
-          "text": "<t:1785643200:t> 1 day ltaer at 3",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-clock-prefix-before",
-          "text": "at 2, use the day before <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-clock-infix-before",
-          "text": "make <t:1785643200:t> 3 o’clock on the previous day",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-clock-prefix-after",
-          "text": "at 4:30 use the day after <t:1785733200:F>",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-explicit-clock-prefix-before",
-          "text": "at 2 pm, use the day before <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-spring-before",
-          "text": "2 o’clock, on the day preceding <t:1772951400:D>",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-typo-ebefore",
-          "text": "<t:1785643200:t> 1 day ebefore at 2",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-explicit-typo-ebefore",
-          "text": "<t:1785643200:t> 1 day ebefore at 2 pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-shift-clock-explicit-later",
-          "text": "<t:1785643200:t> 1 day later at 2 pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-range-residue",
-          "text": "<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-range-pull-end",
-          "text": "<t:1785646800:t> to <t:1785650400:t>, but pull the end 45 minutes earlier",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-range-push-start",
-          "text": "<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-range-ending-point-moved",
-          "text": "<t:1785646800:t> through <t:1785650400:t>, with the ending point moved 30 minutes later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-following-day-after-clock",
-          "text": "at 5 use the following day after <t:1785643200:t>",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-fuzzy-shift-model-diagnostic",
-          "text": "<t:1785643200:t> roughly an hour later",
-          "required": false,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-fall-back-hour",
-          "text": "<t:1793511000:t> 1 hour later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-spring-forward-hour",
-          "text": "<t:1772951400:t> 1 hour later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-spring-forward-day",
-          "text": "<t:1772951400:t> 1 day later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "anchor-offset-fuzzy-clock",
-          "text": "day after next saturday at l33t time",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-fuzzy-clock",
-          "text": "next saturday at l33t time",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "compound-typo-cultural-clock",
-          "text": "day after a week from tomorrow at 133t time",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "chained-day-after-tomorrow-5",
-          "text": "the day after the day after the day after the day after the day after tomorrow",
-          "required": true,
-          "mismatch": "expected epoch 1780156800, got 1779811200",
-          "status": "resolved",
-          "epoch": 1779811200,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "weekday-typo-short-tu-clock",
-          "text": "10pm tu",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-typo-added-letter-tuee-clock",
-          "text": "tuee 7pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-typo-missing-tail-wedn-clock",
-          "text": "wedn 6pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-typo-missing-vowel-thrs-clock",
-          "text": "thrs 9pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-typo-added-letter-frii-clock",
-          "text": "frii 5pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-typo-added-tail-satdy-clock",
-          "text": "satdy 2pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "relative-typo-tomorrrow-24h-clock",
-          "text": "tomorrrow 16:30",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "next-weekday-typo-fri-clock-clarification",
-          "text": "nextt fri 8pm",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got resolved",
-          "status": "resolved",
-          "epoch": 1780099200,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "next-weekday-typo-satdy-clock-clarification",
-          "text": "nextt satdy at 5pm",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "anchor-offset-typo-weekday-relative-clock",
-          "text": "day aftr next satturday at 13:37",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "date-space-separated-ymd-clock",
-          "text": "2026   05   29   20:00",
-          "required": true,
-          "mismatch": "expected epoch 1780099200, got 1779667200",
-          "status": "resolved",
-          "epoch": 1779667200,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "month-typo-september-clock",
-          "text": "septmber 3 2026 10pm",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "diagnostic-luna-spelled-clock-warmup",
-          "text": "tmrw at seventeen hundred",
-          "required": false,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "diagnostic-luna-standalone-clock-typo",
-          "text": "5pms",
-          "required": false,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "diagnostic-month-typo-suffix-bare-minute-clarification",
-          "text": "first of Febuarysdf 2:30",
-          "required": false,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "weekday-typo-full-monnday-clock",
-          "text": "monnday 9am",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "event-post-month-typo-two-times",
-          "text": "fri mayy 29 doors 8pm main 10:30pm",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "recursive-relative-typo-tomorow-2",
-          "text": "the day after the day after tomorow",
-          "required": true,
-          "mismatch": "expected epoch 1779897600, got 1779811200",
-          "status": "resolved",
-          "epoch": 1779811200,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "weekday-after-next-clarification",
-          "text": "sunday after next",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "explicit-year-holiday",
-          "text": "easter 2026 noon",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "future-year-holiday",
-          "text": "easter 2028",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "next-weekday-clock-clarification",
-          "text": "next saturday at 5pm",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got resolved",
-          "status": "resolved",
-          "epoch": 1780174800,
-          "suggestedFormatIndex": 5
-        },
-        {
-          "caseId": "simple-weekday-shortcut-pressure",
-          "text": "next tuesday",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got resolved",
-          "status": "resolved",
-          "epoch": 1779811200,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "current-week-next-weekday-bare-clarification",
-          "text": "next saturday",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got resolved",
-          "status": "resolved",
-          "epoch": 1780761600,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "weekday-short-ambiguous-clock-suffix-six-way",
-          "text": "tu 5pma",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        }
+        {"caseId":"month-boundary-leading-clock-first-of-last-month","text":"5pm the first of last month","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"relative-shorthand-tom-date","text":"tom","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"relative-shorthand-tmw-date","text":"tmw","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"relative-shorthand-tom-clock","text":"tom at 5pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"relative-shorthand-tmw-clock","text":"tmw at 5pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"range-relative-same-day-from-to","text":"tomorrow from 3pm to 5pm","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1779735600,"suggestedFormatIndex":4},
+        {"caseId":"range-weekday-same-day","text":"Friday 8pm-10:30pm","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1780099200,"suggestedFormatIndex":5},
+        {"caseId":"range-explicit-date-same-day","text":"May 29 2026 8pm-10:30pm","required":true,"mismatch":"expected time range kind, got none","status":"resolved","epoch":1780099200,"suggestedFormatIndex":4},
+        {"caseId":"range-overnight-explicit","text":"Friday 11pm-1am","required":true,"mismatch":"expected status resolved, got ambiguous","status":"ambiguous","epoch":1780110000,"suggestedFormatIndex":5},
+        {"caseId":"range-next-weekday-clarification","text":"next saturday 3pm-5pm","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780167600,"suggestedFormatIndex":5},
+        {"caseId":"range-date-span-unsupported","text":"Tuesday through Thursday","required":true,"mismatch":"expected status failed, got resolved","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+        {"caseId":"range-schedule-block-unsupported","text":"Tuesday through Thursday 3pm-5pm","required":true,"mismatch":"expected status failed, got resolved","status":"resolved","epoch":1779822000,"suggestedFormatIndex":5},
+        {"caseId":"bare-hour-clarification","text":"tom 430","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"anchor-offset-date","text":"day after next saturday","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"anchor-offset-clock","text":"day after next saturday at 13:37","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-suffix","text":"<t:1785643200:t> 1 hour later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-suffix-word-number-four","text":"<t:1785643200:t> four hours later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-suffix-day-earlier","text":"<t:1785643200:t> 1 day earlier","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-suffix-day-earlier-typo-ebefore","text":"<t:1785643200:t> 1 day ebefore","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-prefix-hours-before-typo-befoer","text":"2 hours befoer <t:1785733200:F>","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-prefix-hours-after-typo-afetr","text":"3 hours afetr <t:1785643200:t>","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-prefix","text":"1 hour after <t:1785643200:t>","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-infix","text":"one hour earlier than <t:1785643200:t>","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-day-at","text":"<t:1785643200:t> day at 12 pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-same-day-prefix","text":"6:30pm on the same day as <t:1785643200:t>","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-set-to","text":"set <t:1785733200:F> to 21:15","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-spring-forward-day","text":"<t:1772951400:D> that day at noon","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-fall-back-day","text":"use the date from <t:1793511000:R> at noon","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-held-out-wording","text":"keep <t:1785643200:t>'s date and use noon","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-ambiguous-bare-hour","text":"<t:1785643200:t> day at 12","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-midnight-presentation","text":"<t:1785643200:t> that day at midnight","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-clock-composition-five-am-presentation","text":"<t:1785643200:t> that day at 5 am","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-clean","text":"<t:1785643200:t> 1 day earlier at 2","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-typo-ebefore-three","text":"<t:1785643200:t> a day ebefore at 3","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-typo-later-three","text":"<t:1785643200:t> 1 day ltaer at 3","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-before","text":"at 2, use the day before <t:1785643200:t>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-clock-infix-before","text":"make <t:1785643200:t> 3 o’clock on the previous day","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-after","text":"at 4:30 use the day after <t:1785733200:F>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-explicit-clock-prefix-before","text":"at 2 pm, use the day before <t:1785643200:t>","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","text":"2 o’clock, on the day preceding <t:1772951400:D>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-ambiguity-typo-ebefore","text":"<t:1785643200:t> 1 day ebefore at 2","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-explicit-typo-ebefore","text":"<t:1785643200:t> 1 day ebefore at 2 pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-shift-clock-explicit-later","text":"<t:1785643200:t> 1 day later at 2 pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-range-residue","text":"<t:1785643200:t> to <t:1785646800:t>, but move the end one hour later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-range-pull-end","text":"<t:1785646800:t> to <t:1785650400:t>, but pull the end 45 minutes earlier","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-range-push-start","text":"<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-range-ending-point-moved","text":"<t:1785646800:t> through <t:1785650400:t>, with the ending point moved 30 minutes later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-following-day-after-clock","text":"at 5 use the following day after <t:1785643200:t>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-fuzzy-shift-model-diagnostic","text":"<t:1785643200:t> roughly an hour later","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-fall-back-hour","text":"<t:1793511000:t> 1 hour later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-spring-forward-hour","text":"<t:1772951400:t> 1 hour later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"discord-reference-spring-forward-day","text":"<t:1772951400:t> 1 day later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"anchor-offset-fuzzy-clock","text":"day after next saturday at l33t time","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"weekday-fuzzy-clock","text":"next saturday at l33t time","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"compound-typo-cultural-clock","text":"day after a week from tomorrow at 133t time","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"chained-day-after-tomorrow-5","text":"the day after the day after the day after the day after the day after tomorrow","required":true,"mismatch":"expected epoch 1780156800, got 1779811200","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+        {"caseId":"weekday-typo-short-tu-clock","text":"10pm tu","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"weekday-typo-added-letter-tuee-clock","text":"tuee 7pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"weekday-typo-missing-tail-wedn-clock","text":"wedn 6pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"weekday-typo-missing-vowel-thrs-clock","text":"thrs 9pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"weekday-typo-added-letter-frii-clock","text":"frii 5pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"weekday-typo-added-tail-satdy-clock","text":"satdy 2pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"relative-typo-tomorrrow-24h-clock","text":"tomorrrow 16:30","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"next-weekday-typo-fri-clock-clarification","text":"nextt fri 8pm","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780099200,"suggestedFormatIndex":4},
+        {"caseId":"next-weekday-typo-satdy-clock-clarification","text":"nextt satdy at 5pm","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"anchor-offset-typo-weekday-relative-clock","text":"day aftr next satturday at 13:37","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"date-space-separated-ymd-clock","text":"2026   05   29   20:00","required":true,"mismatch":"expected epoch 1780099200, got 1779667200","status":"resolved","epoch":1779667200,"suggestedFormatIndex":4},
+        {"caseId":"month-typo-september-clock","text":"septmber 3 2026 10pm","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"diagnostic-luna-spelled-clock-warmup","text":"tmrw at seventeen hundred","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"diagnostic-luna-standalone-clock-typo","text":"5pms","required":false,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","text":"first of Febuarysdf 2:30","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"weekday-typo-full-monnday-clock","text":"monnday 9am","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"event-post-month-typo-two-times","text":"fri mayy 29 doors 8pm main 10:30pm","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"recursive-relative-typo-tomorow-2","text":"the day after the day after tomorow","required":true,"mismatch":"expected epoch 1779897600, got 1779811200","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+        {"caseId":"weekday-after-next-clarification","text":"sunday after next","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"explicit-year-holiday","text":"easter 2026 noon","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"future-year-holiday","text":"easter 2028","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"next-weekday-clock-clarification","text":"next saturday at 5pm","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780174800,"suggestedFormatIndex":5},
+        {"caseId":"simple-weekday-shortcut-pressure","text":"next tuesday","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1779811200,"suggestedFormatIndex":1},
+        {"caseId":"current-week-next-weekday-bare-clarification","text":"next saturday","required":true,"mismatch":"expected status needs_clarification, got resolved","status":"resolved","epoch":1780761600,"suggestedFormatIndex":1},
+        {"caseId":"weekday-short-ambiguous-clock-suffix-six-way","text":"tu 5pma","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"}
       ]
     },
     {
@@ -667,622 +153,78 @@
       "medianMs": 6972,
       "p95Ms": 13149,
       "failures": [
-        {
-          "caseId": "relative-date-default-noon",
-          "text": "tomorrow",
-          "required": true,
-          "mismatch": "expected format 1, got 0",
-          "status": "resolved",
-          "epoch": 1779724800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-in-1-days",
-          "text": "in 1 day",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1779724800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-from-now-100-days",
-          "text": "100 days from now",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1788278400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-2-weeks",
-          "text": "2 weeks ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1778428800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-100-weeks",
-          "text": "100 weeks ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1719158400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-12-months",
-          "text": "12 months ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1748102400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-100-months",
-          "text": "100 months ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1516813200,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-10-years",
-          "text": "10 years ago",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1464105600,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-ago-100-years",
-          "text": "100 years ago",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": -1376121600,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-ago-1-minutes",
-          "text": "1 minute ago",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779623940,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "relative-offset-ago-100-minutes",
-          "text": "100 minutes ago",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779618000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "boundary-snap-nearest-quarter",
-          "text": "round to nearest 15 minutes",
-          "required": true,
-          "mismatch": "expected format 4, got 2",
-          "status": "resolved",
-          "epoch": 1780426800,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "boundary-snap-hour-after-next",
-          "text": "the hour after next",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "timezone-ambiguous-cst",
-          "text": "tomorrow at 5pm CST",
-          "required": true,
-          "mismatch": "expected alternatives , got 1779699600,1779746400,1779750000",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "anchor-offset-date",
-          "text": "day after next saturday",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "anchor-offset-fuzzy-clock",
-          "text": "day after next saturday at l33t time",
-          "required": true,
-          "mismatch": "expected format 5, got 4",
-          "status": "resolved",
-          "epoch": 1780249020,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "weekday-typo-short-tu-clock",
-          "text": "10pm tu",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "diagnostic-month-typo-suffix-bare-minute-clarification",
-          "text": "first of Febuarysdf 2:30",
-          "required": false,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "ordinal-weekday-shift-relative-noon",
-          "text": "the day after the first sunday of next month at one hour past noon and 10 minutes",
-          "required": true,
-          "mismatch": "expected format 5, got 4",
-          "status": "resolved",
-          "epoch": 1780938600,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "bare-24h-hour-before-target",
-          "text": "19",
-          "required": true,
-          "mismatch": "expected format 4, got 2",
-          "status": "resolved",
-          "epoch": 1779663600,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "month-boundary-first-of-month",
-          "text": "first of the month",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "relative-offset-from-now-60-days",
-          "text": "60 days from now",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1784822400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-100-days",
-          "text": "100 days ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1771002000,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-from-now-60-weeks",
-          "text": "60 weeks from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1815926400,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-1-months",
-          "text": "1 month from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1782316800,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-60-months",
-          "text": "60 months from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1937404800,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-1-years",
-          "text": "1 year from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1811174400,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-60-years",
-          "text": "60 years from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 3673094400,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-1-hours",
-          "text": "1 hour from now",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779627600,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "relative-offset-from-now-60-hours",
-          "text": "60 hours from now",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779840000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "relative-offset-from-now-100-hours",
-          "text": "100 hours from now",
-          "required": true,
-          "mismatch": "expected format 6, got 4",
-          "status": "resolved",
-          "epoch": 1779984000,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "boundary-snap-relative-hour-word",
-          "text": "in five hours on the hour",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "boundary-snap-relative-nearest-quarter",
-          "text": "in 23 minutes round to nearest 15 minutes",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1780427700,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "anchor-offset-clock",
-          "text": "day after next saturday at 13:37",
-          "required": true,
-          "mismatch": "expected format 5, got 4",
-          "status": "resolved",
-          "epoch": 1780249020,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "discord-reference-clock-composition-ambiguous-bare-hour",
-          "text": "<t:1785643200:t> day at 12",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "direct-epoch-seconds",
-          "text": "1779724800",
-          "required": true,
-          "mismatch": "expected format 4, got 5",
-          "status": "resolved",
-          "epoch": 1779724800,
-          "suggestedFormatIndex": 5
-        },
-        {
-          "caseId": "ordinal-weekday-next-month-clock",
-          "text": "first sunday of next month at 1pm",
-          "required": true,
-          "mismatch": "expected format 5, got 4",
-          "status": "resolved",
-          "epoch": 1780851600,
-          "suggestedFormatIndex": 4
-        },
-        {
-          "caseId": "bare-24h-hour-after-target-rollover",
-          "text": "19",
-          "required": true,
-          "mismatch": "expected format 4, got 2",
-          "status": "resolved",
-          "epoch": 1779750000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "month-boundary-first-of-this-month",
-          "text": "first of this month",
-          "required": true,
-          "mismatch": "expected format 1, got 0",
-          "status": "resolved",
-          "epoch": 1780329600,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-shorthand-tom-date",
-          "text": "tom",
-          "required": true,
-          "mismatch": "expected format 1, got 0",
-          "status": "resolved",
-          "epoch": 1779724800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-from-now-1-days",
-          "text": "1 day from now",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1779724800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-60-days",
-          "text": "60 days ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1774454400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-in-100-days",
-          "text": "in 100 days",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1788278400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-60-weeks",
-          "text": "60 weeks ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1743350400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-1-months",
-          "text": "1 month ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1777046400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-60-months",
-          "text": "60 months ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1621872000,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-1-years",
-          "text": "1 year ago",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1748102400,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-ago-60-years",
-          "text": "60 years ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": -113817600,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-60-hours",
-          "text": "60 hours ago",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779408000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "relative-offset-ago-100-hours",
-          "text": "100 hours ago",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779264000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "boundary-snap-relative-top-of-hour",
-          "text": "in 5 hours at the top of the hour",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "boundary-snap-next-hour",
-          "text": "next hour",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "discord-reference-shift-suffix-day-earlier-typo-ebefore",
-          "text": "<t:1785643200:t> 1 day ebefore",
-          "required": true,
-          "mismatch": "expected format 4, got 2",
-          "status": "resolved",
-          "epoch": 1785556800,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "month-boundary-first-of-next-month",
-          "text": "first of next month",
-          "required": true,
-          "mismatch": "expected format 1, got 0",
-          "status": "resolved",
-          "epoch": 1782921600,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-shorthand-tmw-date",
-          "text": "tmw",
-          "required": true,
-          "mismatch": "expected format 1, got 0",
-          "status": "resolved",
-          "epoch": 1779724800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-ago-1-days",
-          "text": "1 day ago",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1779552000,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-in-60-days",
-          "text": "in 60 days",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 1784822400,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-2-weeks",
-          "text": "2 weeks from now",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1780848000,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-from-now-100-weeks",
-          "text": "100 weeks from now",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1840118400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-from-now-12-months",
-          "text": "12 months from now",
-          "required": true,
-          "mismatch": "expected format 6, got 0",
-          "status": "resolved",
-          "epoch": 1811174400,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "relative-offset-from-now-100-months",
-          "text": "100 months from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 2042726400,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-10-years",
-          "text": "10 years from now",
-          "required": true,
-          "mismatch": "expected format 6, got 1",
-          "status": "resolved",
-          "epoch": 2095257600,
-          "suggestedFormatIndex": 1
-        },
-        {
-          "caseId": "relative-offset-from-now-100-years",
-          "text": "100 years from now",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "relative-offset-from-now-1-minutes",
-          "text": "1 minute from now",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779624060,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "relative-offset-from-now-60-minutes",
-          "text": "60 minutes from now",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779627600,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "relative-offset-from-now-100-minutes",
-          "text": "100 minutes from now",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779630000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "boundary-snap-nearest-hour",
-          "text": "round to nearest hour",
-          "required": true,
-          "mismatch": "expected format 4, got 2",
-          "status": "resolved",
-          "epoch": 1780426800,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "boundary-snap-previous-hour",
-          "text": "previous hour",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "discord-reference-clock-composition-day-at",
-          "text": "<t:1785643200:t> day at 12 pm",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "weekday-typo-missing-vowel-thrs-clock",
-          "text": "thrs 9pm",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "anchor-offset-typo-weekday-relative-clock",
-          "text": "day aftr next satturday at 13:37",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "ordinal-weekday-explicit-month-name-rollover",
-          "text": "first tuesday of July",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        }
+        {"caseId":"relative-date-default-noon","text":"tomorrow","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-in-1-days","text":"in 1 day","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-from-now-100-days","text":"100 days from now","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1788278400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-2-weeks","text":"2 weeks ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1778428800,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-100-weeks","text":"100 weeks ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1719158400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-12-months","text":"12 months ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1748102400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-100-months","text":"100 months ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1516813200,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-10-years","text":"10 years ago","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1464105600,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-ago-100-years","text":"100 years ago","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":-1376121600,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-ago-1-minutes","text":"1 minute ago","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779623940,"suggestedFormatIndex":2},
+        {"caseId":"relative-offset-ago-100-minutes","text":"100 minutes ago","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779618000,"suggestedFormatIndex":2},
+        {"caseId":"boundary-snap-nearest-quarter","text":"round to nearest 15 minutes","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1780426800,"suggestedFormatIndex":2},
+        {"caseId":"boundary-snap-hour-after-next","text":"the hour after next","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"timezone-ambiguous-cst","text":"tomorrow at 5pm CST","required":true,"mismatch":"expected alternatives , got 1779699600,1779746400,1779750000","status":"needs_clarification"},
+        {"caseId":"anchor-offset-date","text":"day after next saturday","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"anchor-offset-fuzzy-clock","text":"day after next saturday at l33t time","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780249020,"suggestedFormatIndex":4},
+        {"caseId":"weekday-typo-short-tu-clock","text":"10pm tu","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","text":"first of Febuarysdf 2:30","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"ordinal-weekday-shift-relative-noon","text":"the day after the first sunday of next month at one hour past noon and 10 minutes","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780938600,"suggestedFormatIndex":4},
+        {"caseId":"bare-24h-hour-before-target","text":"19","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1779663600,"suggestedFormatIndex":2},
+        {"caseId":"month-boundary-first-of-month","text":"first of the month","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"relative-offset-from-now-60-days","text":"60 days from now","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1784822400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-100-days","text":"100 days ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1771002000,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-from-now-60-weeks","text":"60 weeks from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1815926400,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-1-months","text":"1 month from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1782316800,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-60-months","text":"60 months from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1937404800,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-1-years","text":"1 year from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1811174400,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-60-years","text":"60 years from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":3673094400,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-1-hours","text":"1 hour from now","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779627600,"suggestedFormatIndex":2},
+        {"caseId":"relative-offset-from-now-60-hours","text":"60 hours from now","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779840000,"suggestedFormatIndex":2},
+        {"caseId":"relative-offset-from-now-100-hours","text":"100 hours from now","required":true,"mismatch":"expected format 6, got 4","status":"resolved","epoch":1779984000,"suggestedFormatIndex":4},
+        {"caseId":"boundary-snap-relative-hour-word","text":"in five hours on the hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"boundary-snap-relative-nearest-quarter","text":"in 23 minutes round to nearest 15 minutes","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1780427700,"suggestedFormatIndex":2},
+        {"caseId":"anchor-offset-clock","text":"day after next saturday at 13:37","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780249020,"suggestedFormatIndex":4},
+        {"caseId":"discord-reference-clock-composition-ambiguous-bare-hour","text":"<t:1785643200:t> day at 12","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"direct-epoch-seconds","text":"1779724800","required":true,"mismatch":"expected format 4, got 5","status":"resolved","epoch":1779724800,"suggestedFormatIndex":5},
+        {"caseId":"ordinal-weekday-next-month-clock","text":"first sunday of next month at 1pm","required":true,"mismatch":"expected format 5, got 4","status":"resolved","epoch":1780851600,"suggestedFormatIndex":4},
+        {"caseId":"bare-24h-hour-after-target-rollover","text":"19","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1779750000,"suggestedFormatIndex":2},
+        {"caseId":"month-boundary-first-of-this-month","text":"first of this month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1780329600,"suggestedFormatIndex":0},
+        {"caseId":"relative-shorthand-tom-date","text":"tom","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-from-now-1-days","text":"1 day from now","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-60-days","text":"60 days ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1774454400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-in-100-days","text":"in 100 days","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1788278400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-60-weeks","text":"60 weeks ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1743350400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-1-months","text":"1 month ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1777046400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-60-months","text":"60 months ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1621872000,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-1-years","text":"1 year ago","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1748102400,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-ago-60-years","text":"60 years ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":-113817600,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-60-hours","text":"60 hours ago","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779408000,"suggestedFormatIndex":2},
+        {"caseId":"relative-offset-ago-100-hours","text":"100 hours ago","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779264000,"suggestedFormatIndex":2},
+        {"caseId":"boundary-snap-relative-top-of-hour","text":"in 5 hours at the top of the hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"boundary-snap-next-hour","text":"next hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"discord-reference-shift-suffix-day-earlier-typo-ebefore","text":"<t:1785643200:t> 1 day ebefore","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1785556800,"suggestedFormatIndex":2},
+        {"caseId":"month-boundary-first-of-next-month","text":"first of next month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1782921600,"suggestedFormatIndex":0},
+        {"caseId":"relative-shorthand-tmw-date","text":"tmw","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1779724800,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-ago-1-days","text":"1 day ago","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1779552000,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-in-60-days","text":"in 60 days","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":1784822400,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-2-weeks","text":"2 weeks from now","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1780848000,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-from-now-100-weeks","text":"100 weeks from now","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1840118400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-from-now-12-months","text":"12 months from now","required":true,"mismatch":"expected format 6, got 0","status":"resolved","epoch":1811174400,"suggestedFormatIndex":0},
+        {"caseId":"relative-offset-from-now-100-months","text":"100 months from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":2042726400,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-10-years","text":"10 years from now","required":true,"mismatch":"expected format 6, got 1","status":"resolved","epoch":2095257600,"suggestedFormatIndex":1},
+        {"caseId":"relative-offset-from-now-100-years","text":"100 years from now","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"relative-offset-from-now-1-minutes","text":"1 minute from now","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779624060,"suggestedFormatIndex":2},
+        {"caseId":"relative-offset-from-now-60-minutes","text":"60 minutes from now","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779627600,"suggestedFormatIndex":2},
+        {"caseId":"relative-offset-from-now-100-minutes","text":"100 minutes from now","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779630000,"suggestedFormatIndex":2},
+        {"caseId":"boundary-snap-nearest-hour","text":"round to nearest hour","required":true,"mismatch":"expected format 4, got 2","status":"resolved","epoch":1780426800,"suggestedFormatIndex":2},
+        {"caseId":"boundary-snap-previous-hour","text":"previous hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"discord-reference-clock-composition-day-at","text":"<t:1785643200:t> day at 12 pm","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"weekday-typo-missing-vowel-thrs-clock","text":"thrs 9pm","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"anchor-offset-typo-weekday-relative-clock","text":"day aftr next satturday at 13:37","required":true,"mismatch":"expected status resolved, got failed","status":"failed"},
+        {"caseId":"ordinal-weekday-explicit-month-name-rollover","text":"first tuesday of July","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"}
       ]
     },
     {
@@ -1328,24 +270,8 @@
       "medianMs": 2411,
       "p95Ms": 12108,
       "failures": [
-        {
-          "caseId": "relative-offset-from-now-100-hours",
-          "text": "100 hours from now",
-          "required": true,
-          "mismatch": "expected format 6, got 2",
-          "status": "resolved",
-          "epoch": 1779984000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "discord-reference-clock-composition-spring-forward-day",
-          "text": "<t:1772951400:D> that day at noon",
-          "required": true,
-          "mismatch": "expected format 4, got 5",
-          "status": "resolved",
-          "epoch": 1772985600,
-          "suggestedFormatIndex": 5
-        }
+        {"caseId":"relative-offset-from-now-100-hours","text":"100 hours from now","required":true,"mismatch":"expected format 6, got 2","status":"resolved","epoch":1779984000,"suggestedFormatIndex":2},
+        {"caseId":"discord-reference-clock-composition-spring-forward-day","text":"<t:1772951400:D> that day at noon","required":true,"mismatch":"expected format 4, got 5","status":"resolved","epoch":1772985600,"suggestedFormatIndex":5}
       ]
     },
     {
@@ -1391,50 +317,12 @@
       "medianMs": 2654,
       "p95Ms": 13106,
       "failures": [
-        {
-          "caseId": "boundary-snap-relative-hour-word",
-          "text": "in five hours on the hour",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "discord-reference-shift-suffix-day-earlier",
-          "text": "<t:1785643200:t> 1 day earlier",
-          "required": true,
-          "mismatch": "expected format 4, got 0",
-          "status": "resolved",
-          "epoch": 1785556800,
-          "suggestedFormatIndex": 0
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-clock-prefix-after",
-          "text": "at 4:30 use the day after <t:1785733200:F>",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "direct-epoch-seconds",
-          "text": "1779724800",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "diagnostic-luna-standalone-clock-typo",
-          "text": "5pms",
-          "required": false,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "weekday-short-ambiguous-clock-suffix-six-way",
-          "text": "tu 5pma",
-          "required": true,
-          "mismatch": "expected alternatives 1780390800,1780434000,1780477200,1780520400,1780995600,1781038800, got 1780390800,1780434000",
-          "status": "needs_clarification"
-        }
+        {"caseId":"boundary-snap-relative-hour-word","text":"in five hours on the hour","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"discord-reference-shift-suffix-day-earlier","text":"<t:1785643200:t> 1 day earlier","required":true,"mismatch":"expected format 4, got 0","status":"resolved","epoch":1785556800,"suggestedFormatIndex":0},
+        {"caseId":"discord-reference-shift-clock-ambiguity-clock-prefix-after","text":"at 4:30 use the day after <t:1785733200:F>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"direct-epoch-seconds","text":"1779724800","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"diagnostic-luna-standalone-clock-typo","text":"5pms","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"weekday-short-ambiguous-clock-suffix-six-way","text":"tu 5pma","required":true,"mismatch":"expected alternatives 1780390800,1780434000,1780477200,1780520400,1780995600,1781038800, got 1780390800,1780434000","status":"needs_clarification"}
       ]
     },
     {
@@ -1480,27 +368,9 @@
       "medianMs": 2676,
       "p95Ms": 13053,
       "failures": [
-        {
-          "caseId": "compound-typo-cultural-clock",
-          "text": "day after a week from tomorrow at 133t time",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "diagnostic-month-typo-suffix-bare-minute-clarification",
-          "text": "first of Febuarysdf 2:30",
-          "required": false,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "explicit-year-holiday",
-          "text": "easter 2026 noon",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        }
+        {"caseId":"compound-typo-cultural-clock","text":"day after a week from tomorrow at 133t time","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"diagnostic-month-typo-suffix-bare-minute-clarification","text":"first of Febuarysdf 2:30","required":false,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"explicit-year-holiday","text":"easter 2026 noon","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"}
       ]
     },
     {
@@ -1546,29 +416,9 @@
       "medianMs": 2626,
       "p95Ms": 12608,
       "failures": [
-        {
-          "caseId": "discord-reference-shift-prefix-hours-before-typo-befoer",
-          "text": "2 hours befoer <t:1785733200:F>",
-          "required": true,
-          "mismatch": "expected format 5, got 2",
-          "status": "resolved",
-          "epoch": 1785726000,
-          "suggestedFormatIndex": 2
-        },
-        {
-          "caseId": "discord-reference-shift-clock-ambiguity-spring-before",
-          "text": "2 o’clock, on the day preceding <t:1772951400:D>",
-          "required": true,
-          "mismatch": "expected status needs_clarification, got failed",
-          "status": "failed"
-        },
-        {
-          "caseId": "discord-reference-range-push-start",
-          "text": "<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later",
-          "required": true,
-          "mismatch": "expected status resolved, got failed",
-          "status": "failed"
-        }
+        {"caseId":"discord-reference-shift-prefix-hours-before-typo-befoer","text":"2 hours befoer <t:1785733200:F>","required":true,"mismatch":"expected format 5, got 2","status":"resolved","epoch":1785726000,"suggestedFormatIndex":2},
+        {"caseId":"discord-reference-shift-clock-ambiguity-spring-before","text":"2 o’clock, on the day preceding <t:1772951400:D>","required":true,"mismatch":"expected status needs_clarification, got failed","status":"failed"},
+        {"caseId":"discord-reference-range-push-start","text":"<t:1785643200:t> to <t:1785650400:t>, but push the start one hour later","required":true,"mismatch":"expected status resolved, got failed","status":"failed"}
       ]
     },
     {
@@ -1614,27 +464,9 @@
       "medianMs": 2337,
       "p95Ms": 11153,
       "failures": [
-        {
-          "caseId": "month-boundary-leading-clock-first-of-last-month",
-          "text": "5pm the first of last month",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "relative-offset-from-now-100-years",
-          "text": "100 years from now",
-          "required": true,
-          "mismatch": "expected status resolved, got needs_clarification",
-          "status": "needs_clarification"
-        },
-        {
-          "caseId": "timezone-ambiguous-cst",
-          "text": "tomorrow at 5pm CST",
-          "required": true,
-          "mismatch": "expected alternatives , got 1779699600,1779742800,1779746400",
-          "status": "needs_clarification"
-        }
+        {"caseId":"month-boundary-leading-clock-first-of-last-month","text":"5pm the first of last month","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"relative-offset-from-now-100-years","text":"100 years from now","required":true,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification"},
+        {"caseId":"timezone-ambiguous-cst","text":"tomorrow at 5pm CST","required":true,"mismatch":"expected alternatives , got 1779699600,1779742800,1779746400","status":"needs_clarification"}
       ]
     },
     {
@@ -1680,15 +512,7 @@
       "medianMs": 2659,
       "p95Ms": 11638,
       "failures": [
-        {
-          "caseId": "anchor-offset-typo-weekday-relative-clock",
-          "text": "day aftr next satturday at 13:37",
-          "required": true,
-          "mismatch": "expected epoch 1780249020, got 1780853820",
-          "status": "resolved",
-          "epoch": 1780853820,
-          "suggestedFormatIndex": 4
-        }
+        {"caseId":"anchor-offset-typo-weekday-relative-clock","text":"day aftr next satturday at 13:37","required":true,"mismatch":"expected epoch 1780249020, got 1780853820","status":"resolved","epoch":1780853820,"suggestedFormatIndex":4}
       ]
     },
     {
@@ -1733,7 +557,56 @@
       "diagnosticTotal": 5,
       "medianMs": 2632,
       "p95Ms": 12659,
-      "failures": []
+      "failures": [
+
+      ]
+    },
+    {
+      "path": ".cache/luna-review-full.json",
+      "source": {
+        "timezoneSha256": "D068375D6BF9E87C950B2D1FA0FE60851E705084FCBAB9FA19782D8F7569707C",
+        "baseCommit": "57cc33631542da1a3603565bfcb0bebc27689ed3",
+        "workers": [
+          {
+            "pid": 92968,
+            "shard": 0
+          },
+          {
+            "pid": 99744,
+            "shard": 1
+          },
+          {
+            "pid": 11100,
+            "shard": 2
+          },
+          {
+            "pid": 105824,
+            "shard": 3
+          }
+        ],
+        "started": "2026-11-19T08:24:21.7077294-05:00",
+        "graphSha256": "27B684B0D53FFBEAFF9A69E83A3459CA598ECCB70D38357450C4DE3E86D6A100",
+        "deterministicSha256": "ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0"
+      },
+      "experiments": [
+        {
+          "label": "review-context",
+          "featureFlags": {
+            "planIr": true,
+            "deterministicPreflight": true,
+            "discordReferenceRouting": true
+          }
+        }
+      ],
+      "requiredPassed": 202,
+      "requiredTotal": 202,
+      "diagnosticPassed": 5,
+      "diagnosticTotal": 5,
+      "medianMs": 3050,
+      "p95Ms": 13281,
+      "failures": [
+
+      ]
     }
   ]
 }

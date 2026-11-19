@@ -1,10 +1,10 @@
 # Luna fallback qualification, November 19
 
-The complete run at **70b68dd passed 202/202 required cases and 5/5 diagnostics**, with the original required catalog unchanged. The [passing case-level report](2026-11-19-luna-qualified.json) includes source hashes, all 207 outcomes, references, latency, and token counts. This closes the required correctness gate for that parser source. Installed-MSI acceptance and the five-second latency target are separate and remain open.
+The complete run at **57cc336 passed 202/202 required cases and 5/5 diagnostics**, with the original required catalog unchanged. The [passing case-level report](2026-11-19-luna-qualified.json) includes source hashes, all 207 outcomes, references, latency, and token counts. This closes the required correctness gate for that parser source. Installed-MSI acceptance and the five-second latency target are separate and remain open.
 
 All runs use `gpt-6-luna`, low reasoning. The selected hybrid keeps `planIr=true,deterministicPreflight=true,discordReferenceRouting=true`. No required input, reference instant, timezone, expected answer, or category changed from main at `d14afbab826d74b13fd16551c71c5470accfa36a`. A structural comparison of all 202 required rows passed; their normalized SHA-256 is `a689b0e20fc1bed448ce8868fcbc752479081ba5a1a3426a93ed3a628599960a`.
 
-The next reviewed source also fixes contextual timezone words, multi-zone choice loops, partial usage on errors, and per-identity daily fairness. Its complete qualification is pending; the passing report below applies only to 70b68dd.
+The qualified source also fixes contextual timezone words, multi-zone choice loops, partial usage on errors, and per-identity daily fairness. The earlier complete passing report at 70b68dd remains available in commit 16bd7e2.
 
 ## Complete measurements
 
@@ -19,7 +19,8 @@ The next reviewed source also fixes contextual timezone words, multi-zone choice
 | Bounded repair, 356c5d7 | 199/202 | 5/5 |
 | Guard repair and timezone timestamp choices, 4330fd1 | 199/202 | 5/5 |
 | Calendar contract and timezone UI, 042a250 | 201/202 | 5/5 |
-| Explicit compound anchors, 70b68dd | **202/202** | **5/5** |
+| Explicit compound anchors, 70b68dd | 202/202 | 5/5 |
+| Reviewed timezone context and usage, 57cc336 | **202/202** | **5/5** |
 
 The [initial case-level evidence](2026-11-19-luna-qualification.json) preserves the first 54 required failures. The [research evidence](2026-11-19-luna-research.json) preserves later scores, failed cases, and source hashes. Intermediate snapshots are distinct implementations, not an unchanged-build passing streak. Partial probes stopped after an edit assertion or offline regression failure are not qualification results.
 
@@ -39,7 +40,7 @@ A guard-rejected or unexecutable plan can receive one error-guided repair. Indep
 
 All offline suites, 43 related frontend/relay tests, API/frontend/Convex strict typechecks, and the production frontend build pass. The daily rate-limit regression uses distinct identities and proves the 101st admitted request cannot call the model. Failed or timed-out attempts still consume the 100-request shared fixed-window allowance.
 
-The passing run had median final latency 2,632 ms, P95 12,659 ms, and maximum 24,291 ms with four workers. Of 207 cases, 76 exceeded five seconds and none exceeded thirty seconds. This misses the five-second product SLO. Correctness evals do not impose the relay deadline; latency and deadline behaviour are separate measurements. Dollar cost estimates are unconfigured. Earlier snapshots omitted deterministic-validation token usage; current accounting includes accepted/rejected validation and repair, but provider usage may be unavailable on errors. Token totals are not a billing ledger, and daily enforcement does not depend on them.
+The passing run had median final latency 3,050 ms, P95 13,281 ms, and maximum 24,878 ms with four workers. Of 207 cases, 76 exceeded five seconds and none exceeded thirty seconds. This misses the five-second product SLO. Correctness evals do not impose the relay deadline; latency and deadline behaviour are separate measurements. Dollar cost estimates are unconfigured. Earlier snapshots omitted deterministic-validation token usage; current accounting includes accepted/rejected validation and repair, but provider usage may be unavailable on errors. Token totals are not a billing ledger, and daily enforcement does not depend on them.
 
 Exact installed-MSI authentication acceptance and real-account refresh after restart remain open. A previous isolated review install was canceled. The currently installed routing-smoke binary has a different hash from the current candidate; the reused 0.1.0 label does not prove acceptance. Component previews and successful backend calls do not establish installed-app or native browser-flow proof. No release or merge has been made.
 
