@@ -4,6 +4,8 @@ The model-first parser at `a3e4e4510557b37b23bcad08646ba483c9db48ee` passed 202/
 
 The repairs supply computed local-clock facts, separate month anchors from supplied clocks, and fail closed on incomplete plan execution. The existing single bounded repair handles malformed plans. Review then found a lowercase date-plus-timezone regression; that fix requires a fresh complete qualification before deployment. No expected answers were changed.
 
+The requalification on `226c8ac` stopped after 182 recorded cases. For `1 year ago`, Luna emitted a positive year shift and independent validation rejected the future timestamp. The planner now documents signed deltas, and an explicit validator contradiction can use the existing single repair if the deadline has room. The corrected plan still receives independent validation. All three live signed-offset probes passed. The full run on this change is pending.
+
 ## Evidence
 
 All 202 required inputs, references, timezones, categories, and expected answers are unchanged from main. Structural SHA-256: `a689b0e20fc1bed448ce8868fcbc752479081ba5a1a3426a93ed3a628599960a`.

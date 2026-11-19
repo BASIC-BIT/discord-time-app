@@ -35,6 +35,7 @@ async function main() {
   let verdict: 'accept' | 'reject' | 'unavailable' | 'pending' = 'accept';
   let slmReady = false;
   let rejectNextValidation = false;
+  let validationContradictions: string[] = [];
   const plan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic clock interpretation.', plans: [{
     label: '5 PM', confidence: 0.9, finalStep: 0,
     steps: [{ op: 'resolve_calendar_query', query: 'November 18 2026 5pm', precision: 'datetime' }],
@@ -94,7 +95,7 @@ async function main() {
     const selectedPlan = firstProviderPlan ?? providerPlan;
     const args = planning
       ? { ...selectedPlan, plans: selectedPlan.plans.map(entry => ({ ...entry, kind: 'instant', presentationFormat: null })) }
-      : { accepted: verdict === 'accept' && !rejectNextValidation, confidence: 0.9, reason: 'Synthetic independent validation.', missingOrContradictedSignals: [] };
+      : { accepted: verdict === 'accept' && !rejectNextValidation, confidence: 0.9, reason: 'Synthetic independent validation.', missingOrContradictedSignals: rejectNextValidation ? validationContradictions : [] };
     if (planning) firstProviderPlan = undefined;
     if (!planning) rejectNextValidation = false;
     response.writeHead(200, { 'content-type': 'application/json' });
@@ -246,6 +247,37 @@ async function main() {
       const rejected = await parseTemporalExpression({ text: 'tomorrow at 5pm', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z', openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm', features: { planIr: false, deterministicPreflight: true }, langfuse: { enabled: false } });
       assert.equal(rejected.status, 'needs_clarification');
       assert.equal(llmCalls - beforeLegacy, 1, 'a rejected answer cannot escalate into the unvalidated legacy agent');
+
+      const yearShift = (years: number) => parseTemporalPlanPlannerOutput({
+        outcome: 'plans', reason: 'Shift one calendar year relative to today.',
+        plans: [{ label: 'Year offset', confidence: 1, finalStep: 1, steps: [
+          { op: 'resolve_calendar_query', query: 'today', precision: 'date' },
+          { op: 'shift_datetime', baseStep: 0, delta: { years } },
+        ] }],
+      });
+      const yearInput = {
+        text: '1 year ago', timeZone: 'America/New_York', referenceInstant: '2026-05-24T12:00:00Z',
+        openaiApiKey: 'synthetic-test-key', openaiModel: 'test-llm',
+        features: { planIr: true, deterministicPreflight: false }, langfuse: { enabled: false },
+      };
+      validationContradictions = ['The requested year offset is past, but the candidate is in the future.'];
+      rejectNextValidation = true;
+      firstProviderPlan = yearShift(1);
+      providerPlan = yearShift(-1);
+      const beforeSemanticRepair = llmCalls;
+      const correctedYear = await parseTemporalExpression(yearInput);
+      assert.equal(correctedYear.status, 'resolved');
+      assert.equal(correctedYear.canonical?.isoInstant, '2025-05-24T16:00:00Z');
+      assert.equal(correctedYear.debug?.modelCalls, 4);
+      assert.equal(llmCalls - beforeSemanticRepair, 4, 'validate both the original and repaired plan');
+      rejectNextValidation = true;
+      firstProviderPlan = yearShift(1);
+      const beforeLateSemanticRepair = llmCalls;
+      const rejectedYear = await parseTemporalExpression({ ...yearInput, deadlineMs: Date.now() + 10_000 });
+      assert.equal(rejectedYear.status, 'needs_clarification');
+      assert.equal(rejectedYear.epoch, undefined);
+      assert.equal(llmCalls - beforeLateSemanticRepair, 2, 'do not repair a rejected answer without budget');
+      validationContradictions = [];
 
       const invalidPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic empty final step.', plans: [{ label: 'Broken plan', finalStep: 0, steps: [{ op: 'propose_candidate', precision: 'datetime' }] }] });
       firstProviderPlan = invalidPlan;

@@ -1373,12 +1373,14 @@ async function runPlanIrPath(
   const startedAt = nowMs();
   const first = await runPlanIrAttempt(request, options);
   const plannerOutput = first.debug?.trace?.find((step) => step.name === 'plan_ir_planner')?.output as { planResult?: { outcome?: string } } | undefined;
-  if (first.status !== 'failed'
+  const rejectedCandidate = first.debug?.finalValidation;
+  const hasCorrection = rejectedCandidate?.accepted === false && rejectedCandidate.missingOrContradictedSignals.length > 0;
+  if ((first.status !== 'failed' && !hasCorrection)
     || (options.maxAgentAttempts ?? DEFAULT_TEMPORAL_GRAPH_LIMITS.maxAgentAttempts) < 2
     || !first.debug?.trace
     || (plannerOutput?.planResult?.outcome !== 'plans' && plannerOutput?.planResult?.outcome !== 'clarification')) return first;
 
-  // One repair for a guard-rejected or unexecutable plan; final validation and no-plan stay terminal.
+  // Retry concrete plan errors once, including contradictions found by final validation.
   const feedback = JSON.stringify({
     errors: first.validation.warnings,
     previousPlan: first.debug.trace.find((step) => step.name === 'plan_ir_planner')?.output,
@@ -1463,7 +1465,7 @@ async function runPlanIrAttempt(
   const plannerMessages = [
     new SystemMessage(system),
     new HumanMessage(human),
-    ...(repairFeedback === undefined ? [] : [new HumanMessage(`The previous plan could not execute. Repair the operation/field/dependency error without dropping any input meaning. Reuse the existing operations; return no_plan if the meaning cannot be represented. Previous attempt: ${repairFeedback}`)]),
+    ...(repairFeedback === undefined ? [] : [new HumanMessage(`The previous plan failed execution or validation. Correct the reported errors without dropping any input meaning. Reuse the existing operations; return no_plan if the meaning cannot be represented. Previous attempt: ${repairFeedback}`)]),
   ];
   const { parsed: structuredPlanResult, raw } = await planner.invoke(plannerMessages, {
     ...(callbacks === undefined ? {} : { callbacks }),
@@ -4731,7 +4733,7 @@ Available plan operations:
 - For an ambiguous clock attached to a Discord timestamp reference, resolve_clock_time accepts options: an array of distinct {label,text} explicit AM/PM readings instead of a single text. The compact clock-choice contract requires exactly one plan and one option-bearing clock step feeding the final result. This takes precedence over interpret_clock_phrase for meridiem ambiguity, including an unqualified hour with o'clock. Put every reading into options as conventional explicit AM/PM text. Keep the full reference/date arithmetic in that one plan; do not split its AM/PM readings into separate plans.
 - resolve_timezone: use for explicit timezone text. Reference it from date/time operations with timeZoneStep, or put exact IANA/fixed-offset text directly in timeZone.
 - interpret_clock_phrase: use when the clock phrase is semantic/fuzzy rather than conventional syntax, such as "leet time" or "133t time". You must set time to the interpreted 24-hour clock. It returns ONLY a clock, not a dated timestamp candidate.
-- shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Use time or timeStep when the final clock is known.
+- shift_datetime: apply calendar arithmetic to a prior candidate step. Use baseStep for the anchor. Delta fields are signed: use negative values for past offsets and positive values for future offsets. Use time or timeStep when the final clock is known.
 - Set either timeStep or a literal time, never both. When combining a resolved clock dependency, set timeStep to its index and time=null. Never fill unused time fields with 00:00; that is an actual midnight override, not a placeholder.
 - set_clock_time: apply a normalized clock time to a prior candidate step.
 - combine_date_time: same semantics as set_clock_time, preferred when combining a date anchor or weekday-anchor candidate set with a separate clock step.
