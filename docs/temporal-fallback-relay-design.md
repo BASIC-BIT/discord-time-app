@@ -97,3 +97,5 @@ The saved Use AI parsing preference gates hosted fallback. Unknown or unreadable
 A relay deadline is returned as `parse_timeout` and recorded as a timeout attempt. The overlay explains the timeout without a paid retry button; rewording or the manual date/time picker remains available. Late parser returns cannot escape the deadline.
 
 Independent semantic validation receives the original input, candidate, calendar facts, arithmetic trace, and deterministic checks. Derived display strings and Plan-IR presentation fields are excluded so a valid instant is not rejected for an initial display style. Existing default-format evals remain unchanged.
+
+A plan-execution error invalidates the whole interpretation set instead of dropping an alternative. The existing one-repair limit and remaining-budget check apply. Independent validation receives explicitly computed local clocks, avoiding a second timezone conversion. Month-boundary anchors and supplied clocks are separate operations.

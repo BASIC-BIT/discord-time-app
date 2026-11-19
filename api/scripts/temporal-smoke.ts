@@ -178,6 +178,22 @@ async function main() {
     assert(parsed.parserNotes.includes('Matched relative boundary snap expression.'), text);
   }
 
+  const partialClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification', reason: 'Three requested date interpretations.', clarificationQuestion: 'May 25, May 26, or May 27?',
+    plans: [
+      { label: 'May 25', finalStep: 0, steps: [{ op: 'resolve_calendar_query', query: 'May 25 2026 at 5pm' }] },
+      { label: 'May 26', finalStep: 0, steps: [{ op: 'resolve_calendar_query', query: 'May 26 2026 at 5pm' }] },
+      { label: 'May 27', finalStep: 0, steps: [{ op: 'resolve_calendar_query' }] },
+    ],
+  });
+  const incompleteChoices = await executeTemporalPlanPlannerOutput(partialClarification,
+    { text: 'May 25, May 26, or May 27 2026 at 5pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() });
+  assert.equal(incompleteChoices.status, 'failed', 'an unexecutable alternative cannot disappear from clarification');
+  assert.equal(incompleteChoices.clarificationAlternatives, undefined);
+  assert.equal(incompleteChoices.epoch, undefined);
+  assert.match(incompleteChoices.validation.warnings.join(' '), /requires query/);
+
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
   const epochZeroWithPreflightDisabled = await parseTemporalExpression({

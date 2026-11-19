@@ -1,33 +1,28 @@
 # Luna fallback qualification
 
-The latest parser is not qualified. No release or merge has been made.
+The current candidate is not qualified. No release or merge has been made.
 
-## Current evidence
+The selected model is `gpt-6-luna` with low reasoning. The latest complete model-first run, `b558384`, passed 197/202 required cases and 5/5 diagnostics. The next run stopped after 168 recorded cases with three required failures: a wrong month-anchor date (correctly rejected), a correct local clock misread by validation, and a malformed plan silently omitted from six clarification choices.
 
-- User-selected model: `gpt-6-luna`, low reasoning.
-- The 202 required inputs, reference times, timezones, categories, and expected answers are unchanged from main. Structural SHA-256: `a689b0e20fc1bed448ce8868fcbc752479081ba5a1a3426a93ed3a628599960a`.
-- Historical source `57cc336` passed 202/202 required and 5/5 diagnostics with deterministic preflight enabled. Its complete measurements remain in `2026-11-19-luna-qualified.json`, using `caseDefaults` plus per-row overrides, with input text joined by case ID to the pinned catalog. Hydration self-checks preserve all outcomes, references, latency, and token counts.
-- Latest completed model-first run, `3a234e6`, passed 201/202 required and 4/5 diagnostics. A DST gap returned clarification instead of failure; `5pms` was rejected because validation invented a next-occurrence rule. These failures remain in `2026-11-19-luna-research.json`.
-- Source `d33a0ef` adds shared DST-gap and conventional-clock contracts. Its focused run passed three required cases and the `5pms` diagnostic. Its full run was stopped after repeated provider `503 server_is_overloaded`: one shard completed 51/51, three shards had no final report. This is incomplete, not a passing catalog run. Parser source is unchanged in `82c66fc`. A later checkpointed model-first run stopped after 34 cases with two required date-format mismatches. The shared default-noon and default-presentation repair passed all six focused date-only and explicit-clock regressions; its full qualification remains pending. The complete a27ae6f run passed 201/202 required and 5/5 diagnostics; validation rejected a correct reference composition solely for its permitted display style. Scoping the ordinary-date rule and sharing the existing reference-format contract passed all five focused reference/ordinary-date checks.
-- The eval harness now records each completed case in an adjacent `.partial.jsonl` file and bounds direct agent requests at 120 seconds. This research safety bound is separate from the live relay's 30-second deadline and the five-second product SLO.
+The current repair supplies computed local-clock facts, separates month anchors from supplied clocks, and fails closed on incomplete plan execution. It reuses the existing single bounded repair. The ten-case regression passed nine; its failed ambiguity representation was corrected, then all three ordinary/reference ambiguity controls passed. Full qualification remains pending. Earlier query-description, separator, and display-validation repairs passed eight focused cases. The complete required catalog must pass before promotion.
 
-All complete failed snapshots and the incomplete-run receipt are preserved in `2026-11-19-luna-research.json`. The b558384 full run passed 197/202 required and 5/5 diagnostics. It exposed a month-format regression, an incorrectly advertised rounding capability, and three display-style false rejections. The existing query tool was verified offline; its separator grammar now accepts the comma/then forms emitted by the model. Semantic validation retains computed timestamp facts but excludes presentation metadata. All eight focused regressions pass; a new complete run is required.
+## Evidence
 
-Failure input text joins case IDs to the pinned catalog, with differing text retained as overrides; a hydration self-check preserved all failed measurements. Expected answers were not changed. No deterministic typo dictionary or phrase-specific timestamp override was added. Ambiguous offline prose fails safely rather than discarding temporal signals.
+All 202 required inputs, references, timezones, categories, and expected answers are unchanged from main. Structural SHA-256: `a689b0e20fc1bed448ce8868fcbc752479081ba5a1a3426a93ed3a628599960a`.
 
-## Current routing and limits
+- `2026-11-19-luna-qualification.json`: original 148/202 result.
+- `2026-11-19-luna-research.json`: failed and incomplete snapshots, source hashes, flags, and provider-overload evidence. Failure input text joins case IDs to its pinned catalog, with differing inputs retained explicitly.
+- `2026-11-19-luna-qualified.json`: historical `57cc336` result, 202/202 required and 5/5 diagnostics, with deterministic preflight enabled. Rows inherit `caseDefaults` and join input text to the pinned catalog. Hydration self-checks preserve every outcome, reference, latency, and token count.
 
-The deployed development relay still uses the historical qualified parser with deterministic preflight enabled. Model-first fallback has not been promoted. When qualification resumes, evaluate `planIr=true,deterministicPreflight=false,discordReferenceRouting=true` on the current graph, then promote only after the full required catalog passes.
+The deployed development relay still uses the historical qualified configuration. Model-first fallback has not been promoted. No deterministic typo dictionary or phrase-specific timestamp override was added. The punctuation repair only extends the separator in the existing explicit duration-and-rounding grammar. Ambiguous offline prose continues to fail safely rather than discard temporal signals.
 
-The source uses a shared token bucket refilling at 100 requests/day with capacity 100, plus a per-user 10/minute bucket with burst three. There is no extra per-user daily cap. Failed admitted attempts consume quota; rejected admissions roll back all debits. Superseded results are ignored by the client, but already incurred provider work remains counted.
+## Checks and limits
 
-## Validation and remaining gates
+58 related frontend/relay tests pass. Temporal, warmup, strict API/frontend/Convex, and native checks have passed on their recorded sources; native validation includes 65 Rust tests and clippy. Current-head CI and every feedback surface must finish and be refreshed before a merge-ready claim.
 
-The offline suite passed. Current related frontend/relay tests: 53 passing. Strict frontend and Convex checks passed; native validation passed 65 Rust tests and clippy. Both platform checks passed for `d33a0ef`; newer head checks and all feedback must be refreshed before any merge-ready claim.
+The latest complete run had median 8,642 ms, P95 18,517 ms, and max 32,794 ms; 162/207 exceeded five seconds and one exceeded thirty seconds. This misses the five-second SLO. Direct evals have a 120-second safety bound, distinct from the live relay's 30-second deadline. Dollar estimates are unconfigured; token totals are not a billing ledger. Per-case `.partial.jsonl` checkpoints retain completed measurements during provider outages.
 
-Historical qualified latency was median 3,050 ms, P95 13,281 ms, max 24,878 ms; 78/207 exceeded five seconds. The incomplete provider-overload run also had requests above thirty seconds. Direct parser evals do not include the relay deadline or authentication overhead. These results miss the five-second SLO. Dollar cost estimates are unconfigured, and token totals are not a billing ledger.
-
-Exact installed-MSI authentication and real-account refresh after restart remain NOT RUN for the current source. Windows canceled the previous installer attempt. The old installed review executable has a different hash; its reused version label proves nothing about the current build. Native Windows browser-flow screenshots remain unavailable. Component previews and successful API calls do not establish installed-app acceptance.
+Exact installed-MSI authentication and refresh after restart remain NOT RUN for the current source. Windows canceled the earlier installer attempt. The old installed review executable has a different hash; its version label is not acceptance evidence. Current native/browser sign-in screenshots remain unavailable. Linux/component previews and API calls do not prove installed Windows behavior. See `docs/linux-desktop-testing.md` for the preserved intermittent native stall and later diagnostic runs.
 
 ## Reproduce
 

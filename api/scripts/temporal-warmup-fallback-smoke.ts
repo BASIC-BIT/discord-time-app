@@ -78,11 +78,16 @@ async function main() {
           assert.equal(JSON.stringify(packet).includes('"presentationFormat":'), false);
           assert.equal(typeof packet.candidate.isoInstant, 'string');
           assert.equal(typeof packet.facts.calendarDayOffsetFromReference, 'number');
+          assert.equal(typeof packet.facts.localTime, 'string');
+          assert.equal(typeof packet.facts.referenceLocalTime, 'string');
+          assert.equal(typeof packet.facts.utcOffset, 'string');
           semanticPayloadChecks += 1;
         }
         if (packet.originalText === 'May 26th (Tuesday) 2026 at 5pm') {
           assert.equal(packet.facts.referenceLocalDate, '2026-05-15');
           assert.equal(packet.facts.calendarDayOffsetFromReference, 11);
+          assert.equal(packet.facts.localTime, '17:00:00');
+          assert.equal(packet.facts.referenceLocalTime, '12:00:00');
         }
       }
     }
@@ -253,6 +258,16 @@ async function main() {
       assert.ok(planRepair.debug?.trace?.some(step => step.name === 'plan_ir_plan_failed'));
       assert.ok(planRepair.debug?.trace?.some(step => step.name === 'plan_ir_repair_requested'));
       assert.deepEqual(planRepair.debug?.trace?.map(step => step.index), planRepair.debug?.trace?.map((_, index) => index + 1));
+
+      const completeDates = parseTemporalPlanPlannerOutput({outcome:'clarification',reason:'Three date choices.',clarificationQuestion:'Which date?',plans:[25,26,27].map(day=>({label:`May ${day}`,finalStep:0,steps:[{op:'resolve_calendar_query' as const,query:`May ${day} 2026 at 5pm`}]}))});
+      firstProviderPlan = {...completeDates,plans:completeDates.plans.map((entry,index)=>index===2?{...entry,steps:entry.steps.map(step=>({...step,query:null}))}:entry)};
+      providerPlan = completeDates;
+      const beforePartialRepair = llmCalls;
+      const repairedChoices = await parseTemporalExpression({text:'May 25, May 26, or May 27 2026 at 5pm',timeZone:'America/New_York',referenceInstant:'2026-05-24T12:00:00Z',openaiApiKey:'synthetic-test-key',openaiModel:'test-llm',features:{planIr:true,deterministicPreflight:false},langfuse:{enabled:false}});
+      assert.equal(repairedChoices.status,'needs_clarification');
+      assert.equal(repairedChoices.clarificationAlternatives?.length,3,'repair restores the missing interpretation instead of returning two choices');
+      assert.equal(repairedChoices.debug?.agentAttempts,2);
+      assert.equal(llmCalls-beforePartialRepair,2,'one bounded repair, with no instant validation for a complete clarification');
 
       firstProviderPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic wrong field.', plans: [{ label: 'Reference in text instead of query', finalStep: 0, steps: [{ op: 'resolve_calendar_query', text: '<t:1785643200:t>' }] }] });
       providerPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Use the exact reference operand.', plans: [{ label: 'One hour later', finalStep: 1, steps: [{ op: 'resolve_calendar_query', query: '<t:1785643200:t>' }, { op: 'shift_datetime', baseStep: 0, delta: { hours: 1 } }] }] });

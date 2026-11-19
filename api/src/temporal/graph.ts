@@ -659,6 +659,14 @@ export async function executeTemporalPlanPlannerOutput(
   }
 
   const toolPasses = executions.reduce((total, execution) => total + execution.toolPasses, 0);
+  const executionErrors = executions.map(execution => execution.error).filter((error): error is string => error !== undefined);
+  if (executionErrors.length > 0) {
+    const producedCount = executions.reduce((total, execution) => total + (execution.candidates?.length ?? 0) + (execution.ranges?.length ?? 0), 0);
+    const response = responseFromFailedPlanIr(['Not all planned interpretations could be executed.', ...executionErrors].join(' '), trace, producedCount, toolPasses, 0);
+    attachPlanExecutionDebug(response, startedAt, options.modelName, options.planningDurationMs);
+    return response;
+  }
+
   const ranges = executions.flatMap((execution) => (execution.ranges ?? []).map((range) => ({
     plan: execution.plan,
     planIndex: execution.planIndex,
@@ -1543,6 +1551,14 @@ async function runPlanIrAttempt(
   }
 
   const toolPasses = executions.reduce((total, execution) => total + execution.toolPasses, 0);
+  const executionErrors = executions.map(execution => execution.error).filter((error): error is string => error !== undefined);
+  if (executionErrors.length > 0) {
+    const producedCount = executions.reduce((total, execution) => total + (execution.candidates?.length ?? 0) + (execution.ranges?.length ?? 0), 0);
+    const response = responseFromFailedPlanIr(['Not all planned interpretations could be executed.', ...executionErrors].join(' '), trace, producedCount, toolPasses, 1, getLangfuseTraceId(langfuseHandler));
+    attachPlanDebug(response);
+    return response;
+  }
+
   const ranges = executions.flatMap((execution) => (execution.ranges ?? []).map((range) => ({
     plan: execution.plan,
     planIndex: execution.planIndex,
@@ -4390,10 +4406,12 @@ async function validateFinalAnswer(
   signal?: AbortSignal,
   onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
 ): Promise<TemporalFinalValidation> {
-  const referenceDate = Temporal.Instant.from(request.calendarContext.referenceInstant)
-    .toZonedDateTimeISO(finalized.candidate.timeZone).toPlainDate();
-  const candidateDate = Temporal.Instant.from(finalized.candidate.isoInstant)
-    .toZonedDateTimeISO(finalized.candidate.timeZone).toPlainDate();
+  const referenceLocal = Temporal.Instant.from(request.calendarContext.referenceInstant)
+    .toZonedDateTimeISO(finalized.candidate.timeZone);
+  const candidateLocal = Temporal.Instant.from(finalized.candidate.isoInstant)
+    .toZonedDateTimeISO(finalized.candidate.timeZone);
+  const referenceDate = referenceLocal.toPlainDate();
+  const candidateDate = candidateLocal.toPlainDate();
   const calendarDayOffsetFromReference = referenceDate.until(candidateDate, { largestUnit: 'day' }).days;
   const validator = model.withStructuredOutput(FinalValidationSchema, { includeRaw: true });
   const { parsed: result, raw } = await validator.invoke([
@@ -4405,7 +4423,7 @@ Validation rules:
 - ${EXECUTOR_PRODUCT_CONVENTIONS}
 - An unqualified weekday or weekday abbreviation with a clear clock uses the executor upcoming-weekday convention. A weekday abbreviation alone is not a next-weekday request. Require competing-week clarification only when next is actually stated or clearly intended, not merely because a weekday was shortened. Product tomorrow forms tom/tmw/tmrw may be normalized in temporal context.
 - Unqualified holiday names use the holiday tool's configured regional calendar, selected from country/locale or timezone context. Validate the date against that calendar; do not reject solely because another religious or regional tradition exists elsewhere. Explicitly requested regions or traditions must still be preserved, and actual tool-reported ambiguity requires clarification.
-- Candidate facts (weekday, ISO date, timezone offset) come from deterministic calendar arithmetic. Use those computed facts to compare against the user's requested meaning; do not replace them with a mentally recomputed weekday or remembered calendar. If the user explicitly names a weekday, compare it with facts.weekday.
+- Candidate facts (weekday, ISO date, local clock, timezone offset) come from deterministic calendar arithmetic. facts.localTime and facts.referenceLocalTime are already in the selected candidate timezone; compare those clocks directly and never apply utcOffset a second time. Use those computed facts to compare against the user's requested meaning; do not replace them with a mentally recomputed weekday or remembered calendar. If the user explicitly names a weekday, compare it with facts.weekday.
 - For nested relative modifiers, derive the innermost anchor first (today is day offset 0, tomorrow +1, yesterday -1), then apply every outer modifier separately. Compare the total with facts.calendarDayOffsetFromReference, computed from facts.referenceLocalDate in the candidate timezone. Do not infer the modifier count from the proposed date or accept its rationale as arithmetic proof.
 - Accept only if the candidate preserves every date and time signal in the input. Stating an assumption does not resolve competing temporal interpretations: reject if a materially different AM/PM, weekday, or timezone interpretation remains plausible.
 - Apply this product's calendar conventions: a date-only expression, including an offset in whole calendar days, weeks, months, or years without an explicit clock, is represented at 12:00 PM local time. Calendar-unit counts are not clock signals. Offsets in hours or minutes preserve the reference clock; an explicitly supplied clock must always be preserved.
@@ -4423,7 +4441,7 @@ Validation rules:
       originalText: request.text,
       calendarContext: request.calendarContext,
       candidate: finalized.candidate,
-      facts: { ...finalized.facts, referenceLocalDate: referenceDate.toString(), calendarDayOffsetFromReference },
+      facts: { ...finalized.facts, referenceLocalDate: referenceDate.toString(), referenceLocalTime: referenceLocal.toPlainTime().toString(), localTime: candidateLocal.toPlainTime().toString(), utcOffset: candidateLocal.offset, calendarDayOffsetFromReference },
       deterministicValidation: finalized.validation,
       agentRationale: rationale,
       agentTrace: trace,
@@ -4706,7 +4724,7 @@ Product calendar convention: ${EXECUTOR_PRODUCT_CONVENTIONS}
 For a supported boundary request, preserve its normalized wording in resolve_calendar_query so the executor applies this convention; do not replace it with a guessed absolute date.
 
 Available plan operations:
-- resolve_calendar_query: put the supported expression in query, not text (text=null). The executor directly supports month-boundary phrases (unqualified first of the month and this/next/last month), whole-hour/quarter-hour boundary snapping, and a duration followed by rounding. Preserve those expressions instead of precomputing an absolute date or adding a clock to a date-only query. It also resolves corrected date anchors, explicit dates/clocks, Discord timestamps, and bare 10/13/16/19 digit epochs. Rounding is supported through this query tool; it does not require another plan operation.
+- resolve_calendar_query: put the supported expression in query, not text (text=null). The executor directly supports date-only month-boundary anchors (unqualified first of the month and this/next/last month), whole-hour/quarter-hour boundary snapping, and a duration followed by rounding. Resolve a month-boundary date without a clock, then apply any user-supplied clock separately with set_clock_time or combine_date_time; a clock appended to a relative month-boundary phrase is not supported by that query grammar. Preserve those expressions instead of precomputing an absolute date or adding a clock to a date-only query. It also resolves corrected date anchors, explicit dates/clocks, Discord timestamps, and bare 10/13/16/19 digit epochs. Rounding is supported through this query tool; it does not require another plan operation.
 - resolve_weekday_anchor: use for every normalized weekday anchor, including an ordinary unqualified weekday (weekdayAnchor=upcoming); combine the clock separately with set_clock_time or combine_date_time. Do not send phrases such as "upcoming Tuesday at 10pm" to resolve_calendar_query. Also use this operation when weekday wording ambiguity must produce alternatives. For "sunday after next", use weekdayAnchor=after_next_ambiguous. For a raw "next <weekday>" ambiguity only when you intentionally need alternatives, use weekdayAnchor=next_ambiguous. This operation can return multiple date candidates.
 - resolve_holiday: use for holiday names; include year and normalized time when the user specified them. Unqualified names follow the configured regional calendar selected by the tool from country/locale or timezone context; do not introduce unrequested regional or religious alternatives.
 - resolve_clock_time: use for conventional numeric clock text like "13:37", "1pm", or "noon". It returns ONLY a clock, not a dated timestamp candidate. For spelled-out or semantic clock phrases, interpret the clock yourself and emit interpret_clock_phrase with a numeric 24-hour time; keep the original phrase and interpretation in the rationale.
@@ -4729,7 +4747,7 @@ Planning rules:
 - Set presentationFormat to null for ordinary non-Discord expressions without an explicit presentation request, so the application applies its existing default format. Choose a non-null format when transforming a Discord reference or when the user explicitly requests a display style.
 - A relative duration followed by "on the hour" has both operations: shift by that duration, then round up to the next whole-hour boundary if smaller units remain. Do not ask the user to choose between the explicitly requested duration and boundary. Without a boundary qualifier, preserve smaller units.
 - Product calendar conventions: date-only requests and whole-calendar-unit offsets (days/weeks/months/years without a supplied clock) use local noon. Resolve a date anchor such as today for those offsets; use now as an instant anchor for hour/minute offsets that must preserve the current clock.
-- Product shorthand vocabulary: tom, tmw, and tmrw mean tomorrow. An ordinary weekday abbreviation with a clear clock, such as tu with an explicit AM/PM time, uses the upcoming weekday. When a short date abbreviation is paired with conflicting clock meridiem letters, that combined shorthand is ambiguous even if the abbreviation alone usually names a weekday. Retain the full cross-product of the relative-day expansion (tomorrow), the current/upcoming weekday, and the following-week weekday, each paired with AM and PM. Do not prune a plausible date or meridiem by confidence or proximity. This can require six independent alternatives, which the schema supports.
+- Product shorthand vocabulary: tom, tmw, and tmrw mean tomorrow. An ordinary weekday abbreviation with a clear clock, such as tu with an explicit AM/PM time, uses the upcoming weekday. When a short date abbreviation is paired with conflicting clock meridiem letters, that combined shorthand is ambiguous even if the abbreviation alone usually names a weekday. Retain the full cross-product of the relative-day expansion (tomorrow), the current/upcoming weekday, and the following-week weekday, each paired with AM and PM. Do not prune a plausible date or meridiem by confidence or proximity. This can require six independent alternatives, which the schema supports. For non-reference clock ambiguity, keep separate explicit-clock plans as required above, rather than using the compact Discord-reference options contract. Populate every operation-required field in every alternative; one malformed alternative invalidates the complete clarification.
 - When independently labelled event times are given, return clarification with a candidate for each event unless the text explicitly asks for one event or a continuous start/end range. Do not rank distinct event times and finalize just one.
 - Discord presentation meanings: d=numeric date, D=long date, t=short time, T=time with seconds, f=short date and time, F=full date including weekday and time, R=relative time. A source F reference already includes weekday, date, and clock context: preserve F through shifts and clock replacement unless the user explicitly requests a different display style. choose f when a time-only source acquires a date through calendar composition.
 - A standalone clock expression does not require an explicit date from the user. Normalize the clock wording when needed and use resolve_calendar_query on the complete normalized expression; that operation supplies the date using the provided calendar context. Do not return no_plan or clarification solely because the user omitted a date.
