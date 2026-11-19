@@ -83,7 +83,7 @@ test('bounds deployment-wide model calls even across distinct admitted identitie
   for (let index = 0; index < 100; index += 1) {
     await t.withIdentity({ subject: `daily-${index}` }).action(api.temporal.parse, args);
   }
-  await expect(t.withIdentity({ subject: 'one-more-account' }).action(api.temporal.parse, args)).rejects.toThrow('shared daily limit');
+  await expect(t.withIdentity({ subject: 'one-more-account' }).action(api.temporal.parse, args)).rejects.toMatchObject({ data: expect.objectContaining({ code: 'shared_limit' }) });
   expect(parseTemporalExpression).toHaveBeenCalledTimes(100);
   const rejected = t.withIdentity({subject: 'one-more-account'});
   await rejected.run(async ctx => {

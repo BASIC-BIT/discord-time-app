@@ -22,7 +22,7 @@ export const admit = internalMutation({
     const daily = await rateLimiter.limit(ctx, 'fallbackDaily');
     if (!daily.ok) {
       console.warn('shared_daily_limit_reached');
-      throw new ConvexError({ code: 'rate_limited', message: 'Smart parsing has reached its shared daily limit. Try again later.' });
+      throw new ConvexError({ code: 'shared_limit', message: 'Smart parsing has reached its shared daily limit. Try again later.' });
     }
     return null;
   },

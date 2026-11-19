@@ -20,7 +20,7 @@ Development Convex `effervescent-oyster-428` runs this model-first parser. A req
 
 ## Checks and limits
 
-61 related frontend/relay tests pass. Temporal, warmup, strict API/frontend/Convex, and native checks have passed on their recorded sources; native validation includes 65 Rust tests and clippy. Current-head CI and every feedback surface must finish and be refreshed before a merge-ready claim.
+62 related frontend/relay tests pass. Temporal, warmup, strict API/frontend/Convex, and native checks have passed on their recorded sources; native validation includes 65 Rust tests and clippy. Current-head CI and every feedback surface must finish and be refreshed before a merge-ready claim.
 
 The latest complete run had median 6,848 ms, P95 12,601 ms, and max 30,629 ms. Of 207 cases, 159 exceeded five seconds and one exceeded thirty seconds. This misses the five-second SLO. Direct evals have a 120-second safety bound, distinct from the live relay's 30-second deadline. Dollar estimates are unconfigured; token totals are not a billing ledger. Per-case `.partial.jsonl` checkpoints retain completed measurements during provider outages.
 

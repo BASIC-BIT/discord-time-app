@@ -30,6 +30,7 @@ export async function parseHostedTime(text: string, tz: string, now: string, req
       const data = error.data as { code?: string; message?: string };
       if (data.code === 'sign_in_required') throw new TimeParserAPIError(data.message ?? 'Please sign in again.', 401, 'sign_in_required');
       if (data.code === 'rate_limited') throw new TimeParserAPIError(data.message ?? 'Please try again shortly.', 429, 'rate_limited');
+      if (data.code === 'shared_limit') throw new TimeParserAPIError(data.message ?? 'Smart parsing has reached its shared limit. Try again later.', 429, 'shared_limit');
       if (data.code === 'parse_timeout') throw new TimeParserAPIError(data.message ?? 'Smart parsing took too long.', 504, 'parse_timeout');
     }
     throw error;

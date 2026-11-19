@@ -627,7 +627,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
               const failure = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
               const message = failure.code === 'needs_clarification' ? failure.message : failure.code === 'sign_in_required' ? localMessage ?? failure.message : [localMessage, failure.message].filter(Boolean).join(' ');
               error = new TimeParserAPIError(message, failure.status, failure.code, failure.alternatives, failure.generationId, failure.endpointWarming, failure.llmFallbackAttempted, failure.ambiguousTimeZone);
-              setCanRetryFallback(failure.code !== 'parse_timeout' && (failure.status === 429 || (failure.status ?? 0) >= 500));
+              setCanRetryFallback(failure.code !== 'parse_timeout' && (failure.code === 'rate_limited' || (failure.status ?? 0) >= 500));
             }
           }
           if (!result) {

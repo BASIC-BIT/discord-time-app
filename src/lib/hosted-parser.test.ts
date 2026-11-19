@@ -48,7 +48,7 @@ test('unconfigured builds keep the original local failure and make no auth reque
 });
 
 test('relay auth and throttle rejections remain actionable', async () => {
-  for (const [code, status] of [['sign_in_required', 401], ['rate_limited', 429]] as const) {
+  for (const [code, status] of [['sign_in_required', 401], ['rate_limited', 429], ['shared_limit', 429]] as const) {
     fake.action.mockRejectedValue(new ConvexError({ code, message: 'Actionable message' }));
     await expect(parseHostedTime('test', 'UTC', now, 'id', new AbortController().signal)).rejects.toMatchObject({ code, status, message: 'Actionable message' });
   }
