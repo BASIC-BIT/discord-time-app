@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { cancelHostedSignIn, getHostedAuthStatus, hostedConfigured, openHostedSignInBrowser, restoreHostedSignInWindow, signOutHostedAuth, startHostedSignIn, type HostedAuthStatus } from '../lib/hosted-auth';
 
-export function HostedAccount({ compact = false, onSignedIn }: { compact?: boolean; onSignedIn?: () => void }) {
+export function HostedAccount({ compact = false, onSignedIn, onDismiss }: { compact?: boolean; onSignedIn?: () => void; onDismiss?: () => void }) {
   const [status, setStatus] = useState<HostedAuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +88,7 @@ export function HostedAccount({ compact = false, onSignedIn }: { compact?: boole
           <button type="button" className="account-link" onClick={() => { void cancel(); }}>Cancel</button>
         </> : <button type="button" className="secondary-button account-button account-button-primary" disabled={busy || status?.configured === false} onClick={() => { void start(); }}>{busy ? 'Opening sign-in…' : 'Sign in with browser'}<span aria-hidden="true">↗</span></button>}
         {busy && !pending && <button type="button" className="account-link" onClick={() => { void cancel(); }}>Cancel</button>}
+        {compact && onDismiss && status?.phase === 'signed_out' && !busy && <button type="button" className="account-link" onClick={onDismiss}>Not now</button>}
       </div>
       {pending && status.verificationUri && <details className="account-recovery" open={Boolean(error)}>
         <summary>Browser didn’t open?</summary>

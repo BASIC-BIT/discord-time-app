@@ -72,3 +72,12 @@ it('confirms code copying without losing the waiting state', async () => {
   expect(container.textContent).toContain('Copied');
   expect(container.querySelector('[role=status]')?.textContent).toContain('Waiting for browser approval');
 });
+
+it('lets users dismiss the compact prompt while preserving approval until cancelled', async () => {
+  const dismiss=vi.fn();
+  await act(async()=>root.render(<HostedAccount compact onDismiss={dismiss} />));
+  await click('Not now'); expect(dismiss).toHaveBeenCalledOnce();
+  await click('Sign in with browser');
+  expect([...container.querySelectorAll('button')].some(button=>button.textContent==='Not now')).toBe(false);
+  await click('Cancel'); await click('Not now'); expect(dismiss).toHaveBeenCalledTimes(2);
+});

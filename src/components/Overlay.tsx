@@ -1040,7 +1040,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         {draft === null && hasInlineStatus && (
           <div className={`status-card ${statusTone}`}>
             {error && <div className="status-line">{error}</div>}
-            {signInRequired && <HostedAccount compact onSignedIn={() => { setSignInRequired(false); setError(null); setParseRequest(value => value + 1); }} />}
+            {signInRequired && <HostedAccount compact onDismiss={() => setSignInRequired(false)} onSignedIn={() => { setSignInRequired(false); setError(null); setParseRequest(value => value + 1); }} />}
             {error && canRetryFallback && <button type="button" className="secondary-button account-button" disabled={loading} onClick={() => { setIsClipboardText(false); setParseRequest(value => value + 1); }}>{isClipboardText ? 'Parse clipboard with smart parsing' : 'Try smart parsing again'}</button>}
             {hasClarification && (
               <div className="clarification">

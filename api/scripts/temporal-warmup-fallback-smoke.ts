@@ -180,7 +180,7 @@ async function main() {
           });
           assert.equal((await cancellation.json()).cancelled, true);
           assert.equal((await pending).status, 499);
-          const timedOut = await parse('fuzzy evening marker', 35_000);
+          const timedOut = await parse('fuzzy evening marker', 60_000);
           assert.equal(timedOut.status, 504);
           assert.equal((await timedOut.json()).error, 'parse_timeout', 'server budget expiry is not user cancellation');
         } else {

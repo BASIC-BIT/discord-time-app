@@ -444,6 +444,75 @@
       "failures": [
 
       ]
+    },
+    {
+      "path": ".cache/luna-bounded-full-partial.json",
+      "incomplete": true,
+      "requiredPassed": null,
+      "requiredTotal": 202,
+      "diagnosticPassed": null,
+      "diagnosticTotal": 5,
+      "observed": {
+        "total": 34,
+        "requiredPassed": 32,
+        "requiredTotal": 34
+      },
+      "stop": {
+        "reason": "Required format mismatches observed; preserve every checkpoint and repair the shared date-only precision contract before a new run",
+        "qualification": "FAILED_INCOMPLETE",
+        "stoppedAt": "2026-11-19T11:07:00.5921651-05:00",
+        "workers": [
+          {
+            "shard": 0,
+            "pid": 76700
+          },
+          {
+            "shard": 1,
+            "pid": 79404
+          },
+          {
+            "shard": 2,
+            "pid": 53552
+          },
+          {
+            "shard": 3,
+            "pid": 45156
+          }
+        ]
+      },
+      "limit": "Stopped once required failures were recorded. Every completed case remains in the partial JSONL; this sample does not qualify the full catalog.",
+      "source": {"timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","workers":[{"shard":0,"pid":76700},{"shard":1,"pid":79404},{"shard":2,"pid":53552},{"shard":3,"pid":45156}],"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e","agentTimeoutMs":120000,"graphSha256":"7EE0ADEDE56F6D566C5FCBAAF81673CB11C8BC38D9B454732B83E4A2B718AA6C","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","started":"2026-11-19T11:02:10.0913804-05:00","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false}},
+      "experiments": [{"label":"bounded-contract","featureFlags":{"planIr":true,"discordReferenceRouting":true,"deterministicPreflight":false}}],
+      "failures": [
+        {"caseId":"month-boundary-first-of-month","text":"first of the month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","epoch":1782921600,"suggestedFormatIndex":4,"validationWarnings":[],"plannerSteps":[{"operation":"resolve_calendar_query","query":"July 1, 2026 at 12:00 PM","precision":"datetime"}]},
+        {"caseId":"month-boundary-first-of-this-month","text":"first of this month","required":true,"mismatch":"expected format 1, got 4","status":"resolved","epoch":1780329600,"suggestedFormatIndex":4,"validationWarnings":[],"plannerSteps":[{"operation":"resolve_calendar_query","query":"June 1, 2026 at 12:00 PM","precision":"datetime"}]}
+      ]
+    },
+    {
+      "path": ".cache/luna-date-precision-probe.json",
+      "requiredPassed": 4,
+      "requiredTotal": 6,
+      "diagnosticPassed": 0,
+      "diagnosticTotal": 0,
+      "source": {"dirtyParser":true,"started":"2026-11-19T11:07:33.2414357-05:00","graphSha256":"7B8C1236CE2D607420AB11FF76E26F9D182AAF03F24D7E43FED64BFE5CC8BE22","pid":62932,"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e"},
+      "experiments": [{"label":"date-precision-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+        {"caseId":"month-boundary-first-of-this-month","text":"first of this month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1780329600,"suggestedFormatIndex":0,"precision":"date","presentationFormats":["d"]},
+        {"caseId":"month-boundary-first-of-next-month","text":"first of next month","required":true,"mismatch":"expected format 1, got 0","status":"resolved","epoch":1782921600,"suggestedFormatIndex":0,"precision":"date","presentationFormats":["d"]}
+      ]
+    },
+    {
+      "path": ".cache/luna-date-presentation-probe.json",
+      "requiredPassed": 6,
+      "requiredTotal": 6,
+      "diagnosticPassed": 0,
+      "diagnosticTotal": 0,
+      "limit": "Focused contract regression only, not full required-catalog qualification.",
+      "source": {"pid":62484,"baseCommit":"86356601733df06f5908d48934a6f1659b499c8e","graphSha256":"82A2769A7D624E8235C600A493E7C810E27D6301244151D3F7FEBFE271C23977","started":"2026-11-19T11:13:03.5669781-05:00","dirtyParser":true},
+      "experiments": [{"label":"date-presentation-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+
+      ]
     }
   ]
 }
