@@ -210,6 +210,7 @@ class DesktopSession:
         return result['value']
 
     def evaluate(self, script: str, *args: object) -> object:
+        self.last_script = script
         return self.wd('POST', '/execute/sync', {'script': script, 'args': list(args)})
 
     def invoke(self, command: str, args: dict[str, object] | None = None) -> object:
@@ -444,7 +445,7 @@ class DesktopSession:
                 try:
                     tail = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
                     if int(tail[19]) == started:
-                        process_states.append({'pid': pid, 'parent': int(tail[1]), 'state': tail[0], 'exitCode': int(tail[49])})
+                        process_states.append({'pid': pid, 'parent': int(tail[1]), 'state': tail[0], 'exitCode': int(tail[49]), 'name': Path(f'/proc/{pid}/comm').read_text().strip(), 'waitChannel': Path(f'/proc/{pid}/wchan').read_text().strip()})
                 except (OSError, ValueError, IndexError):
                     pass
             try:
@@ -473,6 +474,7 @@ class DesktopSession:
             self.metadata['failureTraceback'] = self.sanitize(''.join(traceback.format_exception(exc)))
             self.metadata['failurePhase'] = self.phase
             self.metadata['lastCommand'] = failed_command
+            self.metadata['lastScript'] = self.sanitize(getattr(self, 'last_script', '') or '')
             self.metadata['error'] = self.sanitize(str(exc))
             if 'DISPLAY' in self.env and hasattr(self, 'display'):
                 try:

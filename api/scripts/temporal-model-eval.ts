@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Temporal } from '@js-temporal/polyfill';
@@ -203,6 +203,7 @@ let trainedPlanPredictionsPath: string | undefined;
 let trainedPlanModelName = 'trained-plan-ir';
 let baselineSpecs: EvalRunnerSpec[] = [];
 let experimentSpecs: EvalExperimentSpec[] = [];
+const agentTimeoutMs = 120_000;
 let outputPath: string | undefined;
 let evalInputOutputPath: string | undefined;
 let selectedCaseIds = new Set<string>();
@@ -1820,6 +1821,11 @@ async function main() {
     console.log('Skipping OpenAI temporal eval runners because OPENAI_API_KEY is not configured.');
   }
 
+  const reportMetadata = { referenceInstant, timeZone, experiments: experimentSpecs, agentTimeoutMs };
+  if (outputPath !== undefined) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(`${outputPath}.partial.jsonl`, `${JSON.stringify(reportMetadata)}\n`, 'utf8');
+  }
   const results: EvalResult[] = [];
   for (const modelSpec of runnerSpecs.filter((spec) => !requiresOpenAi(spec) || openaiApiKey !== undefined)) {
     for (const experimentSpec of experimentSpecs) {
@@ -1827,6 +1833,7 @@ async function main() {
         for (let repeat = 1; repeat <= repeats; repeat += 1) {
           const result = await runCase(modelSpec, experimentSpec, evalCase, repeat);
           results.push(result);
+          if (outputPath !== undefined) await appendFile(`${outputPath}.partial.jsonl`, `${JSON.stringify(result)}\n`, 'utf8');
           if (progressEvery !== undefined && results.length % progressEvery === 0) {
             console.log(
               `progress ${results.length}: ${result.runner}/${result.model} ${result.caseId} `
@@ -1850,9 +1857,7 @@ async function main() {
     await writeFile(
       outputPath,
       `${JSON.stringify({
-        referenceInstant,
-        timeZone,
-        experiments: experimentSpecs,
+        ...reportMetadata,
         ...(boundary === undefined ? {} : { boundary }),
         results,
       }, null, 2)}\n`,
@@ -2058,6 +2063,8 @@ async function runEvalRunner(modelSpec: EvalRunnerSpec, experimentSpec: EvalExpe
     openaiApiKey: openaiApiKey!,
     openaiModel: modelSpec.model,
     openaiReasoningEffort: modelSpec.reasoningEffort,
+    // Bound provider outages independently of the live relay's shorter deadline.
+    signal: AbortSignal.timeout(agentTimeoutMs),
     features: experimentSpec.featureFlags,
     langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
     modelCost: evalModelCost(),

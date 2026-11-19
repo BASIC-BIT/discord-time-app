@@ -23,6 +23,14 @@ from desktop_smoke import DesktopSession, build_environment, http_json, validate
 
 
 class RunnerBoundaries(unittest.TestCase):
+    def test_evaluate_retains_the_script_for_failure_diagnosis(self):
+        session = object.__new__(DesktopSession)
+        calls = []
+        session.wd = lambda *args: calls.append(args) or 3
+        self.assertEqual(session.evaluate('return arguments[0] + 1', 2), 3)
+        self.assertEqual(session.last_script, 'return arguments[0] + 1')
+        self.assertEqual(calls, [('POST', '/execute/sync', {'script': session.last_script, 'args': [2]})])
+
     @unittest.skipUnless(shutil.which('node'), 'requires Node.js')
     def test_release_fixture_drains_work_without_animation_frames(self):
         class Session:

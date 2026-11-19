@@ -383,6 +383,67 @@
         {"caseId":"timezone-dst-gap-fail-closed","text":"2026-03-08 at 2:30am Eastern time","required":true,"mismatch":"expected status failed, got needs_clarification","status":"needs_clarification","validationWarnings":["2:30 AM does not occur in Eastern time on March 8, 2026, because clocks jump forward for daylight saving time."]},
         {"caseId":"diagnostic-luna-standalone-clock-typo","text":"5pms","required":false,"mismatch":"expected status resolved, got needs_clarification","status":"needs_clarification","validationWarnings":["Final LLM validation rejected candidate: The trailing “s” can reasonably be treated as a typo, yielding an unambiguous 5:00 PM. But the candidate places that time on November 19, when it is already 6:00 PM locally, so it is not the next occurrence of the requested clock time.","The selected 5:00 PM is earlier than the reference time; the next occurrence would be on a later date."]}
       ]
+    },
+    {
+      "path": ".cache/luna-gap-clock-full",
+      "incomplete": true,
+      "requiredPassed": null,
+      "requiredTotal": 202,
+      "diagnosticPassed": null,
+      "diagnosticTotal": 5,
+      "completedShard": {
+        "index": 3,
+        "total": 51,
+        "passed": 51,
+        "required": 47,
+        "diagnostic": 4
+      },
+      "stop": {
+        "completedShards": [
+          3
+        ],
+        "reason": "Provider overload (503 server_is_overloaded), incomplete unbounded qualification stopped; no parser promotion",
+        "qualification": "INCOMPLETE",
+        "workers": [
+          {
+            "pid": 54772,
+            "shard": 0
+          },
+          {
+            "pid": 38144,
+            "shard": 1
+          },
+          {
+            "pid": 77856,
+            "shard": 2
+          }
+        ],
+        "stoppedAt": "2026-11-19T10:52:38.9264653-05:00"
+      },
+      "limit": "Three stopped shards have no final report. Their progress markers are not complete measurements. The completed shard does not qualify the catalog.",
+      "providerProbes": [
+        {
+          "startedAt": "2026-11-19T15:51:14.794Z",
+          "status": 503,
+          "durationMs": 526,
+          "errorCode": "server_is_overloaded",
+          "errorType": "service_unavailable_error",
+          "retryAfter": "6"
+        },
+        {
+          "startedAt": "2026-11-19T15:55:14.415Z",
+          "status": 503,
+          "durationMs": 560,
+          "errorCode": "server_is_overloaded",
+          "errorType": "service_unavailable_error",
+          "retryAfter": "6"
+        }
+      ],
+      "source": {"featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true},"graphSha256":"7EE0ADEDE56F6D566C5FCBAAF81673CB11C8BC38D9B454732B83E4A2B718AA6C","deterministicSha256":"ED5B9723F99780915FAC9AE45C20EB1D8B05619BE0000417F7241037563559B0","started":"2026-11-19T10:34:28.0292034-05:00","timezoneSha256":"E1CE7507D1A4EC2A7A47CC416C72ABF567078DED605B04B928AF9FFC90AAFC49","baseCommit":"d33a0ef45a11195edc62b5f87b00f6056a99e980","workers":[{"pid":54772,"shard":0},{"pid":38144,"shard":1},{"pid":77856,"shard":2},{"pid":86012,"shard":3}]},
+      "experiments": [{"label":"gap-clock-contract","featureFlags":{"planIr":true,"deterministicPreflight":false,"discordReferenceRouting":true}}],
+      "failures": [
+
+      ]
     }
   ]
 }
