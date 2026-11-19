@@ -296,6 +296,19 @@ async function main() {
       assert.equal(llmCalls - beforeLateSemanticRepair, 2, 'do not repair a rejected answer without budget');
       validationContradictions = [];
 
+      providerPlan = parseTemporalPlanPlannerOutput({
+        outcome: 'plans', reason: 'Start at the explicitly named noon on Sunday, then shift the clock.',
+        plans: [{ label: 'Sunday afternoon', confidence: 1, finalStep: 2, steps: [
+          { op: 'resolve_calendar_query', query: 'May 24 2026', precision: 'date' },
+          { op: 'set_clock_time', baseStep: 0, time: { hour: 12, minute: 0 } },
+          { op: 'shift_datetime', baseStep: 1, delta: { hours: 1, minutes: 10 } },
+        ] }],
+      });
+      const explicitNoon = await parseTemporalExpression({ ...yearInput, text: 'Sunday at one hour past noon and 10 minutes' });
+      assert.equal(explicitNoon.canonical?.isoInstant, '2026-05-24T17:10:00Z');
+      assert.equal(explicitNoon.canonical?.precision, 'datetime');
+      assert.equal(explicitNoon.suggestedFormatIndex, 5);
+
       const invalidPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic empty final step.', plans: [{ label: 'Broken plan', finalStep: 0, steps: [{ op: 'propose_candidate', precision: 'datetime' }] }] });
       firstProviderPlan = invalidPlan;
       providerPlan = plan;

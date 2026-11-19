@@ -1540,7 +1540,7 @@ async function runPlanIrAttempt(
     return ambiguityPolicyResponse;
   }
 
-  const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, options)));
+  const executions = await Promise.all(plans.map((plan, index) => executeTemporalPlan(plan, index, request, options, true)));
   for (const execution of executions) {
     appendTrace(trace, execution.trace);
   }
@@ -2023,6 +2023,7 @@ async function executeTemporalPlan(
   planIndex: number,
   request: TemporalParseRequest,
   options: TemporalGraphOptions,
+  preserveShiftClockPrecision = false,
 ): Promise<PlanExecution> {
   const startedAt = nowMs();
   const trace: UnindexedTraceStep[] = [];
@@ -2047,7 +2048,7 @@ async function executeTemporalPlan(
     if (step === undefined) {
       throw new Error(`Plan ${plan.label} references missing step ${stepIndex}.`);
     }
-    const execution = executePlanStep(step, stepIndex, executeStep, request, options, recordTool);
+    const execution = executePlanStep(step, stepIndex, executeStep, request, options, recordTool, preserveShiftClockPrecision);
     executions.set(stepIndex, execution);
     return execution;
   };
@@ -2152,6 +2153,7 @@ async function executePlanStep(
   request: TemporalParseRequest,
   options: TemporalGraphOptions,
   recordTool: (stepIndex: number, step: TemporalPlanStep, output: unknown, startedAt: number) => void,
+  preserveShiftClockPrecision: boolean,
 ): Promise<TemporalPlanStepOutput> {
   const startedAt = nowMs();
   switch (step.operation) {
@@ -2265,7 +2267,10 @@ async function executePlanStep(
         }
         return {
           label: timeOption.label ?? baseCandidate.label,
-          candidate,
+          // The clock value alone cannot distinguish explicit noon from a date-only default.
+          candidate: preserveShiftClockPrecision && baseCandidate.candidate.precision === 'datetime' && candidate.precision === 'relative'
+            ? { ...candidate, precision: 'datetime' as const }
+            : candidate,
           lineage: planCandidateLineage(baseCandidate),
         };
       })));
