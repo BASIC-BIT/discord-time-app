@@ -24,7 +24,7 @@ function createLoggerConfig() {
   if (process.env['NODE_ENV'] === 'production') {
     return { level: 'info' }; // Simple JSON logging in production
   }
-  
+
   try {
     require.resolve('pino-pretty');
     return {
@@ -63,7 +63,7 @@ const ISO_INSTANT_PATTERN = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.
 const isoInstantPattern = new RegExp(ISO_INSTANT_PATTERN);
 const activeParseRequests = new Map<string, AbortController>();
 const planIrEndpointWarmth = new PlanIrEndpointWarmth(config.temporalPlanIrEndpoint, config.temporalPlanIrWarmup);
-const PLAN_IR_WARMING_WARNING = 'Plan-IR endpoint is warming up; returned the deterministic result.';
+const PLAN_IR_WARMING_WARNING = 'Plan-IR endpoint is warming up; used deterministic parsing with LLM fallback when configured.';
 
 const CORS_ORIGINS = ['http://localhost:1420', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
 
@@ -188,6 +188,8 @@ const parseResponseSchema = {
       type: 'object',
       properties: {
         endpointWarming: { type: 'boolean' },
+        llmFallbackAttempted: { type: 'boolean' },
+        ambiguousTimeZone: { type: 'boolean' },
         shortCircuitReason: { type: 'string' },
       }
     }
@@ -200,6 +202,7 @@ const errorResponseSchema = {
     error: { type: 'string' },
     message: { type: 'string' },
     generationId: { type: 'string' },
+    debug: parseResponseSchema.properties.debug,
     alternatives: {
       type: 'array',
       items: {
@@ -360,7 +363,7 @@ server.get('/health', async (_request, reply) => {
   planIrEndpointWarmth.nudge();
   const dbInfo = db.getInfo();
   const usageStats = db.getUsageStats();
-  
+
   reply.send({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -418,6 +421,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
       200: parseResponseSchema,
       400: errorResponseSchema,
       499: errorResponseSchema,
+      504: errorResponseSchema,
       500: errorResponseSchema
     }
   }
@@ -436,6 +440,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
   request.raw.once('aborted', abortOnDisconnect);
   reply.raw.once('close', abortOnPrematureClose);
   const startedAt = performance.now();
+  class WarmupFallbackTimeoutError extends Error {}
 
   try {
     if (now !== undefined && !isValidIsoInstant(now)) {
@@ -460,7 +465,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
         ...(request.body.features?.discordReferenceShadow === undefined ? {} : { discordReferenceShadow: request.body.features.discordReferenceShadow }),
       },
     };
-    // While the endpoint is not known warm, skip every model path so the reply is immediate.
+    // Keep the cold endpoint out of the parse path while it warms in the background.
     const endpointWarming = planIrEndpointWarmth.shouldShortCircuit();
     const planIrEndpoint = config.temporalPlanIrEndpoint;
     if (endpointWarming) {
@@ -473,7 +478,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
     if (now !== undefined) {
       parseInput.referenceInstant = now;
     }
-    if (config.openaiApiKey !== undefined && !endpointWarming) {
+    if (config.openaiApiKey !== undefined) {
       parseInput.openaiApiKey = config.openaiApiKey;
       parseInput.openaiModel = config.openaiModel;
       parseInput.openaiReasoningEffort = config.openaiReasoningEffort;
@@ -485,9 +490,41 @@ server.post<{ Body: ParseRequest }>('/parse', {
       }
     }
 
-    const parsed = await parseTemporalExpression(parseInput);
+    let llmFallbackAttempted = false;
+    const { openaiApiKey, ...withoutLlm } = parseInput;
+    let parsed = await parseTemporalExpression(endpointWarming ? withoutLlm : parseInput);
+    if (endpointWarming && parsed.status === 'failed' && openaiApiKey !== undefined) {
+      llmFallbackAttempted = true;
+      const warmupBudgetSignal = AbortSignal.timeout(30_000);
+      const completedUsage = { modelCallsWithUsage: 0, inputTokens: 0, outputTokens: 0 };
+      try {
+        parsed = await parseTemporalExpression({ ...parseInput,
+          signal: AbortSignal.any([controller.signal, warmupBudgetSignal]),
+          deadlineMs: Date.now() + 30_000,
+          features: { ...parseInput.features, planIr: true },
+          onModelUsage(usage) {
+            if (!usage) return;
+            completedUsage.modelCallsWithUsage += 1;
+            completedUsage.inputTokens += usage.inputTokens;
+            completedUsage.outputTokens += usage.outputTokens;
+          },
+        });
+        warmupBudgetSignal.throwIfAborted();
+      } catch (error) {
+        if (warmupBudgetSignal.aborted && !controller.signal.aborted &&
+            (error === warmupBudgetSignal.reason || error instanceof TemporalCancellationError ||
+             (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)))) {
+          request.log.warn({
+            requestId, status: 'parse_timeout', durationMs: Math.round(performance.now() - startedAt),
+            generationId: parsed.generationId, usageComplete: false, ...completedUsage,
+          }, 'warmup fallback timed out');
+          throw new WarmupFallbackTimeoutError();
+        }
+        throw error;
+      }
+    }
     if (endpointWarming) {
-      parsed.debug = { ...parsed.debug, endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' };
+      parsed.debug = { ...parsed.debug, endpointWarming: true, llmFallbackAttempted, shortCircuitReason: 'plan_ir_endpoint_warming' };
       parsed.validation.warnings.push(PLAN_IR_WARMING_WARNING);
     }
     logTemporalGeneration(text, tz, now, parsed);
@@ -525,6 +562,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
         error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,
+        debug: { ambiguousTimeZone: parsed.debug?.ambiguousTimeZone === true, ...(endpointWarming ? { endpointWarming: true, llmFallbackAttempted } : {}) },
         alternatives: parsed.clarificationAlternatives?.map((alternative) => ({
           label: alternative.label,
           kind: alternative.kind,
@@ -556,10 +594,13 @@ server.post<{ Body: ParseRequest }>('/parse', {
       confidence: parsed.confidence,
       method: parsed.method,
       canonical: parsed.canonical,
-      ...(endpointWarming ? { debug: { endpointWarming: true, shortCircuitReason: 'plan_ir_endpoint_warming' } } : {}),
+      ...(endpointWarming ? { debug: { endpointWarming: true, llmFallbackAttempted, shortCircuitReason: 'plan_ir_endpoint_warming' } } : {}),
     };
 
   } catch (error) {
+    if (error instanceof WarmupFallbackTimeoutError) {
+      return reply.status(504).send({ error: 'parse_timeout', message: 'Smart parsing took too long. Please try again.' });
+    }
     if (controller.signal.aborted || error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {
       request.log.info({
         requestId,
@@ -929,7 +970,7 @@ server.get('/stats', async (_request, reply) => {
   const stats = db.getUsageStats();
   const referenceRouting = db.getReferenceRoutingStats();
   const recentUsage = db.getRecentUsage(5);
-  
+
   reply.send({
     usage: stats,
     referenceRouting,
@@ -952,7 +993,7 @@ server.setErrorHandler(async (error, _request, reply) => {
     ? Number((error as { statusCode?: unknown }).statusCode)
     : undefined;
   const message = error instanceof Error ? error.message : 'Invalid request';
-  
+
   // Rate limit errors
   if (statusCode === 429) {
     const errorResponse: ErrorResponse = {
@@ -962,7 +1003,7 @@ server.setErrorHandler(async (error, _request, reply) => {
     reply.status(429).send(errorResponse);
     return;
   }
-  
+
   // Validation errors
   if (statusCode === 400) {
     const errorResponse: ErrorResponse = {
@@ -972,7 +1013,7 @@ server.setErrorHandler(async (error, _request, reply) => {
     reply.status(400).send(errorResponse);
     return;
   }
-  
+
   // Generic error
   const errorResponse: ErrorResponse = {
     error: 'server_error',
@@ -986,14 +1027,14 @@ server.setErrorHandler(async (error, _request, reply) => {
  */
 const gracefulShutdown = async (signal: string) => {
   console.log(`\nReceived ${signal}, shutting down gracefully...`);
-  
+
   try {
     // Close database
     db.close();
-    
+
     // Close server
     await server.close();
-    
+
     console.log('Server shutdown complete');
     process.exit(0);
   } catch (error) {
@@ -1013,15 +1054,15 @@ const start = async () => {
   try {
     console.log('Starting Time-Parse API server...');
     console.log('Configuration:', config.getSanitizedConfig());
-    
+
     // Initialize database with config path
     getDatabase(config.dbPath, config.telemetryRetentionDays);
-    
+
     await server.listen({
       host: '0.0.0.0',
       port: config.port
     });
-    
+
     console.log(`Server listening on port ${config.port}`);
     console.log(`Health check available at: http://localhost:${config.port}/health`);
   } catch (error) {
@@ -1031,4 +1072,4 @@ const start = async () => {
 };
 
 // Start the server
-start(); 
+start();

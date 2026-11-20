@@ -26,6 +26,7 @@ body {
 .app:has(.overlay) {
   background-color: #2d2d2d;
   padding: 1px;
+  border-radius: 8px;
 }
 
 .app:has(.overlay.verifying) {
@@ -63,7 +64,7 @@ body {
   width: 100%;
   background: #1a1a1a;
   border: none;
-  border-radius: 0;
+  border-radius: 7px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   padding: 16px 16px 17px;
   color: #fff;
@@ -894,3 +895,39 @@ button:focus-visible, .row:focus-visible, .manual-editor input:focus-visible {
 .manual-label { color: #a8d8b7; font-size: 11px; }
 .manual-provenance button { font-size: 11px; padding: 3px 7px; background: transparent; }
 .footer { flex-shrink: 0; }
+
+.account-panel { color: #e5ebef; }
+.status-line + .account-panel, .status-line + .account-button { margin-top: 12px; }
+.account-card { padding: 16px; border: 1px solid #39434c; border-radius: 8px; background: #20262b; }
+.account-panel-compact .account-card { padding: 0; border: 0; background: transparent; }
+.account-summary { display: flex; align-items: flex-start; gap: 10px; }
+.account-indicator { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 50%; background: #293f50; color: #9cd1f5; font-size: 16px; }
+.account-indicator.connected { background: #203e32; color: #9dddb6; }
+.account-title { font-size: 15px; font-weight: 600; line-height: 1.4; }
+.account-panel .account-description { margin: 5px 0 0; color: #b6c1cb; font-size: 13px; line-height: 1.5; }
+.account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 14px; }
+.account-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 34px; padding: 7px 12px; font: inherit; font-size: 12px; line-height: 1.4; border-radius: 5px; }
+.account-button-primary { background: #176c9e; border-color: #438fba; }
+.account-button-primary:hover:not(:disabled) { background: #227cac; }
+.account-link { padding: 3px 0; border: 0; background: transparent; color: #a4d2ef; font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4; }
+.account-link:hover { color: #d5edff; text-decoration: underline; }
+.account-panel .account-footnote { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: #94a1ac; }
+.account-device { margin-top: 16px; padding: 12px; border: 1px solid #405867; border-radius: 6px; background: #182129; }
+.account-device-label { font-size: 11px; color: #aebbc5; }
+.account-code-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 9px; }
+.account-code-row code { font-family: ui-monospace, Consolas, monospace; font-size: 21px; font-weight: 600; letter-spacing: .08em; color: #e3f2ff; }
+.account-address { display: block; overflow-wrap: anywhere; color: #94afc2; font-size: 10px; line-height: 1.5; }
+.account-panel .account-error { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: #ffbaab; }
+.account-copy { border: 1px solid #496072; border-radius: 4px; background: #263746; color: #d6eafa; font: inherit; font-size: 11px; padding: 5px 8px; cursor: pointer; }
+.account-copy:hover { background: #344b5e; }
+.account-panel .account-waiting { margin-top: 12px; color: #9ddcff; font-size: 12px; line-height: 1.5; }
+.account-recovery { margin-top: 16px; color: #aebbc5; font-size: 12px; line-height: 1.5; }
+.account-recovery summary { cursor: pointer; width: fit-content; }
+.account-recovery summary:hover { color: #e3f2ff; }
+.account-recovery p { margin: 8px 0 4px; }
+.account-recovery .account-address { font-size: 11px; user-select: text; }
+.account-spinner { width: 14px; height: 14px; border: 2px solid #486478; border-top-color: #b7e3ff; border-radius: 50%; animation: account-spin 1s linear infinite; }
+.account-waiting-dots { animation: account-wait 1.5s ease-in-out infinite; }
+@keyframes account-spin { to { transform: rotate(360deg); } }
+@keyframes account-wait { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .account-spinner, .account-waiting-dots { animation: none; } }

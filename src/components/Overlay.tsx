@@ -11,6 +11,10 @@ import { formatDiscordRange, formats, getFormatLabel, getRangeLabel, rangeFormat
 import { getUserTimezone } from '../lib/prompt';
 import { createAPIClient, TimeParserAPIError, TimeParserTimeoutError, TimeParserUnavailableError, type ParseAlternative, type ParseRangeResult, type ParseResponse } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
+import { canUseHostedFallback, parseHostedTime } from '../lib/hosted-parser';
+import { loadClipboardText } from '../lib/clipboard';
+import { HostedAccount } from './HostedAccount';
+import { resolveTimeZone, applyTimeZoneChoice } from '../../api/src/temporal/timezones';
 import { getFormatStats, incrementFormatUsage, getMostUsedFormatIndex, initStats } from '../lib/stats';
 import {
   classifyDiscordTimestampInput,
@@ -20,6 +24,8 @@ import {
 const LOCAL_FALLBACK_CONFIDENCE = 0.65;
 
 interface AppSettings {
+  use_llm_parsing?: boolean;
+  auto_load_clipboard: boolean;
   deterministic_preflight: boolean;
   discord_reference_routing: boolean;
   discord_reference_shadow: boolean;
@@ -116,6 +122,9 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signInRequired, setSignInRequired] = useState(false);
+  const [canRetryFallback, setCanRetryFallback] = useState(false);
+  const [ambiguousTimeZone, setAmbiguousTimeZone] = useState(false);
   const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
   const [clarificationAlternatives, setClarificationAlternatives] = useState<ParseAlternative[]>([]);
   const [selectedAlternativeIndex, setSelectedAlternativeIndex] = useState(0);
@@ -124,11 +133,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   const [verifying, setVerifying] = useState(false);
   const [isClipboardText, setIsClipboardText] = useState(false);
   const [parseProgressMessage, setParseProgressMessage] = useState<string | null>(null);
+  const [useLlmParsing, setUseLlmParsing] = useState(false);
   const [deterministicPreflight, setDeterministicPreflight] = useState(false);
   const [discordReferenceRouting, setDiscordReferenceRouting] = useState(true);
   const [discordReferenceShadow, setDiscordReferenceShadow] = useState(false);
   const [endpointWarming, setEndpointWarming] = useState(false);
-  
+
   const [manual, setManual] = useState(false);
   const [draft, setDraft] = useState<ManualDraft | null>(null);
   const [parseRequest, setParseRequest] = useState(0);
@@ -223,6 +233,15 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setInputText('');
     setIsClipboardText(false);
     setParseRequest(value => value + 1);
+    let disposed = false;
+    setUseLlmParsing(false);
+    const settingsPromise = invoke<AppSettings>('get_settings').then(settings => {
+      if (!disposed) setUseLlmParsing(settings.use_llm_parsing !== false);
+      return settings;
+    }, settingsError => {
+      console.log('Settings unavailable; cloud fallback and clipboard preload disabled:', settingsError);
+      return null;
+    });
     let focusTimer: number | undefined;
     const active = () => revisionRef.current === revision;
     const initialize = async () => {
@@ -231,30 +250,24 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         await initStats();
         if (!active()) return;
 
-        try {
-          const settings = await invoke<AppSettings>('get_settings');
-          if (!active()) return;
+        let autoLoadClipboard = false;
+        const settings = await settingsPromise;
+        if (!active()) return;
+        if (settings) {
+          autoLoadClipboard = settings.auto_load_clipboard;
           setDeterministicPreflight(settings.deterministic_preflight);
           setDiscordReferenceRouting(settings.discord_reference_routing);
           setDiscordReferenceShadow(settings.discord_reference_shadow);
-        } catch (settingsError) {
-          console.log('Settings unavailable, using parser defaults:', settingsError);
         }
-        
+
         // Load clipboard content (handle empty clipboard gracefully)
-        let clipboardText = '';
-        try {
-          clipboardText = await readText();
-        } catch (clipboardError) {
-          console.log('Clipboard is empty or unavailable:', clipboardError);
-          clipboardText = '';
-        }
-        
+        const clipboardText = await loadClipboardText(autoLoadClipboard, readText);
+
         if (!active()) return;
         setInputText(clipboardText);
         setIsClipboardText(Boolean(clipboardText));
         setParseRequest(value => value + 1);
-        
+
         // Focus the window
         const appWindow = getCurrentWindow();
         try {
@@ -262,7 +275,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         } catch (error) {
           console.error('Error focusing window:', error);
         }
-        
+
         // Then focus the textarea after a short delay
         if (!active()) return;
         focusTimer = window.setTimeout(() => {
@@ -279,9 +292,10 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         console.error('Error initializing overlay:', error);
       }
     };
-    
+
     void initialize();
     return () => {
+      disposed = true;
       window.clearTimeout(focusTimer);
       invalidateWork();
     };
@@ -317,13 +331,14 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         ? directInstantFromClassification(referenceRouting)
         : null;
       const directReject = discordReferenceRouting && referenceRouting.route === 'reject';
-      
+
       if (directReject) {
         const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
         setEpoch(null);
         setRange(null);
         setConfidence(1);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         setGenerationId(clientGenerationId);
@@ -340,6 +355,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setRange(directRange);
         setConfidence(1);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
@@ -356,6 +372,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setRange(null);
         setConfidence(1);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         const clientGenerationId = `tp_client_${crypto.randomUUID()}`;
@@ -373,6 +390,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setConfidence(1);
         setError(null);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         setGenerationId(null);
@@ -391,6 +409,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       setRange(null);
       setError(null);
       setClarificationQuestion(null);
+      setAmbiguousTimeZone(false);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
       setGenerationId(null);
@@ -400,7 +419,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       selectionTouchedRef.current = false;
       setLoading(false);
     }
-  }, [inputText, discordReferenceRouting, discordReferenceShadow, parseRequest]);
+  }, [inputText, discordReferenceRouting, discordReferenceShadow, parseRequest, useLlmParsing]);
 
   // Observe editor validation as well as result changes, and fit the physical desktop.
   useEffect(() => {
@@ -512,21 +531,23 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   }, []);
 
   const parseInput = async (text: string, isFromClipboard: boolean, revision: number) => {
+    setCanRetryFallback(false);
     if (revisionRef.current !== revision) return;
     // Create new abort controller for this request
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     const active = () => revisionRef.current === revision && !abortController.signal.aborted;
-    
+
     setError(null);
     setRange(null);
     setClarificationQuestion(null);
+    setAmbiguousTimeZone(false);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
     setGenerationId(null);
     setVerifying(false);
     setParseProgressMessage('Localing');
-    
+
     try {
       // Check if request was already cancelled
       if (!active()) {
@@ -536,12 +557,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       // Get format stats for LLM context
       const stats = await getFormatStats();
       const timezone = getUserTimezone();
-      
+
       // Check again if request was cancelled
       if (!active()) {
         return;
       }
-      
+
       const apiClient = await createAPIClient();
       if (!active()) return;
       const referenceRouting = classifyDiscordTimestampInput(text);
@@ -559,12 +580,15 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       // Prefer the supervised parser when available; local chrono is an offline fallback.
       let result: ParseResponse | null = null;
       let apiError: Error | null = null;
-      
+      const requestId = crypto.randomUUID();
+      const referenceInstant = new Date().toISOString();
+
       if (apiClient) {
         startBackendProgress(displayedFallback, revision);
         try {
           result = await apiClient.parseTime(text, timezone, abortController.signal, {
-            requestId: crypto.randomUUID(),
+            requestId,
+            now: referenceInstant,
             deterministicPreflight,
             discordReferenceRouting,
             discordReferenceShadow,
@@ -572,7 +596,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (!active()) return;
           setGenerationId(result.generationId);
           if (result.debug?.endpointWarming === true) {
-            warmingTextRef.current = text;
+            warmingTextRef.current = result.method.startsWith('agent+') ? null : text;
             setEndpointWarming(true);
           }
           console.log("API Result: ", result);
@@ -581,12 +605,38 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
-          apiError = error instanceof Error ? error : new Error('Unknown API parsing error');
-          if (error instanceof TimeParserAPIError) {
-            setGenerationId(error.generationId ?? null);
+          if (isFromClipboard && (useLlmParsing && canUseHostedFallback(error))) setCanRetryFallback(true);
+          if (!isFromClipboard && (useLlmParsing && canUseHostedFallback(error))) {
+            const localMessage = error instanceof Error ? error.message : null;
+            clearProgressTimers();
+            setParseProgressMessage('Preparing smart fallback');
+            // Wait for a full second of idle input before starting uncancellable cloud work.
+            await new Promise(resolve => window.setTimeout(resolve, 700));
+            if (!active()) return;
+            setParseProgressMessage('Parsing with smart fallback. This may take a few seconds');
+            try {
+              result = await parseHostedTime(text, timezone, referenceInstant, requestId, abortController.signal);
+              if (!active()) return;
+              if (result) {
+                setGenerationId(result.generationId);
+                setEndpointWarming(true);
+                warmingTextRef.current = null;
+              }
+            } catch (hostedError) {
+              if (hostedError instanceof Error && hostedError.name === 'AbortError') throw hostedError;
+              const failure = hostedError instanceof TimeParserAPIError ? hostedError : new TimeParserAPIError('Smart fallback is unavailable. Try again shortly.', 503);
+              const message = failure.code === 'needs_clarification' ? failure.message : failure.code === 'sign_in_required' ? localMessage ?? failure.message : [localMessage, failure.message].filter(Boolean).join(' ');
+              error = new TimeParserAPIError(message, failure.status, failure.code, failure.alternatives, failure.generationId, failure.endpointWarming, failure.llmFallbackAttempted, failure.ambiguousTimeZone);
+              setCanRetryFallback(failure.code !== 'parse_timeout' && (failure.code === 'rate_limited' || (failure.status ?? 0) >= 500));
+            }
           }
-          console.error('API parsing failed:', error);
-          // Fall through to chrono-node fallback
+          if (!result) {
+            apiError = error instanceof Error ? error : new Error('Unknown API parsing error');
+            if (error instanceof TimeParserAPIError) {
+              setGenerationId(error.generationId ?? null);
+            }
+            console.error('API parsing failed:', error);
+          }
         }
       } else {
         setParseProgressMessage(null);
@@ -596,7 +646,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       if (!active()) {
         return;
       }
-      
+
       if (result?.kind === 'time_range' && result.range) {
         console.log('API parsed range successfully:', result);
         setEpoch(null);
@@ -604,6 +654,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setSelectedIndex(0);
         setConfidence(result.confidence);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
       } else if (result && typeof result.epoch === 'number') {
@@ -615,6 +666,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         }
         setConfidence(result.confidence);
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
         void verifyDisplayedResult(apiClient, text, timezone, result, revision);
@@ -626,10 +678,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setEpoch(null);
           setRange(null);
           setConfidence(1);
+          if (apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required') setSignInRequired(true);
           if (isFromClipboard && !hasDiscordReference) {
-            setError(null);
+            setError(useLlmParsing && canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
             setClarificationQuestion(apiError.message);
+            setAmbiguousTimeZone(apiError.ambiguousTimeZone);
             setClarificationAlternatives(apiError.alternatives ?? []);
             setSelectedAlternativeIndex(0);
             setError(null);
@@ -647,7 +701,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         console.log('Parsing request aborted');
         return;
       }
-      
+
       console.error('Error parsing input:', error);
       setError('Something went wrong. Please try again or check your internet connection.');
     } finally {
@@ -661,7 +715,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
   };
 
   const verifyDisplayedResult = async (apiClient: Awaited<ReturnType<typeof createAPIClient>>, text: string, timezone: string, result: ParseResponse, revision: number) => {
-    if (revisionRef.current !== revision || !apiClient || result.method !== 'agent+plan' || result.kind === 'time_range') {
+    if (revisionRef.current !== revision || !apiClient || result.debug?.serverValidated || result.method !== 'agent+plan' || result.kind === 'time_range') {
       return;
     }
 
@@ -695,6 +749,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         setConfidence(1);
         setError('I could not verify that timestamp. Try adding AM/PM, a date, or more context.');
         setClarificationQuestion(null);
+        setAmbiguousTimeZone(false);
         setClarificationAlternatives([]);
         setSelectedAlternativeIndex(0);
       }
@@ -716,14 +771,16 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
   const hasClarification = clarificationQuestion !== null;
   const hasSelectableClarification = hasClarification && clarificationAlternatives.length > 0;
+  const clarificationZones = hasClarification && ambiguousTimeZone ? resolveTimeZone({ text: inputText, calendarContext: { referenceInstant: new Date().toISOString(), timeZone: getUserTimezone() } }) : null;
+  const timeZoneChoices = clarificationZones?.status === 'ambiguous' && new Set(clarificationZones.candidates.map(zone => zone.matchedText.toLowerCase())).size === 1 ? clarificationZones.candidates : [];
   const hasResolvedResult = epoch !== null || range !== null;
   const showLowConfidence = !loading && hasResolvedResult && confidence < 0.5;
-  const statusTone = error ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
-  const hasInlineStatus = error || hasClarification || showLowConfidence;
+  const statusTone = error && !signInRequired && !(isClipboardText && canRetryFallback) ? 'error' : hasClarification ? 'choice' : showLowConfidence ? 'warning' : 'info';
+  const hasInlineStatus = signInRequired || error || hasClarification || showLowConfidence;
   const isBusy = loading || verifying;
   const showVerifyingTab = isBusy && !hasClarification && !error;
   const progressText = verifying ? 'Verifying' : parseProgressMessage ?? (hasResolvedResult ? 'Checking' : 'Parsing');
-  const overlayTone = error
+  const overlayTone = error && !signInRequired
     ? 'error'
     : hasClarification
       ? 'clarifying'
@@ -769,6 +826,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setConfidence(alternative.confidence);
     setError(null);
     setClarificationQuestion(null);
+    setAmbiguousTimeZone(false);
     setClarificationAlternatives([]);
     setSelectedAlternativeIndex(0);
   };
@@ -890,17 +948,17 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setSelectedIndex(index);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInputChange = (newValue: string) => {
     invalidateWork();
     ownershipRef.current = 'text';
     setManual(false);
-    const newValue = e.target.value;
-    
+
     // A real edit ends clipboard ownership; the browser already applied the edit.
     if (isClipboardText && newValue !== inputText) {
       setIsClipboardText(false);
       setRange(null);
       setClarificationQuestion(null);
+      setAmbiguousTimeZone(false);
       setClarificationAlternatives([]);
       setSelectedAlternativeIndex(0);
     }
@@ -938,6 +996,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
     setConfidence(1);
     setError(null);
     setClarificationQuestion(null);
+    setAmbiguousTimeZone(false);
     setClarificationAlternatives([]);
     setLoading(false);
     setVerifying(false);
@@ -965,7 +1024,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           disabled={draft !== null}
           aria-label="Time expression"
           value={inputText}
-          onChange={handleInputChange}
+          onChange={event => handleInputChange(event.target.value)}
           placeholder="Enter date/time (e.g., 'tomorrow at 2pm', 'next Friday')"
           className="input-textarea"
           rows={2}
@@ -995,6 +1054,8 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
         {draft === null && hasInlineStatus && (
           <div className={`status-card ${statusTone}`}>
             {error && <div className="status-line">{error}</div>}
+            {signInRequired && <HostedAccount compact dismissWhenIdle={hasResolvedResult && !isBusy && !error} onDismiss={() => setSignInRequired(false)} onSignedIn={() => { setSignInRequired(false); setError(null); setParseRequest(value => value + 1); }} />}
+            {error && canRetryFallback && <button type="button" className="secondary-button account-button" disabled={loading} onClick={() => { setIsClipboardText(false); setParseRequest(value => value + 1); }}>{isClipboardText ? 'Parse clipboard with smart parsing' : 'Try smart parsing again'}</button>}
             {hasClarification && (
               <div className="clarification">
                 <div className="clarification-title">{clarificationQuestion}</div>
@@ -1020,7 +1081,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
                     </div>
                   </>
                 ) : (
-                  <div className="clarification-help">Add the missing detail in the expression above.</div>
+                  <>
+                    <div className="clarification-help">{timeZoneChoices.length ? 'Choose a timezone, or edit the expression above.' : 'Add the missing detail in the expression above.'}</div>
+                    {timeZoneChoices.length > 0 && <div className="account-actions" role="group" aria-label="Choose timezone">
+                      {timeZoneChoices.map(zone => <button key={zone.timeZone} type="button" className="secondary-button account-button" onClick={() => handleInputChange(applyTimeZoneChoice(inputText, zone))}>{zone.label}</button>)}
+                    </div>}
+                  </>
                 )}
               </div>
             )}
@@ -1069,12 +1135,12 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
 
       <div className="footer">
         <div className="footer-status-slot" aria-live="polite">
-          <div className={`verifying-tab ${showVerifyingTab && !endpointWarming ? 'visible' : ''}`}>
+          <div className={`verifying-tab ${showVerifyingTab ? 'visible' : ''}`} role={showVerifyingTab ? 'status' : undefined}>
             <span className="progress-dot" />
             <span className="verifying-label">{progressText}</span>
           </div>
-          <div className={`warming-notice ${endpointWarming ? 'visible' : ''}`}>
-            Smart parsing is warming up, usually under a minute. Showing basic results meanwhile.
+          <div className={`warming-notice ${endpointWarming && !isBusy && !hasResolvedResult && !hasInlineStatus ? 'visible' : ''}`}>
+            Smart parsing is warming up. You can keep typing.
           </div>
         </div>
         <span className="hint">{footerHint}</span>

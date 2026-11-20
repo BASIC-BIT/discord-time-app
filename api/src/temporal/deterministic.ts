@@ -32,7 +32,7 @@ import type {
   ValidateCandidateInput,
   ValidateCandidateOutput,
 } from './tools';
-import { resolveTimeZone as resolveTimeZoneFromText, stripResolvedTimeZoneText, timeZoneValidationForCandidate } from './timezones';
+import { resolveTimeZone as resolveTimeZoneFromText, stripResolvedTimeZoneText, hasContextualTimeZoneAbbreviation, timeZoneValidationForCandidate } from './timezones';
 
 const WEEKDAY_LOOKUP: Record<Weekday, number> = {
   monday: 1,
@@ -73,11 +73,10 @@ const AMBIGUOUS_BARE_COLON_CLOCK_PATTERN = /(?<![\d.])\b(0?[1-9]|1[0-2])[:.]([0-
 const AMBIGUOUS_BARE_COMPACT_CLOCK_PATTERN = /\b(0?[1-9]|1[0-2])([0-5]\d)\b(?!\s*(?:[ap](?:\.?m)?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b)/i;
 const NUMBER_TEXT_PATTERN = String.raw`(?:\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|forty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|fifty(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 const RELATIVE_NOON_TIME_PATTERN = new RegExp(String.raw`\b(?:(?<hours>${NUMBER_TEXT_PATTERN})\s+hours?\s+)?(?:past|after)\s+noon(?:\s+and\s+(?<minutes>${NUMBER_TEXT_PATTERN})\s+minutes?)?\b`, 'i');
-const RELATIVE_BOUNDARY_SNAP_PATTERN = new RegExp(String.raw`^\s*(?:in\s+)?(?<amount>${NUMBER_TEXT_PATTERN})\s+(?<unit>minutes?|hours?|days?|weeks?|months?|years?)(?:\s+(?<direction>from\s+now|ago))?\s+(?:(?:on|at)\s+(?:the\s+)?(?:(?:top\s+of\s+the\s+)?(?<onBoundary>hour)|(?<onQuarter>quarter\s+hour)|(?<onHalf>half\s+hour))|round(?:ed)?\s+to\s+(?:the\s+)?(?<roundMode>nearest|next|previous)\s+(?<roundBoundary>hour|quarter\s+hour|half\s+hour|15\s+minutes?)|(?<directMode>next|previous)\s+(?<directBoundary>hour|quarter\s+hour|half\s+hour|15\s+minutes?))\s*$`, 'i');
+const RELATIVE_BOUNDARY_SNAP_PATTERN = new RegExp(String.raw`^\s*(?:in\s+)?(?<amount>${NUMBER_TEXT_PATTERN})\s+(?<unit>minutes?|hours?|days?|weeks?|months?|years?)(?:\s+(?<direction>from\s+now|ago))?(?:\s*,\s*|\s+)(?:then\s+)?(?:(?:on|at)\s+(?:the\s+)?(?:(?:top\s+of\s+the\s+)?(?<onBoundary>hour)|(?<onQuarter>quarter\s+hour)|(?<onHalf>half\s+hour))|round(?:ed)?\s+to\s+(?:the\s+)?(?<roundMode>nearest|next|previous)\s+(?<roundBoundary>hour|quarter\s+hour|half\s+hour|15\s+minutes?)|(?<directMode>next|previous)\s+(?<directBoundary>hour|quarter\s+hour|half\s+hour|15\s+minutes?))\s*$`, 'i');
 const DIRECT_BOUNDARY_SNAP_PATTERN = new RegExp(String.raw`^\s*(?:(?:on|at)\s+(?:the\s+)?(?:(?:top\s+of\s+the\s+)?(?<onBoundary>hour)|(?<onQuarter>quarter\s+hour)|(?<onHalf>half\s+hour))|round(?:ed)?\s+to\s+(?:the\s+)?(?<roundMode>nearest|next|previous)\s+(?<roundBoundary>hour|quarter\s+hour|half\s+hour|15\s+minutes?)|(?<directMode>next|previous)\s+(?<directBoundary>hour|quarter\s+hour|half\s+hour|15\s+minutes?))\s*$`, 'i');
 const HOUR_AFTER_NEXT_PATTERN = /^\s*(?:the\s+)?hour\s+after\s+next\s*$/i;
 const HOLIDAY_TYPES: HolidaysTypes.HolidayType[] = ['observance', 'optional', 'bank', 'public'];
-const TEMPORAL_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|noon|midnight|morning|afternoon|evening|day|days|week|weeks|month|months|year|years|hour|hours|minute|minutes|after|before|from|next|last|this|coming|upcoming|at|around|about|by|time|clock)\b|\b\d{1,2}\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b/i;
 const MONTH_DAY_AT_END_PATTERN = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\s*$/i;
 const DATE_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next|last|this|coming|upcoming)\b/i;
 const IANA_TIME_ZONE_ALIASES: Record<string, string> = {
@@ -188,6 +187,9 @@ export async function parseExpression(input: ParseExpressionInput): Promise<Pars
   const timeZoneResolution = resolveTimeZoneFromText({ text: input.text, calendarContext: input.calendarContext });
   if (timeZoneResolution.status === 'ambiguous') {
     return { candidates: [], parserNotes: [timeZoneResolution.clarificationQuestion ?? 'Input contains an ambiguous timezone reference.', ...timeZoneResolution.notes] };
+  }
+  if (hasContextualTimeZoneAbbreviation(input.text)) {
+    return { candidates: [], parserNotes: ['A possible timezone abbreviation requires semantic interpretation.'] };
   }
   const timeZoneCandidate = timeZoneResolution.status === 'resolved' ? timeZoneResolution.candidates[0] : undefined;
   if (timeZoneCandidate !== undefined) {
@@ -935,6 +937,10 @@ function parseWithChrono(text: string, calendarContext: CalendarContext): Candid
   if (!first) {
     return null;
   }
+  // A single-candidate tool must not silently discard another date or range endpoint.
+  if (results.length !== 1 || first.end != null) {
+    return null;
+  }
 
   const start = first.start;
   if (isPartialChronoParse(text, first.text, start)) {
@@ -1417,6 +1423,8 @@ function isPartialChronoParse(text: string, parsedText: string, start: chrono.Pa
 
   return TEMPORAL_SIGNAL_PATTERN.test(remainder);
 }
+
+const TEMPORAL_SIGNAL_PATTERN = /\b(?:today|tomorrow|yesterday|tonight|noon|midnight|morning|afternoon|evening|day|days|week|weeks|month|months|year|years|hour|hours|minute|minutes|after|before|from|next|last|this|coming|upcoming|at|around|about|by|time|clock)\b|\b\d{1,2}\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b/i;
 
 const LEADING_BARE_HOUR_BEFORE_DATE_PATTERN = /^\s*(?:0?[1-9]|1[0-2])\s+(?=(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|next|last|this|coming|upcoming)\b)/i;
 

@@ -1,3 +1,5 @@
+import { resolveTimeZone, applyTimeZoneChoice, hasContextualTimeZoneAbbreviation } from '../src/temporal/timezones';
+import { parseExpression } from '../src/temporal/deterministic';
 import assert from 'node:assert/strict';
 import { Temporal } from '@js-temporal/polyfill';
 import { parseTemporalExpression } from '../src/temporal';
@@ -164,6 +166,44 @@ async function executeModelReferenceShiftClockClarification(
 }
 
 async function main() {
+  for (const text of [
+    'in 23 minutes round to nearest 15 minutes',
+    'in 23 minutes, round to nearest 15 minutes',
+    '23 minutes from now, then round to the nearest 15 minutes',
+    '23 minutes from now then round to nearest quarter hour',
+  ]) {
+    const parsed = await parseExpression({ text, calendarContext: { referenceInstant: '2026-06-02T18:55:00Z', timeZone: 'America/New_York' } });
+    assert.equal(parsed.candidates.length, 1, text);
+    assert.equal(Temporal.Instant.compare(parsed.candidates[0]!.isoInstant, '2026-06-02T19:15:00Z'), 0, text);
+    assert(parsed.parserNotes.includes('Matched relative boundary snap expression.'), text);
+  }
+
+  const partialClarification = parseTemporalPlanPlannerOutput({
+    outcome: 'clarification', reason: 'Three requested date interpretations.', clarificationQuestion: 'May 25, May 26, or May 27?',
+    plans: [
+      { label: 'May 25', finalStep: 0, steps: [{ op: 'resolve_calendar_query', query: 'May 25 2026 at 5pm' }] },
+      { label: 'May 26', finalStep: 0, steps: [{ op: 'resolve_calendar_query', query: 'May 26 2026 at 5pm' }] },
+      { label: 'May 27', finalStep: 0, steps: [{ op: 'resolve_calendar_query' }] },
+    ],
+  });
+  const incompleteChoices = await executeTemporalPlanPlannerOutput(partialClarification,
+    { text: 'May 25, May 26, or May 27 2026 at 5pm', calendarContext },
+    { implementations: createDeterministicTemporalToolImplementations() });
+  assert.equal(incompleteChoices.status, 'needs_clarification', 'retain the existing endpoint behavior');
+  assert.equal(incompleteChoices.clarificationAlternatives?.length, 2);
+  assert.equal(incompleteChoices.epoch, undefined);
+
+  for (const text of ['friday pst', '9/15/2027 est', 'tuesday mt']) {
+    const dateZoneContext = {referenceInstant:'2026-05-24T12:00:00Z',timeZone:'UTC'};
+    const lower = await parseExpression({text,calendarContext:dateZoneContext});
+    const upper = await parseExpression({text:text.replace(/\S+$/,zone=>zone.toUpperCase()),calendarContext:dateZoneContext});
+    assert.equal(lower.candidates.length,1,text);
+    assert.equal(lower.candidates[0]!.isoInstant,upper.candidates[0]!.isoInstant,text);
+    assert.equal(lower.candidates[0]!.timeZone,upper.candidates[0]!.timeZone,text);
+    assert.equal(hasContextualTimeZoneAbbreviation(text),false,text);
+  }
+  assert.equal(hasContextualTimeZoneAbbreviation('the Mt Hood trip Friday 7pm'),true);
+
   const normalizedCalendarContext = parseCalendarContext(timeZone, '2026-06-08T06:50:00.123Z');
   assert.equal(normalizedCalendarContext.referenceInstant, '2026-06-08T06:50:00Z');
   const epochZeroWithPreflightDisabled = await parseTemporalExpression({
@@ -1671,6 +1711,7 @@ async function main() {
   assert.equal(groundedTwoPlanClockChoice.status, 'failed');
   assert.equal(groundedTwoPlanClockChoice.clarificationAlternatives, undefined);
   assert.match(groundedTwoPlanClockChoice.validation.warnings.join(' '), /clock did not match/);
+  assert.match(groundedTwoPlanClockChoice.validation.warnings.join(' '), /one resolve_clock_time options step/);
 
   const unusedDiscordReferenceBranch = parseTemporalPlanPlannerOutput({
     outcome: 'clarification',
@@ -3021,6 +3062,20 @@ async function main() {
   assert.equal(dateOnlyNoon.status, 'resolved');
   assert.equal(dateOnlyNoon.canonical?.zonedDateTime.startsWith('2026-05-16T12:00:00'), true);
 
+  for (const text of ['Dinner: Friday 8pm', 'Dinner Friday 8pm']) {
+    const labelled = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
+    assert.equal(labelled.status, 'resolved', text);
+    assert.equal(labelled.method, 'deterministic', text);
+    assert.equal(labelled.canonical?.zonedDateTime.startsWith('2026-05-29T20:00'), true, text);
+  }
+
+  const ambiguousTimeZone = await parseTemporalExpression({ text: 'tomorrow at 5pm CST', timeZone, referenceInstant, openaiApiKey: 'sk-test', features: { deterministicPreflight: true, planIr: true } });
+  assert.equal(ambiguousTimeZone.status, 'needs_clarification');
+  assert.equal(ambiguousTimeZone.debug?.modelCalls, undefined);
+  assert.equal(ambiguousTimeZone.clarificationAlternatives?.length ?? 0, 0);
+  assert.equal(ambiguousTimeZone.debug?.ambiguousTimeZone, true);
+  assert.equal(ambiguousTimeZone.clarificationQuestion, 'Which timezone did you mean by CST?');
+
   const explicitDatedRange = await parseTemporalExpression({
     text: 'June 10 2026 3pm-5pm America/Los_Angeles',
     timeZone,
@@ -3031,6 +3086,17 @@ async function main() {
   assert.equal(explicitDatedRange.method, 'deterministic');
   assert.equal(explicitDatedRange.range?.start.epoch, 1781128800);
   assert.equal(explicitDatedRange.range?.end.epoch, 1781136000);
+
+  for (const text of ['from 3pm to 5pm', 'between 3pm and 5pm', 'tomorrow from 3pm to 5pm', 'Friday 8pm-10:30pm', 'May 29, 2026 8pm-10:30pm']) {
+    const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
+    assert.equal(result.status, 'resolved', text);
+    assert.equal(result.kind, 'time_range', text);
+    assert.ok(result.range!.end.epoch > result.range!.start.epoch, text);
+  }
+  for (const text of ['Tuesday through Thursday 3pm-5pm', 'Tuesday through Thursday', 'tomorrow at 5pm, confirmed Nov 1', '3pm and 5pm']) {
+    const result = await parseTemporalExpression({ text, timeZone, referenceInstant: '2026-05-24T12:00:00Z' });
+    assert.notEqual(result.status, 'resolved', `Partial text must not finalize: ${text}`);
+  }
 
   const explicitDatedRangeWithConfiguredOpenAi = await parseTemporalExpression({
     text: 'June 10 2026 3pm-5pm America/Los_Angeles',
@@ -3180,6 +3246,42 @@ async function main() {
     calendarContext,
   });
   assert.equal(validation.passed, true);
+for (const text of ['the standup ist tomorrow um seventeen hundred', 'dinner 456 oak ct, 7ish']) {
+  assert.equal(resolveTimeZone({ text, calendarContext }).status, 'not_found');
+  assert.equal(hasContextualTimeZoneAbbreviation(text), true);
+  assert.equal((await parseExpression({ text, calendarContext })).candidates.length, 0);
+  assert.notEqual((await parse(text)).debug?.ambiguousTimeZone, true);
+}
+for (const text of ['5pm cst', '5pm CST', 'cst']) {
+  const resolution = resolveTimeZone({ text, calendarContext });
+  assert.equal(resolution.status, 'ambiguous');
+}
+for (const text of ['Tuesday May 26th 2026 at 5pm', 'May 26th, 2026 at 5pm']) {
+  const result = await parse(text);
+  assert.equal(result.status, 'resolved');
+  assert.equal(result.epoch, 1779829200);
+}
+const fragmentedOrdinal = await parse('May 26th (Tuesday) 2026 at 5pm');
+assert.equal(fragmentedOrdinal.status, 'failed', 'separate chrono fragments require model composition');
+assert.equal(fragmentedOrdinal.epoch, undefined);
+assert.equal(resolveTimeZone({text: 'tomorrow at 5pm in est', calendarContext}).status, 'resolved');
+assert.equal((await parse('tomorrow at 5pm in est')).status, 'resolved');
+for (const text of ['friday in est at 3pm', 'monday est 3pm', 'tomorrow 5pm for pst', 'est noon']) {
+  assert.equal(resolveTimeZone({text, calendarContext}).status, 'resolved');
+  assert.equal((await parse(text)).status, 'resolved');
+}
+for (const text of ['tomorrow 5pm, cst', 'tomorrow 5pm (cst)']) {
+  assert.equal(resolveTimeZone({text, calendarContext}).status, 'ambiguous');
+  assert.equal(hasContextualTimeZoneAbbreviation(text), false);
+}
+const lowerCst = await createDeterministicTemporalToolImplementations().resolveCalendarQuery({query:'tomorrow 5pm cst', calendarContext});
+assert.equal(lowerCst.candidates.length, 0);
+assert((lowerCst.notes ?? []).some(note => note.includes('Which timezone')));
+assert.equal((await parse('3pm EST to 5pm PST')).status, 'needs_clarification');
+const zoneChoice = resolveTimeZone({ text: 'tomorrow 5pm CST', calendarContext }).candidates[0]!;
+assert.equal(applyTimeZoneChoice('tomorrow 5pm CST or Friday 7pm CST', zoneChoice), 'tomorrow 5pm America/Chicago or Friday 7pm America/Chicago');
+assert.notEqual((await parse('3pm EST to 5pm PST')).debug?.ambiguousTimeZone, true);
+
 }
 
 main().catch((error: unknown) => {

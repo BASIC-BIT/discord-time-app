@@ -1,15 +1,25 @@
-import { useState, useEffect } from "react";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { useState, useEffect, useRef } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Overlay } from "./components/Overlay";
 import { Settings } from "./components/Settings";
 import { UpdateChecker } from "./components/UpdateChecker";
 import "./App.css";
+import { getHostedAuthStatus, getHostedAuthToken } from './lib/hosted-auth';
 
 function App() {
+  useEffect(() => {
+    void getHostedAuthToken().catch(() => {});
+    const unlisten = listen('hosted-auth-changed', () => {
+      void getHostedAuthStatus().catch(() => console.warn('Could not refresh sign-in window state.'));
+    }).catch(() => undefined);
+    return () => { void unlisten.then(stop => stop?.()); };
+  }, []);
   const [showOverlay, setShowOverlay] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpdateChecker, setShowUpdateChecker] = useState(false);
+  const alternateViewRef = useRef(false);
+  alternateViewRef.current = showSettings || showUpdateChecker;
   const [overlayOpenToken, setOverlayOpenToken] = useState(0);
   const appWindow = getCurrentWindow();
   const windowLabel = appWindow.label;
@@ -41,11 +51,6 @@ function App() {
       setOverlayOpenToken((current) => current + 1);
       await appWindow.setAlwaysOnTop(true);
     }
-  };
-
-  const handleShowSettings = () => {
-    setShowSettings(true);
-    setShowOverlay(false);
   };
 
   const handleUpdateCheckerClose = async () => {
@@ -108,7 +113,7 @@ function App() {
       setupWindow();
 
       const unlistenFocus = appWindow.onFocusChanged(({ payload: focused }) => {
-        if (focused) {
+        if (focused && !alternateViewRef.current) {
           setShowOverlay(true);
           // Settings reloads shortcuts after saving. Reloading on hotkey focus
           // can deadlock Linux unregistration against the key-release callback.

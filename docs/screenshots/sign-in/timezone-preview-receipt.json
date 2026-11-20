@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-11-19T12:09:33Z",
+  "platform": "Windows, dedicated headless Chrome",
+  "browser": "157.0.8103.79",
+  "viewport": {
+    "width": 480,
+    "height": 640
+  },
+  "source": "src/components/Overlay.tsx",
+  "sourceSha256": "4d25a5c22444572200ae64313c46aa1494856bc1d3733a7d3678f29114c1d6db",
+  "baseCommit": "4330fd1b0d57a8cbdb2f4518e86fb4e4d82befc0",
+  "modifiedSource": true,
+  "boundaries": "Synthetic API, native window, auth, stats and clipboard. No real clipboard/account/provider access.",
+  "output": "after/overlay-timezone-choice.png"
+}

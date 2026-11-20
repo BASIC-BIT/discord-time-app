@@ -13,6 +13,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  VITE_CONVEX_URL: ${{ vars.RELEASE_CONVEX_URL }}
+  VITE_CLERK_ISSUER: ${{ vars.RELEASE_CLERK_ISSUER }}
+  VITE_CLERK_OAUTH_CLIENT_ID: ${{ vars.RELEASE_CLERK_OAUTH_CLIENT_ID }}
 
 jobs:
   build-and-release:
@@ -22,9 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         platform: [windows-latest]
-        
+
     runs-on: ${{ matrix.platform }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -105,10 +108,10 @@ jobs:
             pkg.version = '${{ env.VERSION_NUMBER }}';
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           "
-          
+
           # Update Cargo.toml
           sed -i 's/^version = ".*"/version = "${{ env.VERSION_NUMBER }}"/' src-tauri/Cargo.toml
-          
+
           # Update tauri.conf.json
           node -e "
             const fs = require('fs');
@@ -126,6 +129,9 @@ jobs:
             echo "::error::HOSTED_SLM_API_KEY secret is empty; a release built now would ship with SLM parsing off."
             exit 1
           fi
+
+      - name: Require production browser sign-in configuration for releases
+        run: node scripts/check-hosted-release-config.mjs
 
       - name: Build Tauri application
         env:
@@ -150,7 +156,7 @@ jobs:
             "did_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
-          
+
           # Decode certificate
           $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
           [IO.File]::WriteAllBytes("certificate.p12", $bytes)
@@ -179,7 +185,7 @@ jobs:
           }
 
           "did_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          
+
           # Clean up certificate
           Remove-Item certificate.p12
 
@@ -283,7 +289,7 @@ jobs:
           echo "1. Verify the release assets were uploaded correctly"
           echo "2. Test the auto-updater with the new version"
           echo "3. Announce the release to users"
-          
+
           # List uploaded files
           echo ""
           echo "📁 Uploaded files:"

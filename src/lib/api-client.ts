@@ -12,7 +12,7 @@ export interface ParseResponse {
   confidence: number;
   method: string;
   canonical?: ParseCanonical;
-  debug?: { endpointWarming?: boolean; shortCircuitReason?: string };
+  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean; ambiguousTimeZone?: boolean; shortCircuitReason?: string; serverValidated?: boolean };
 }
 
 export interface PlanIrEndpointStatus {
@@ -59,10 +59,12 @@ export interface ParseError {
   message?: string;
   generationId?: string;
   alternatives?: ParseAlternative[];
+  debug?: { endpointWarming?: boolean; llmFallbackAttempted?: boolean; ambiguousTimeZone?: boolean };
 }
 
 export interface ParseOptions {
   requestId?: string;
+  now?: string;
   deterministicPreflight?: boolean;
   ordinalWeekdayGrammar?: boolean;
   semanticConsistencyGate?: boolean;
@@ -116,6 +118,9 @@ export class TimeParserAPIError extends Error {
     public readonly code?: string,
     public readonly alternatives?: ParseAlternative[],
     public readonly generationId?: string,
+    public readonly endpointWarming = false,
+    public readonly llmFallbackAttempted = false,
+    public readonly ambiguousTimeZone = false,
   ) {
     super(message);
     this.name = 'TimeParserAPIError';
@@ -188,12 +193,12 @@ export class TimeParserAPIClient {
     };
 
     const nativeResult = this.useNativeBridge
-      ? await this.parseTimeWithNativeBridge(text, timezone, requestId, featureOverrides, abortSignal)
+      ? await this.parseTimeWithNativeBridge(text, timezone, requestId, featureOverrides, abortSignal, options?.now)
       : null;
     if (nativeResult !== null) {
       return nativeResult;
     }
-    
+
     try {
       const response = await fetchWithStartupRetry(url, {
         method: 'POST',
@@ -206,6 +211,7 @@ export class TimeParserAPIClient {
           requestId,
           text,
           tz: timezone,
+          ...(options?.now === undefined ? {} : { now: options.now }),
           ...(Object.keys(featureOverrides).length === 0 ? {} : { features: featureOverrides }),
         }),
         signal: abortSignal,
@@ -213,7 +219,7 @@ export class TimeParserAPIClient {
 
       if (!response.ok) {
         const errorData = await response.json() as ParseError;
-        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId);
+        throw new TimeParserAPIError(errorData.message || `API error: ${response.status}`, response.status, errorData.error, errorData.alternatives, errorData.generationId, errorData.debug?.endpointWarming, errorData.debug?.llmFallbackAttempted, errorData.debug?.ambiguousTimeZone);
       }
 
       const data = await response.json() as ParseResponse;
@@ -233,7 +239,7 @@ export class TimeParserAPIClient {
       if (error instanceof TypeError) {
         throw new TimeParserUnavailableError(this.unavailableMessage);
       }
-      
+
       // Re-throw with more context
       throw new TimeParserAPIError(`Failed to parse time: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -245,6 +251,7 @@ export class TimeParserAPIClient {
     requestId: string,
     featureOverrides: Record<string, boolean>,
     abortSignal?: AbortSignal,
+    now?: string,
   ): Promise<ParseResponse | null> {
     if (abortSignal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
@@ -263,6 +270,7 @@ export class TimeParserAPIClient {
           requestId,
           text,
           tz: timezone,
+          ...(now === undefined ? {} : { now }),
           ...(Object.keys(featureOverrides).length === 0 ? {} : { features: featureOverrides }),
         },
       });
@@ -291,6 +299,9 @@ export class TimeParserAPIClient {
         errorData.error,
         errorData.alternatives,
         errorData.generationId,
+        errorData.debug?.endpointWarming,
+        errorData.debug?.llmFallbackAttempted,
+        errorData.debug?.ambiguousTimeZone,
       );
     }
 

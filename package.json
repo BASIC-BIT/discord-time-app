@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\dev-hammer-overlay.ps1",
-    "build": "vite build",
-    "test": "npm run test:routing && npm run test:manual && npm --prefix api test",
+    "build": "npm run typecheck && vite build",
+    "test": "npm run test:routing && npm run test:manual && npm run test:relay && npm run test:release-config && npm --prefix api test",
     "test:routing": "node --test shared/discord-timestamp-routing/index.test.cjs",
     "build:api": "npm --prefix api run build",
     "reload:api": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\reload-local-parser-api.ps1",
@@ -20,18 +20,23 @@
     "tauri": "tauri",
     "start": "tauri dev",
     "test:desktop": "python3 scripts/desktop_smoke.py",
-    "test:manual": "node --test src/lib/manualDateTime.test.ts"
+    "test:manual": "node --test src/lib/manualDateTime.test.ts",
+    "test:relay": "vitest run convex/temporal.test.ts src/lib/hosted-parser.test.ts src/lib/hosted-auth.test.ts src/lib/clipboard.test.ts src/components/HostedAccount.test.tsx src/components/Overlay.test.tsx src/App.test.tsx",
+    "test:release-config": "node --test scripts/check-hosted-release-config.test.mjs",
+    "typecheck": "tsc --noEmit && tsc -p convex/tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@convex-dev/rate-limiter": "0.4.3",
     "@hammer-overlay/discord-timestamp-routing": "file:shared/discord-timestamp-routing",
     "@js-temporal/polyfill": "0.5.1",
-    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/api": "2.11.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-global-shortcut": "^2.3.1",
     "@tauri-apps/plugin-notification": "~2.4.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-sql": "^2.4.0",
     "chrono-node": "^2.9.1",
+    "convex": "1.51.0",
     "moment": "^2.30.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
@@ -42,7 +47,10 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "convex-test": "0.0.73",
+    "jsdom": "31.0.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.13"
+    "vite": "^8.0.13",
+    "vitest": "5.1.1"
   }
 }

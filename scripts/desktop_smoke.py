@@ -210,6 +210,7 @@ class DesktopSession:
         return result['value']
 
     def evaluate(self, script: str, *args: object) -> object:
+        self.last_script = script
         return self.wd('POST', '/execute/sync', {'script': script, 'args': list(args)})
 
     def invoke(self, command: str, args: dict[str, object] | None = None) -> object:
@@ -444,7 +445,7 @@ class DesktopSession:
                 try:
                     tail = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
                     if int(tail[19]) == started:
-                        process_states.append({'pid': pid, 'parent': int(tail[1]), 'state': tail[0], 'exitCode': int(tail[49])})
+                        process_states.append({'pid': pid, 'parent': int(tail[1]), 'state': tail[0], 'exitCode': int(tail[49]), 'name': Path(f'/proc/{pid}/comm').read_text().strip(), 'waitChannel': Path(f'/proc/{pid}/wchan').read_text().strip()})
                 except (OSError, ValueError, IndexError):
                     pass
             try:
@@ -473,6 +474,7 @@ class DesktopSession:
             self.metadata['failureTraceback'] = self.sanitize(''.join(traceback.format_exception(exc)))
             self.metadata['failurePhase'] = self.phase
             self.metadata['lastCommand'] = failed_command
+            self.metadata['lastScript'] = self.sanitize(getattr(self, 'last_script', '') or '')
             self.metadata['error'] = self.sanitize(str(exc))
             if 'DISPLAY' in self.env and hasattr(self, 'display'):
                 try:
@@ -1132,8 +1134,8 @@ def install_pending_fixture(s, command='parse_time_with_local_service', verifica
 def release_fixture(s):
     s.evaluate('window.__pickerTiming.release(); return true')
     wait_for('real response released', lambda: s.evaluate('return window.__pickerTiming.released'))
-    # Two render frames drain promise continuations and React's queued work.
-    s.wd('POST', '/execute/async', {'script': 'const done=arguments[0]; requestAnimationFrame(()=>requestAnimationFrame(()=>done(true)));', 'args': []})
+    # Drain queued continuations without depending on WebKit producing paint frames.
+    s.wd('POST', '/execute/async', {'script': 'const done=arguments[0]; setTimeout(()=>setTimeout(()=>done(true),0),0);', 'args': []})
 
 
 def restore_fixture(s):

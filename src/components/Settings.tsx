@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { HostedAccount } from './HostedAccount';
 
 interface AppSettings {
   settings_schema_version: number;
@@ -335,6 +336,7 @@ export function Settings({ onClose }: SettingsProps) {
         </div>
 
         <div className="settings-content">
+          <HostedAccount />
           <div className="setting-group">
             <h3>Startup</h3>
             <label className="setting-item">

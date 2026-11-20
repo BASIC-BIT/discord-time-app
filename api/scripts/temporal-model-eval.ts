@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Temporal } from '@js-temporal/polyfill';
@@ -151,6 +151,7 @@ type EvalResult = {
   instructionPreset?: string;
   error?: string;
   mismatch?: string;
+  failureResponse?: EvalParsed;
   clarificationAlternativeCount?: number;
   unsafeDiagnosticMismatch?: boolean;
   metrics?: {
@@ -202,6 +203,7 @@ let trainedPlanPredictionsPath: string | undefined;
 let trainedPlanModelName = 'trained-plan-ir';
 let baselineSpecs: EvalRunnerSpec[] = [];
 let experimentSpecs: EvalExperimentSpec[] = [];
+const agentTimeoutMs = 120_000;
 let outputPath: string | undefined;
 let evalInputOutputPath: string | undefined;
 let selectedCaseIds = new Set<string>();
@@ -1540,6 +1542,33 @@ function buildTemporalEvalCases(): TemporalEvalCase[] {
     expected: { status: 'resolved', epoch: 1788487200, suggestedFormatIndex: 4 },
   },
   {
+    id: 'diagnostic-standalone-5pm-installed-runpod',
+    text: '5pm',
+    category: 'diagnostic-standalone-clock',
+    required: false,
+    referenceInstant: '2026-11-18T21:18:11.689Z',
+    timeZone: 'America/Indianapolis',
+    expected: { status: 'resolved', epoch: 1795039200 },
+  },
+  {
+    id: 'diagnostic-luna-spelled-clock-warmup',
+    text: 'tmrw at seventeen hundred',
+    category: 'diagnostic-spelled-clock',
+    required: false,
+    referenceInstant: '2026-11-18T21:18:11.689Z',
+    timeZone: 'America/Indianapolis',
+    expected: { status: 'resolved', epoch: 1795125600 },
+  },
+  {
+    id: 'diagnostic-luna-standalone-clock-typo',
+    text: '5pms',
+    category: 'diagnostic-standalone-clock',
+    required: false,
+    referenceInstant: '2026-11-19T18:00:00Z',
+    timeZone: 'America/Indianapolis',
+    expected: { status: 'resolved', epoch: 1795125600 },
+  },
+  {
     id: 'diagnostic-month-typo-suffix-bare-minute-clarification',
     text: 'first of Febuarysdf 2:30',
     category: 'diagnostic-month-typo-bare-minute',
@@ -1792,6 +1821,11 @@ async function main() {
     console.log('Skipping OpenAI temporal eval runners because OPENAI_API_KEY is not configured.');
   }
 
+  const reportMetadata = { referenceInstant, timeZone, experiments: experimentSpecs, agentTimeoutMs };
+  if (outputPath !== undefined) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(`${outputPath}.partial.jsonl`, `${JSON.stringify(reportMetadata)}\n`, 'utf8');
+  }
   const results: EvalResult[] = [];
   for (const modelSpec of runnerSpecs.filter((spec) => !requiresOpenAi(spec) || openaiApiKey !== undefined)) {
     for (const experimentSpec of experimentSpecs) {
@@ -1799,6 +1833,7 @@ async function main() {
         for (let repeat = 1; repeat <= repeats; repeat += 1) {
           const result = await runCase(modelSpec, experimentSpec, evalCase, repeat);
           results.push(result);
+          if (outputPath !== undefined) await appendFile(`${outputPath}.partial.jsonl`, `${JSON.stringify(result)}\n`, 'utf8');
           if (progressEvery !== undefined && results.length % progressEvery === 0) {
             console.log(
               `progress ${results.length}: ${result.runner}/${result.model} ${result.caseId} `
@@ -1822,9 +1857,7 @@ async function main() {
     await writeFile(
       outputPath,
       `${JSON.stringify({
-        referenceInstant,
-        timeZone,
-        experiments: experimentSpecs,
+        ...reportMetadata,
         ...(boundary === undefined ? {} : { boundary }),
         results,
       }, null, 2)}\n`,
@@ -1893,6 +1926,7 @@ async function runCase(modelSpec: EvalRunnerSpec, experimentSpec: EvalExperiment
       clientReferenceRouteReason: routeCheck?.clientReason,
       instructionPreset: parsed.debug?.instructionPreset ?? predictionInstructionPreset,
       mismatch,
+      ...(mismatch === undefined ? {} : { failureResponse: parsed }),
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
       unsafeDiagnosticMismatch: unsafeTemporalDiagnosticMismatch(evalCase.expected, parsed),
       metrics: metricsFromResponse(parsed, evalCase, durationMs),
@@ -2029,6 +2063,8 @@ async function runEvalRunner(modelSpec: EvalRunnerSpec, experimentSpec: EvalExpe
     openaiApiKey: openaiApiKey!,
     openaiModel: modelSpec.model,
     openaiReasoningEffort: modelSpec.reasoningEffort,
+    // Bound provider outages independently of the live relay's shorter deadline.
+    signal: AbortSignal.timeout(agentTimeoutMs),
     features: experimentSpec.featureFlags,
     langfuse: { enabled: isTruthy(process.env['LANGFUSE_ENABLED']) },
     modelCost: evalModelCost(),
@@ -3218,7 +3254,7 @@ function parseEndpointResponseFormat(value: string | undefined): EndpointPlanSpe
 }
 
 function createChatModel(model: string, reasoningEffort: string): ChatOpenAI {
-  if (model.startsWith('gpt-5')) {
+  if (model.startsWith('gpt-5') || model.startsWith('gpt-6')) {
     return new ChatOpenAI({ apiKey: openaiApiKey!, model, reasoning: { effort: normalizeReasoningEffort(reasoningEffort), summary: 'auto' }, useResponsesApi: true });
   }
   return new ChatOpenAI({ apiKey: openaiApiKey!, model, temperature: 0 });

@@ -7,6 +7,7 @@ type TimeZoneReference = {
   matchedText: string;
   candidates: TimeZoneResolutionCandidate[];
   note: string;
+  requiresContext?: boolean;
 };
 
 type NamedZoneRule = {
@@ -19,6 +20,10 @@ type NamedZoneRule = {
 const OFFSET_ZONE_PATTERN = /\b(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?([0-5]\d))?\b/gi;
 const STANDALONE_OFFSET_PATTERN = /(?:^|[\s(])([+-])(\d{2})(?::?([0-5]\d))(?=$|[\s),.;])/g;
 const IANA_TIME_ZONE_PATTERN = /\b[A-Za-z]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)*\b/g;
+const EXPLICIT_CLOCK_SOURCE = String.raw`(?:\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|noon|midnight)`;
+const CLOCK_BEFORE_ZONE = new RegExp(String.raw`\b${EXPLICIT_CLOCK_SOURCE}\s*(?:(?:in|at|for|on)\s+|[,()]\s*)?$`, 'i');
+const CLOCK_AFTER_ZONE = new RegExp(String.raw`^\s*(?:(?:in|at|for|on)\s+|[,()]\s*)?${EXPLICIT_CLOCK_SOURCE}\b`, 'i');
+const DATE_BEFORE_ZONE = /^(?:\s*(?:this|next|last)\s+)?\s*(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|today|tomorrow|yesterday|\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\s*$/i;
 const UTC_ZONE_PATTERN = /\b(?:UTC|GMT|Zulu)\b/gi;
 const EXPLICIT_OFFSET_LIKE_PATTERN = /\b(?:UTC|GMT)\s*[+-]\s*\d+(?::?\d+)?\b/gi;
 const VALID_EXPLICIT_OFFSET_PATTERN = /^(?:UTC|GMT)\s*[+-]\s*(?:0?\d|1\d|2[0-3])(?::?[0-5]\d)?$/i;
@@ -173,7 +178,7 @@ export function resolveTimeZone(input: { text: string; calendarContext: Calendar
   if ([...input.text.matchAll(EXPLICIT_OFFSET_LIKE_PATTERN)].some((match) => !VALID_EXPLICIT_OFFSET_PATTERN.test(match[0]))) {
     return { status: 'invalid', candidates: [], notes: ['Input contains a malformed UTC/GMT offset.'] };
   }
-  const references = extractTimeZoneReferences(input.text);
+  const references = extractTimeZoneReferences(input.text).filter(reference => !reference.requiresContext);
   if (references.length === 0) {
     return { status: 'not_found', candidates: [], notes: ['No explicit timezone reference found.'] };
   }
@@ -204,6 +209,20 @@ export function resolveTimeZone(input: { text: string; calendarContext: Calendar
     candidates,
     notes: references.map((reference) => reference.note),
   };
+}
+
+export function hasContextualTimeZoneAbbreviation(text: string): boolean {
+  return extractTimeZoneReferences(text).some(reference => reference.requiresContext);
+}
+
+export function applyTimeZoneChoice(text: string, candidate: TimeZoneResolutionCandidate): string {
+  const references = extractTimeZoneReferences(text).filter(reference => !reference.requiresContext
+    && reference.matchedText.toLowerCase() === candidate.matchedText.toLowerCase()
+    && reference.candidates.some(zone => zone.timeZone === candidate.timeZone));
+  for (const reference of references.reverse()) {
+    text = text.slice(0, reference.start) + candidate.timeZone + text.slice(reference.end);
+  }
+  return text;
 }
 
 export function stripResolvedTimeZoneText(text: string, candidate: TimeZoneResolutionCandidate): string {
@@ -402,12 +421,18 @@ function addAbbreviationReferences(text: string, references: TimeZoneReference[]
     if (references.some((reference) => start >= reference.start && end <= reference.end)) {
       continue;
     }
+    // Clock adjacency or a standalone date anchor establishes timezone intent.
+    const requiresContext = matchedText !== abbreviation && text.trim().toLowerCase() !== matchedText.toLowerCase()
+      && !CLOCK_BEFORE_ZONE.test(text.slice(0, start))
+      && !CLOCK_AFTER_ZONE.test(text.slice(end))
+      && !(DATE_BEFORE_ZONE.test(text.slice(0, start)) && /^[\s.,!?]*$/u.test(text.slice(end)));
     const ambiguous = AMBIGUOUS_ABBREVIATIONS[abbreviation];
     if (ambiguous !== undefined) {
       references.push({
         start,
         end,
         matchedText,
+        requiresContext,
         candidates: ambiguous.map((entry) => timeZoneCandidate({
           timeZone: entry.timeZone,
           label: entry.label,
@@ -426,6 +451,7 @@ function addAbbreviationReferences(text: string, references: TimeZoneReference[]
         start,
         end,
         matchedText,
+        requiresContext,
         candidates: [timeZoneCandidate({
           timeZone: unique.timeZone,
           label: unique.label,

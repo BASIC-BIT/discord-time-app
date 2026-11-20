@@ -1,0 +1,21 @@
+{
+  "sourceCommit": "57cc33631542da1a3603565bfcb0bebc27689ed3",
+  "package": "HammerOverlay Routing Smoke_0.1.0_x64_en-US.msi",
+  "msiSha256": "2D008580F9E5366D382B79FFACB196E9C07A5A80417033F7AEA6D7605B065539",
+  "executableSha256": "261D6336DED388FA2E69F75B0D6335C9095B7F8AB675B04678767A6C1B3120F1",
+  "reviewUpgradeCode": "{7DD6DCE3-329C-5603-9C4C-86B4ACBE2AF3}",
+  "productionUpgradeCode": "{E4635D59-0CDD-5232-B4DC-6CF447CA668B}",
+  "isolatedFromProduction": true,
+  "installedSmoke": "NOT RUN",
+  "installAttempt": "Windows reported UAC installation canceled; installed executable hash remains older",
+  "observedInstalledExecutableSha256": "1F2B02BD11B392773107FF2DB8896A8923AB820540BDF0A203F6128F74EE2C01",
+  "nativeAuthAndRestart": "NOT RUN",
+  "nativeBrowserFlowCaptures": "UNAVAILABLE: supported desktop helper failed initialization",
+  "developmentRelay": {
+    "deployment": "https://effervescent-oyster-428.convex.cloud",
+    "sourceCommit": "57cc33631542da1a3603565bfcb0bebc27689ed3",
+    "testedAt": "2026-11-19T13:31:16.760Z",
+    "anonymousRejected": true,
+    "code": "sign_in_required"
+  }
+}

@@ -221,6 +221,7 @@ export interface TemporalParseResponse {
   debug?: {
     chosenCandidateId?: string;
     candidateCount?: number;
+    ambiguousTimeZone?: boolean;
     agentAttempts?: number;
     toolPasses?: number;
     deterministicDurationMs?: number;
@@ -237,6 +238,7 @@ export interface TemporalParseResponse {
     costEstimateConfigured?: boolean;
     shortCircuitReason?: string;
     endpointWarming?: boolean;
+    llmFallbackAttempted?: boolean;
     model?: string;
     reasoningEffort?: string;
     instructionPreset?: string;
