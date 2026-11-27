@@ -1,325 +1,73 @@
-name: 'Build and Release'
+name: Installed 0.1.9 draft smoke
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., v1.0.0)'
+        description: Draft release tag to install
         required: true
-        default: 'v0.1.0'
-
-concurrency:
-  group: windows-release-${{ inputs.version || github.ref_name }}
-  cancel-in-progress: false
-
-env:
-  CARGO_TERM_COLOR: always
-  VITE_CONVEX_URL: ${{ vars.RELEASE_CONVEX_URL }}
-  VITE_CLERK_ISSUER: ${{ vars.RELEASE_CLERK_ISSUER }}
-  VITE_CLERK_OAUTH_CLIENT_ID: ${{ vars.RELEASE_CLERK_OAUTH_CLIENT_ID }}
 
 jobs:
-  build-and-release:
+  installed-smoke:
+    runs-on: windows-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest]
-
-    runs-on: ${{ matrix.platform }}
-
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DRAFT_VERSION: ${{ inputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check release version
-        shell: bash
-        env:
-          REQUESTED_VERSION: ${{ inputs.version || github.ref_name }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install and verify the exact draft MSI
+        shell: pwsh
         run: |
-          VERSION="$REQUESTED_VERSION"
-          if [[ ! "$VERSION" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
-            echo "::error::Expected a version like v0.1.9."
-            exit 1
-          fi
-          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name') || exit 1
-          if grep -Fxq -- "$VERSION" <<< "$existing_tags"; then
-            echo "::error::A release or draft already exists for $VERSION. Inspect the existing draft before retrying."
-            exit 1
-          fi
-          remote_tag=$(git ls-remote origin "refs/tags/$VERSION" "refs/tags/$VERSION^{}") || exit 1
-          tag_commit=$(awk 'NF {tag=$1} END {print tag}' <<< "$remote_tag")
-          head_commit=$(git rev-parse 'HEAD^{commit}') || exit 1
-          if [[ -n "$tag_commit" && "$tag_commit" != "$head_commit" ]]; then
-            echo "::error::$VERSION already points to a different commit. Use a new version."
-            exit 1
-          fi
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "VERSION_NUMBER=${VERSION#v}" >> "$GITHUB_ENV"
-          echo "RELEASE_COMMIT=$head_commit" >> "$GITHUB_ENV"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            api/package-lock.json
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Install API dependencies
-        working-directory: api
-        run: npm ci
-
-      - name: Check API build
-        working-directory: api
-        run: npm run build
-
-      - name: Run API temporal tests
-        working-directory: api
-        env:
-          DB_PATH: ${{ runner.temp }}/hammer-overlay-api-ci.db
-        run: npm test
-
-      - name: Run live temporal smoke tests if configured
-        working-directory: api
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: gpt-5.5
-          OPENAI_REASONING_EFFORT: low
-          LANGFUSE_ENABLED: 'false'
-        run: npm run test:temporal:live
-
-      - name: Run temporal model evals if configured
-        working-directory: api
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LANGFUSE_ENABLED: 'false'
-          TEMPORAL_EVAL_MODELS: ${{ vars.TEMPORAL_EVAL_MODELS }}
-          TEMPORAL_EVAL_REQUIRE_OPENAI: ${{ vars.TEMPORAL_EVAL_REQUIRE_OPENAI }}
-        run: npm run eval:temporal
-
-      - name: Update version in files
-        shell: bash
-        run: |
-          # Update package.json
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '${{ env.VERSION_NUMBER }}';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-
-          # Update Cargo.toml
-          sed -i 's/^version = ".*"/version = "${{ env.VERSION_NUMBER }}"/' src-tauri/Cargo.toml
-
-          # Update tauri.conf.json
-          node -e "
-            const fs = require('fs');
-            const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
-            config.version = '${{ env.VERSION_NUMBER }}';
-            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2));
-          "
-
-      - name: Require the hosted SLM key for releases
-        env:
-          HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
-        shell: bash
-        run: |
-          if [ -z "$HOSTED_SLM_DEFAULT_API_KEY" ]; then
-            echo "::error::HOSTED_SLM_API_KEY secret is empty; a release built now would ship with SLM parsing off."
-            exit 1
-          fi
-
-      - name: Require production browser sign-in configuration for releases
-        run: node scripts/check-hosted-release-config.mjs
-
-      - name: Build Tauri application
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          HOSTED_SLM_DEFAULT_API_KEY: ${{ secrets.HOSTED_SLM_API_KEY }}
-        run: |
-          npm run tauri build
-
-      - name: Code sign (Windows)
-        id: code_sign
-        if: matrix.platform == 'windows-latest'
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        shell: powershell
-        run: |
-          # Only sign if certificate is available
-          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
-            Write-Host "No signing certificate provided - skipping code signing"
-            "did_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            exit 0
+          $ErrorActionPreference = 'Stop'
+          if ($env:DRAFT_VERSION -cne 'v0.1.9') { throw 'Expected the v0.1.9 draft.' }
+          $releaseJson = gh release view $env:DRAFT_VERSION --json isDraft,assets,targetCommitish
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the draft.' }
+          $release = $releaseJson | ConvertFrom-Json
+          if (!$release.isDraft -or $release.targetCommitish -cne '6d6a3b030a1e0a5259aa49042b174d09336b3da5') {
+            throw 'Expected a draft built from the merged release commit.'
           }
-
-          # Decode certificate
-          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-          [IO.File]::WriteAllBytes("certificate.p12", $bytes)
-
-          $signTool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -like "*\x64\signtool.exe" } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-
-          if ($null -eq $signTool) {
-            throw "signtool.exe was not found in the Windows SDK."
+          $dir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'hammeroverlay-v0.1.9')
+          gh release download $env:DRAFT_VERSION --dir $dir.FullName --pattern '*.msi' --pattern '*.msi.sig' --pattern 'latest.json'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download draft assets.' }
+          Remove-Item Env:GH_TOKEN
+          $msi = @(Get-ChildItem -LiteralPath $dir.FullName -Filter '*.msi')
+          if ($msi.Count -ne 1) { throw 'Expected exactly one MSI.' }
+          $msi = $msi[0]
+          $manifest = Get-Content -LiteralPath (Join-Path $dir.FullName 'latest.json') -Raw | ConvertFrom-Json
+          $entry = $manifest.platforms.'windows-x86_64'
+          $signature = (Get-Content -LiteralPath "$($msi.FullName).sig" -Raw).Trim()
+          $expectedUrl = "https://github.com/$env:GH_REPO/releases/download/$env:DRAFT_VERSION/$($msi.Name)"
+          if ($manifest.version -cne '0.1.9' -or $entry.url -cne $expectedUrl -or !$signature -or $entry.signature -cne $signature) {
+            throw 'Draft manifest and MSI signature attachment disagree.'
           }
-
-          $signToolPath = $signTool.FullName
-
-          # Sign the MSI before regenerating its Tauri updater signature.
-          $installers = @(Get-ChildItem -Path "src-tauri/target/release/bundle/msi/" -Filter "*.msi" -ErrorAction SilentlyContinue)
-
-          if ($installers.Count -eq 0) {
-            throw "No MSI installers were found to sign."
+          $digest = (Get-FileHash -LiteralPath $msi.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Installed test input SHA-256: $digest"
+          $log = Join-Path $dir.FullName 'msi-install.log'
+          $install = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /qn /norestart /log `"$log`"" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "MSI exited with $($install.ExitCode)." }
+          $exe = Get-Item -LiteralPath (Join-Path $env:ProgramFiles 'HammerOverlay/hammer-overlay.exe')
+          if ($exe.VersionInfo.ProductVersion -cne '0.1.9') { throw 'Installed executable version mismatch.' }
+          $app = Start-Process -FilePath $exe.FullName -PassThru
+          $health = $null
+          for ($i = 0; $i -lt 45; $i++) {
+            if ($app.HasExited) { throw 'Installed app exited during startup.' }
+            try {
+              $health = Invoke-RestMethod 'http://127.0.0.1:8857/health' -TimeoutSec 2
+              if ($health.status -eq 'healthy') { break }
+            } catch {}
+            Start-Sleep -Seconds 1
           }
-
-          foreach ($installer in $installers) {
-            & $signToolPath sign /f certificate.p12 /p $env:WINDOWS_CERTIFICATE_PASSWORD /tr http://timestamp.sectigo.com /td sha256 /fd sha256 $installer.FullName
-            Write-Host "Signed: $($installer.FullName)"
+          if ($health.status -ne 'healthy' -or $health.appVersion -cne '0.1.9') { throw 'Installed parser did not report healthy on 0.1.9.' }
+          $listener = Get-NetTCPConnection -LocalPort 8857 -State Listen | Select-Object -First 1
+          $parser = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
+          if (!$parser.ExecutablePath -or !$parser.ExecutablePath.StartsWith($exe.DirectoryName + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The healthy parser did not originate from the installed package.'
           }
-
-          "did_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-          # Clean up certificate
-          Remove-Item certificate.p12
-
-      - name: Regenerate updater signatures
-        if: steps.code_sign.outputs.did_sign == 'true'
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-
-          if [ ! -f "$MSI_PATH" ]; then
-            echo "Missing MSI artifact."
-            exit 1
-          fi
-
-          npx tauri signer sign "$MSI_PATH"
-
-      - name: Generate update manifest
-        shell: bash
-        run: |
-          MSI_PATH=$(find src-tauri/target/release/bundle/msi/ -name "*.msi" | head -1)
-          MSI_SIG_PATH="$MSI_PATH.sig"
-
-          if [ ! -f "$MSI_PATH" ]; then
-            echo "No MSI file found"
-            exit 1
-          fi
-
-          if [ ! -f "$MSI_SIG_PATH" ]; then
-            echo "Missing updater signature files. Check TAURI_SIGNING_PRIVATE_KEY and createUpdaterArtifacts."
-            exit 1
-          fi
-
-          MSI_NAME=$(basename "$MSI_PATH")
-          SIGNATURE=$(tr -d '\r\n' < "$MSI_SIG_PATH")
-
-          cat > updater/latest.json << EOF
-          {
-            "version": "${{ env.VERSION_NUMBER }}",
-            "notes": "Release ${{ env.VERSION }}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "$SIGNATURE",
-                "url": "https://github.com/BASIC-BIT/discord-time-app/releases/download/${{ env.VERSION }}/$MSI_NAME"
-              }
-            }
-          }
-          EOF
-
-          echo "MSI_PATH=$MSI_PATH" >> $GITHUB_ENV
-          echo "MSI_SIG_PATH=$MSI_SIG_PATH" >> $GITHUB_ENV
-
-      - name: Create release notes
-        shell: bash
-        run: |
-          cat > release-notes.md << EOF
-          ## HammerOverlay ${{ env.VERSION }}
-
-          ### What's New
-          - Discord timestamps now participate in semantic time arithmetic instead of silently discarding meaningful surrounding language.
-          - Ambiguous clock composition can return selectable AM/PM alternatives in the overlay.
-          - Superseded parse requests are cancelled through the desktop and backend path to avoid wasted local-model work.
-          - The promoted Qwen3.5-0.8B V22 Temporal Plan-IR adapter adds broader timestamp, shift, clock-order, typo, clarification, range-format, and infix coverage.
-
-          ### Installation
-          1. Download the MSI installer below.
-          2. Run the installer. Unsigned builds may show a Windows SmartScreen warning.
-          3. Launch HammerOverlay and use Ctrl+Shift+H to open the overlay.
-
-          ### Update Metadata
-          This release includes Tauri v2 updater metadata in latest.json.
-          EOF
-
-      - name: Create draft GitHub release
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name') || exit 1
-          if grep -Fxq -- "$VERSION" <<< "$existing_tags"; then
-            echo "::error::A release or draft already exists for $VERSION."
-            exit 1
-          fi
-
-          draft_url=$(gh release create "$VERSION" \
-            "$MSI_PATH" \
-            "$MSI_SIG_PATH" \
-            updater/latest.json \
-            --repo BASIC-BIT/discord-time-app \
-            --target "$RELEASE_COMMIT" \
-            --title "HammerOverlay ${{ env.VERSION }}" \
-            --notes-file release-notes.md \
-            --draft) || exit 1
-          echo "DRAFT_URL=$draft_url" >> "$GITHUB_ENV"
-          echo "[Open the $VERSION release draft]($draft_url)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Print build summary
-        shell: bash
-        run: |
-          echo "🎉 Build completed successfully!"
-          echo "📦 Version: ${{ env.VERSION }}"
-          echo "🏠 Repository: BASIC-BIT/discord-time-app"
-          echo "🔗 Release draft: $DRAFT_URL"
-          echo ""
-          echo "📝 Next steps:"
-          echo "1. Verify and smoke-test the exact signed MSI from the draft"
-          echo "2. Publish the verified draft as Latest"
-          echo "3. Confirm the public feed and test the auto-updater"
-
-          # List uploaded files
-          echo ""
-          echo "📁 Uploaded files:"
-          find src-tauri/target/release/bundle/ -name "*.msi" -exec basename {} \;
-          find src-tauri/target/release/bundle/ -name "*.sig" -exec basename {} \;
-          echo "latest.json"
+          @(
+            'Exact 0.1.9 draft MSI install and startup passed.'
+            "MSI: $($msi.Name)"
+            "SHA-256: $digest"
+            "App and healthy installed parser version: $($health.appVersion)"
+          ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
