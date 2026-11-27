@@ -262,7 +262,7 @@ jobs:
           This release includes Tauri v2 updater metadata in latest.json.
           EOF
 
-      - name: Create GitHub release
+      - name: Create draft GitHub release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -275,7 +275,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "HammerOverlay ${{ env.VERSION }}" \
             --notes-file release-notes.md \
-            --latest
+            --draft
 
       - name: Print build summary
         shell: bash
@@ -286,9 +286,9 @@ jobs:
           echo "🔗 Release: https://github.com/BASIC-BIT/discord-time-app/releases/tag/${{ env.VERSION }}"
           echo ""
           echo "📝 Next steps:"
-          echo "1. Verify the release assets were uploaded correctly"
-          echo "2. Test the auto-updater with the new version"
-          echo "3. Announce the release to users"
+          echo "1. Verify and smoke-test the exact signed MSI from the draft"
+          echo "2. Publish the verified draft as Latest"
+          echo "3. Confirm the public feed and test the auto-updater"
 
           # List uploaded files
           echo ""

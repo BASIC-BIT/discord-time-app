@@ -24,7 +24,9 @@ The updater is silent and never interrupts the user mid-task.
 
 Every client reads `https://github.com/BASIC-BIT/discord-time-app/releases/latest/download/latest.json`, which GitHub resolves to the release marked Latest.
 
-`release.yml` builds the MSI with the updater signing key, re-signs it for the updater after Windows code signing (when a certificate is configured), writes `updater/latest.json` (version, notes, date, and the `windows-x86_64` signature and MSI download URL), and runs `gh release create ... --latest` uploading the MSI, the `.msi.sig` and `latest.json`. Nobody edits `latest.json` by hand; the copy in the repo is a placeholder CI overwrites.
+`release.yml` builds the MSI with the updater signing key, re-signs it for the updater after Windows code signing (when a certificate is configured), writes `updater/latest.json` (version, notes, date, and the `windows-x86_64` signature and MSI download URL), and runs `gh release create ... --draft` uploading the MSI, the `.msi.sig` and `latest.json`. Nobody edits `latest.json` by hand; the copy in the repo is a placeholder CI overwrites.
+
+Download and smoke-test the exact signed Windows MSI from the draft before publishing. Once the installed smoke passes, publish the draft and mark it Latest with `gh release edit <tag> --draft=false --latest`. Verify that the public manifest serves the new version and an older installed client can update.
 
 The release workflow fails fast if the `HOSTED_SLM_API_KEY` secret is empty, for tag pushes and `workflow_dispatch` runs alike.
 
