@@ -54,12 +54,14 @@ jobs:
           fi
           remote_tag=$(git ls-remote origin "refs/tags/$VERSION" "refs/tags/$VERSION^{}") || exit 1
           tag_commit=$(awk 'NF {tag=$1} END {print tag}' <<< "$remote_tag")
-          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+          head_commit=$(git rev-parse 'HEAD^{commit}') || exit 1
+          if [[ -n "$tag_commit" && "$tag_commit" != "$head_commit" ]]; then
             echo "::error::$VERSION already points to a different commit. Use a new version."
             exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "VERSION_NUMBER=${VERSION#v}" >> "$GITHUB_ENV"
+          echo "RELEASE_COMMIT=$head_commit" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -295,7 +297,7 @@ jobs:
             "$MSI_SIG_PATH" \
             updater/latest.json \
             --repo BASIC-BIT/discord-time-app \
-            --target "$GITHUB_SHA" \
+            --target "$RELEASE_COMMIT" \
             --title "HammerOverlay ${{ env.VERSION }}" \
             --notes-file release-notes.md \
             --draft) || exit 1
