@@ -11,6 +11,10 @@ on:
         required: true
         default: 'v0.1.0'
 
+concurrency:
+  group: windows-release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   VITE_CONVEX_URL: ${{ vars.RELEASE_CONVEX_URL }}
@@ -31,6 +35,33 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check release version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version || github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$REQUESTED_VERSION"
+          if [[ ! "$VERSION" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+            echo "::error::Expected a version like v0.1.9."
+            exit 1
+          fi
+          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name') || exit 1
+          if grep -Fxq -- "$VERSION" <<< "$existing_tags"; then
+            echo "::error::A release or draft already exists for $VERSION. Inspect the existing draft before retrying."
+            exit 1
+          fi
+          remote_tag=$(git ls-remote origin "refs/tags/$VERSION" "refs/tags/$VERSION^{}") || exit 1
+          tag_commit=$(awk 'NF {tag=$1} END {print tag}' <<< "$remote_tag")
+          head_commit=$(git rev-parse 'HEAD^{commit}') || exit 1
+          if [[ -n "$tag_commit" && "$tag_commit" != "$head_commit" ]]; then
+            echo "::error::$VERSION already points to a different commit. Use a new version."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_NUMBER=${VERSION#v}" >> "$GITHUB_ENV"
+          echo "RELEASE_COMMIT=$head_commit" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -85,18 +116,6 @@ jobs:
           TEMPORAL_EVAL_MODELS: ${{ vars.TEMPORAL_EVAL_MODELS }}
           TEMPORAL_EVAL_REQUIRE_OPENAI: ${{ vars.TEMPORAL_EVAL_REQUIRE_OPENAI }}
         run: npm run eval:temporal
-
-      - name: Extract version from tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_ENV
-          echo "Building version: $VERSION"
 
       - name: Update version in files
         shell: bash
@@ -262,20 +281,28 @@ jobs:
           This release includes Tauri v2 updater metadata in latest.json.
           EOF
 
-      - name: Create GitHub release
+      - name: Create draft GitHub release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ env.VERSION }}" \
+          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name') || exit 1
+          if grep -Fxq -- "$VERSION" <<< "$existing_tags"; then
+            echo "::error::A release or draft already exists for $VERSION."
+            exit 1
+          fi
+
+          draft_url=$(gh release create "$VERSION" \
             "$MSI_PATH" \
             "$MSI_SIG_PATH" \
             updater/latest.json \
             --repo BASIC-BIT/discord-time-app \
-            --target "$GITHUB_SHA" \
+            --target "$RELEASE_COMMIT" \
             --title "HammerOverlay ${{ env.VERSION }}" \
             --notes-file release-notes.md \
-            --latest
+            --draft) || exit 1
+          echo "DRAFT_URL=$draft_url" >> "$GITHUB_ENV"
+          echo "[Open the $VERSION release draft]($draft_url)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Print build summary
         shell: bash
@@ -283,12 +310,12 @@ jobs:
           echo "🎉 Build completed successfully!"
           echo "📦 Version: ${{ env.VERSION }}"
           echo "🏠 Repository: BASIC-BIT/discord-time-app"
-          echo "🔗 Release: https://github.com/BASIC-BIT/discord-time-app/releases/tag/${{ env.VERSION }}"
+          echo "🔗 Release draft: $DRAFT_URL"
           echo ""
           echo "📝 Next steps:"
-          echo "1. Verify the release assets were uploaded correctly"
-          echo "2. Test the auto-updater with the new version"
-          echo "3. Announce the release to users"
+          echo "1. Verify and smoke-test the exact signed MSI from the draft"
+          echo "2. Publish the verified draft as Latest"
+          echo "3. Confirm the public feed and test the auto-updater"
 
           # List uploaded files
           echo ""

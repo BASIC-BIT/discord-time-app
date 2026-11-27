@@ -117,7 +117,7 @@ npm run tauri build
    - CI (`release.yml`) signs the MSI, writes `latest.json` and uploads both; see `docs/UPDATER.md`
 
 3. **Distribution**
-   - CI uploads the signed MSI to GitHub Releases with the update manifest (step 2); nothing is uploaded by hand
+   - CI uploads the signed MSI and update manifest to a GitHub release draft (step 2). Smoke-test that exact MSI, then publish the draft as Latest. See `docs/UPDATER.md`.
    - Update download links in documentation
    - Announce release to users
 
