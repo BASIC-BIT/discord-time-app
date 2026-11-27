@@ -11,6 +11,10 @@ on:
         required: true
         default: 'v0.1.0'
 
+concurrency:
+  group: windows-release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   VITE_CONVEX_URL: ${{ vars.RELEASE_CONVEX_URL }}
@@ -267,7 +271,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ env.VERSION }}" \
+          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name') || exit 1
+          if grep -Fxq -- "$VERSION" <<< "$existing_tags"; then
+            echo "::error::A release or draft already exists for $VERSION."
+            exit 1
+          fi
+
+          draft_url=$(gh release create "$VERSION" \
             "$MSI_PATH" \
             "$MSI_SIG_PATH" \
             updater/latest.json \
@@ -275,7 +285,8 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "HammerOverlay ${{ env.VERSION }}" \
             --notes-file release-notes.md \
-            --draft
+            --draft) || exit 1
+          echo "DRAFT_URL=$draft_url" >> "$GITHUB_ENV"
 
       - name: Print build summary
         shell: bash
@@ -283,7 +294,7 @@ jobs:
           echo "🎉 Build completed successfully!"
           echo "📦 Version: ${{ env.VERSION }}"
           echo "🏠 Repository: BASIC-BIT/discord-time-app"
-          echo "🔗 Release: https://github.com/BASIC-BIT/discord-time-app/releases/tag/${{ env.VERSION }}"
+          echo "🔗 Release draft: $DRAFT_URL"
           echo ""
           echo "📝 Next steps:"
           echo "1. Verify and smoke-test the exact signed MSI from the draft"
