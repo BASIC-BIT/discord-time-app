@@ -54,6 +54,25 @@ it('shows fallback progress through a slow request and removes warmup messaging 
   expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
 });
 
+it('displays the validated Luna result after a ready RunPod plan rejects bare Easter', async () => {
+  fake.parse.mockRejectedValue(new TimeParserAPIError('Rejected RunPod plan', 400, 'endpoint_plan_rejected'));
+  fake.hosted.mockResolvedValue({
+    epoch: 1806249600, method: 'agent+plan', confidence: 0.9,
+    suggestedFormatIndex: 1, debug: { serverValidated: true },
+  });
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'easter');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(fake.hosted).toHaveBeenCalledOnce();
+  expect(fake.hosted.mock.calls[0][0]).toBe('easter');
+  expect(container.querySelector('.format-code')?.textContent).toContain('<t:1806249600:');
+  expect(container.querySelector('.warming-notice')?.classList.contains('visible')).toBe(false);
+});
+
 it('keeps the local error visible when hosted fallback is unavailable', async () => {
   fake.eligible = false;
   await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));

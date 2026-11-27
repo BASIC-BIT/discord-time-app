@@ -1792,12 +1792,16 @@ async function runEndpointPlanIrPath(
   const usage = modelUsageFromUnknown(completion.usage);
   attachModelUsageDebug(response, 1, usage.inputTokens, usage.outputTokens, options.modelCost);
   response.debug.trace = reindexTrace([llmTrace, ...(response.debug.trace ?? [])]);
-  return applySemanticConsistencyGateIfConfigured(request, response, options, {
+  const validatedResponse = await applySemanticConsistencyGateIfConfigured(request, response, options, {
     solverStage: 'local_endpoint_plan_ir',
     modelName: endpoint.model,
     planResult,
     endpointCompletion: completion,
   });
+  if (planResult.outcome === 'plans' && planResult.plans.length > 0 && validatedResponse.status === 'failed' && !validatedResponse.validation.passed) {
+    validatedResponse.debug = { ...validatedResponse.debug, endpointPlanRejected: true };
+  }
+  return validatedResponse;
 }
 
 type EndpointCompletion = {

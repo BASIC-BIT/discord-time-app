@@ -41,6 +41,13 @@ async function main() {
     label: '5 PM', confidence: 0.9, finalStep: 0,
     steps: [{ op: 'resolve_calendar_query', query: 'November 18 2026 5pm', precision: 'datetime' }],
   }] });
+  // RunPod supplied the current year even though Easter had already passed.
+  const pastEasterPlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Resolve the named holiday in the requested year.', plans: [{
+    label: 'Easter 2026', confidence: 0.9,
+    steps: [{ op: 'resolve_holiday', holidayName: 'easter', precision: 'date', year: 2026 }],
+  }] });
+  const noPlan = parseTemporalPlanPlannerOutput({ outcome: 'no_plan', reason: 'Synthetic no-plan result.', plans: [] });
+  let endpointPlan = plan;
   let providerPlan = plan;
   let firstProviderPlan: typeof plan | undefined;
   const llm = createServer(async (request, response) => {
@@ -114,17 +121,19 @@ async function main() {
   const slm = createServer((_request, response) => {
     slmCalls += 1;
     response.writeHead(slmReady ? 200 : 503, { 'content-type': 'application/json' });
-    response.end(slmReady ? JSON.stringify({ choices: [{ message: { content: JSON.stringify(plan) } }] }) : 'warming');
+    response.end(slmReady ? JSON.stringify({ choices: [{ message: { content: JSON.stringify(endpointPlan) } }] }) : 'warming');
   });
   const llmUrl = await listen(llm);
   const slmUrl = await listen(slm);
   try {
-    for (const { configured, warming } of [
-      { configured: true, warming: true },
-      { configured: false, warming: true },
-      { configured: true, warming: false },
+    for (const { configured, warming, warmupEnabled } of [
+      { configured: true, warming: true, warmupEnabled: true },
+      { configured: false, warming: true, warmupEnabled: true },
+      { configured: true, warming: false, warmupEnabled: true },
+      { configured: false, warming: false, warmupEnabled: false },
     ]) {
       slmReady = !warming;
+      endpointPlan = plan;
       const reservation = createServer();
       const apiUrl = await listen(reservation);
       await new Promise<void>((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
@@ -137,7 +146,7 @@ async function main() {
           TEMPORAL_FEATURE_PLAN_IR: 'true', TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT: 'false',
           TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: 'false',
           TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: slmUrl, TEMPORAL_PLAN_IR_ENDPOINT_MODEL: 'test-cold-slm',
-          TEMPORAL_PLAN_IR_ENDPOINT_API: 'chat', TEMPORAL_PLAN_IR_ENDPOINT_WARMUP: String(warming),
+          TEMPORAL_PLAN_IR_ENDPOINT_API: 'chat', TEMPORAL_PLAN_IR_ENDPOINT_WARMUP: String(warmupEnabled),
         }, stdio: ['ignore', 'pipe', 'pipe'],
       });
       let output = '';
@@ -154,6 +163,16 @@ async function main() {
           body: JSON.stringify({ requestId: 'warmup-fallback-test', text, tz: 'America/Indianapolis', now: '2026-11-18T21:18:11.689Z', features: { deterministicPreflight: false } }),
           signal: AbortSignal.timeout(timeoutMs),
         });
+        if (warmupEnabled && !warming) {
+          const started = await fetch(`${apiUrl}/parse/warm`, {
+            method: 'POST', headers: { 'x-api-key': 'test-local-key', 'x-api-version': '1' },
+          });
+          assert.equal(started.status, 202);
+          while ((await (await fetch(`${apiUrl}/health`)).json()).planIrEndpoint.state !== 'ready') {
+            assert(Date.now() < deadline, 'Synthetic hosted endpoint never became ready');
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+        }
         const before = llmCalls;
         const resolved = await parse('5pm');
         assert.equal(resolved.status, 200);
@@ -163,6 +182,19 @@ async function main() {
           assert.equal(resolvedBody.method, 'agent+plan');
           assert.equal(resolvedBody.debug?.endpointWarming, undefined);
           assert.equal(llmCalls, before, 'the normal RunPod path must not invoke the LLM');
+
+          endpointPlan = pastEasterPlan;
+          const easter = await parse('easter');
+          assert.equal(easter.status, 400);
+          const rejected = await easter.json();
+          assert.equal(rejected.error, warmupEnabled ? 'endpoint_plan_rejected' : 'Could not parse time expression');
+          assert.notEqual(rejected.debug?.endpointWarming, true);
+
+          endpointPlan = noPlan;
+          const unsupported = await parse('easter');
+          assert.equal(unsupported.status, 400);
+          assert.notEqual((await unsupported.json()).error, 'endpoint_plan_rejected');
+          assert.equal(llmCalls, before, 'the sidecar leaves the hosted retry to the desktop client');
           continue;
         }
         const timezoneQuestion = await parse('tomorrow 5pm CST');

@@ -556,10 +556,11 @@ server.post<{ Body: ParseRequest }>('/parse', {
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
     }, 'parse result');
 
-    // If all parsing failed
+    // Hosted desktop model mode enables prewarming. A local model rejection stays local.
     if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
-        error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
+        error: config.temporalPlanIrWarmup.enabled && parsed.debug?.endpointPlanRejected ? 'endpoint_plan_rejected'
+          : parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,
         debug: { ambiguousTimeZone: parsed.debug?.ambiguousTimeZone === true, ...(endpointWarming ? { endpointWarming: true, llmFallbackAttempted } : {}) },

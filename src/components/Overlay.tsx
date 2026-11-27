@@ -619,7 +619,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
               if (!active()) return;
               if (result) {
                 setGenerationId(result.generationId);
-                setEndpointWarming(true);
+                setEndpointWarming(error.endpointWarming);
                 warmingTextRef.current = null;
               }
             } catch (hostedError) {
