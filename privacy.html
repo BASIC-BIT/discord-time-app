@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy policy | HammerOverlay</title>
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+  <header><a href="/">HammerOverlay</a></header>
+  <main>
+    <h1>Privacy policy</h1>
+    <p class="effective">Effective November 27, 2026</p>
+    <p>BASIC BIT LLC operates HammerOverlay. This policy covers the Windows app, the website, and the hosted parsing service.</p>
+    <h2>Sign-in</h2>
+    <p>If you use Google sign-in, Google provides basic account information to Clerk, our authentication provider. This can include your Google account identifier, email address, name, and profile image. Clerk uses it to create or identify your account and manage your session. HammerOverlay uses the resulting account identifier to authorize hosted parsing and apply usage limits.</p>
+    <h2>Parsing and usage</h2>
+    <p>The app does basic parsing and formatting on your device. When a request uses hosted parsing, the configured model service receives the time expression and context needed to interpret it, such as your time zone and a reference time. HammerOverlay uses RunPod for its hosted model and Convex and OpenAI for the signed-in fallback. Avoid entering private information in a time expression.</p>
+    <p>Convex stores an account identifier, aggregate usage, and request metrics such as input length, token counts, status, and timing. The Convex usage table stores metrics without the expression text. A daily job removes per-request usage records older than 30 days. The desktop app also keeps local usage statistics.</p>
+    <h2>Website and service providers</h2>
+    <p>GitHub hosts the website and release downloads. Cloudflare handles DNS. These providers, and the sign-in and parsing providers above, process information needed to operate and secure their services.</p>
+    <h2>Your choices</h2>
+    <p>You can use basic parsing and the calendar without signing in. Sign out in the app to end its local session, or manage HammerOverlay’s access in your Google Account. For privacy questions or to request deletion of your hosted account data, contact <a href="mailto:basic@basicbit.net">basic@basicbit.net</a>.</p>
+  </main>
+  <footer>
+    <nav aria-label="Site links">
+      <a href="/privacy.html">Privacy policy</a>
+      <a href="/terms.html">Terms of service</a>
+      <a href="mailto:basic@basicbit.net">Support</a>
+    </nav>
+    <p>BASIC BIT LLC</p>
+  </footer>
+</body>
+</html>
