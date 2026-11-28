@@ -72,7 +72,7 @@ export function HostedAccount({ compact = false, dismissWhenIdle = false, onSign
         <span className={`account-indicator ${signedIn ? 'connected' : ''}`} aria-hidden="true">{pending || busy ? <span className="account-spinner" /> : signedIn ? '✓' : '↗'}</span>
         <div>
           <div className="account-title">{signedIn ? 'You’re connected' : pending ? 'Finish in your browser' : 'Sign in for smart parsing'}</div>
-          <p className="account-description">{signedIn ? 'Your account is ready for smart parsing. You’ll stay signed in on this device.' : pending ? 'Approve HammerOverlay there. We’ll continue here automatically.' : 'Use your browser to sign in. While the model warms up, expressions basic parsing cannot resolve go to our cloud parser and OpenAI.'}</p>
+          <p className="account-description">{signedIn ? 'Your account is ready for smart parsing. You’ll stay signed in on this device.' : pending ? 'Approve HammerOverlay there. We’ll continue here automatically.' : 'Use your browser to sign in. Smart fallback sends eligible time expressions to our cloud parser and OpenAI. It can run when basic parsing fails during warmup or when a model result fails validation.'}</p>
         </div>
       </div>
       {pending && status.userCode && <div className="account-device">
