@@ -47,6 +47,10 @@ async function main() {
     steps: [{ op: 'resolve_holiday', holidayName: 'easter', precision: 'date', year: 2026 }],
   }] });
   const noPlan = parseTemporalPlanPlannerOutput({ outcome: 'no_plan', reason: 'Synthetic no-plan result.', plans: [] });
+  const unexecutablePlan = parseTemporalPlanPlannerOutput({ outcome: 'plans', reason: 'Synthetic incomplete input.', plans: [{
+    label: 'Unresolvable calendar query', confidence: 0.9, finalStep: 0,
+    steps: [{ op: 'resolve_calendar_query', query: 'zzzxq', precision: 'datetime' }],
+  }] });
   let endpointPlan = plan;
   let providerPlan = plan;
   let firstProviderPlan: typeof plan | undefined;
@@ -126,10 +130,11 @@ async function main() {
   const llmUrl = await listen(llm);
   const slmUrl = await listen(slm);
   try {
-    for (const { configured, warming, warmupEnabled } of [
+    for (const { configured, warming, warmupEnabled, semanticGate = false } of [
       { configured: true, warming: true, warmupEnabled: true },
       { configured: false, warming: true, warmupEnabled: true },
       { configured: true, warming: false, warmupEnabled: true },
+      { configured: false, warming: false, warmupEnabled: true, semanticGate: true },
       { configured: false, warming: false, warmupEnabled: false },
     ]) {
       slmReady = !warming;
@@ -140,11 +145,11 @@ async function main() {
       const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, NODE_ENV: 'production', PORT: new URL(apiUrl).port,
-          STATIC_API_KEY: 'test-local-key', DB_PATH: join(directory, `${configured}-${warming}.db`), LANGFUSE_ENABLED: 'false',
+          STATIC_API_KEY: 'test-local-key', DB_PATH: join(directory, `${configured}-${warming}-${warmupEnabled}.db`), LANGFUSE_ENABLED: 'false',
           TELEMETRY_HMAC_KEY: 'test-warmup-telemetry-key',
           OPENAI_API_KEY: configured ? 'sk-test-llm-key' : '', OPENAI_MODEL: 'test-llm', OPENAI_BASE_URL: `${llmUrl}/v1`,
           TEMPORAL_FEATURE_PLAN_IR: 'true', TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT: 'false',
-          TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: 'false',
+          TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: String(semanticGate),
           TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: slmUrl, TEMPORAL_PLAN_IR_ENDPOINT_MODEL: 'test-cold-slm',
           TEMPORAL_PLAN_IR_ENDPOINT_API: 'chat', TEMPORAL_PLAN_IR_ENDPOINT_WARMUP: String(warmupEnabled),
         }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -168,8 +173,9 @@ async function main() {
             method: 'POST', headers: { 'x-api-key': 'test-local-key', 'x-api-version': '1' },
           });
           assert.equal(started.status, 202);
+          const warmupDeadline = Date.now() + 15_000;
           while ((await (await fetch(`${apiUrl}/health`)).json()).planIrEndpoint.state !== 'ready') {
-            assert(Date.now() < deadline, 'Synthetic hosted endpoint never became ready');
+            assert(Date.now() < warmupDeadline, 'Synthetic hosted endpoint never became ready');
             await new Promise(resolve => setTimeout(resolve, 20));
           }
         }
@@ -194,6 +200,11 @@ async function main() {
           const unsupported = await parse('easter');
           assert.equal(unsupported.status, 400);
           assert.notEqual((await unsupported.json()).error, 'endpoint_plan_rejected');
+
+          endpointPlan = unexecutablePlan;
+          const noCandidate = await parse('tomorrow at');
+          assert.equal(noCandidate.status, 400);
+          assert.equal((await noCandidate.json()).error, 'Could not parse time expression');
           assert.equal(llmCalls, before, 'the sidecar leaves the hosted retry to the desktop client');
           continue;
         }

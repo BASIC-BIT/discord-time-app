@@ -342,6 +342,7 @@ export async function runTemporalCoalescingGraph(
       if (!shouldEscalateAfterSemanticConsistencyGate(planResult) || options.openaiApiKey === undefined) {
         return planResult;
       }
+      // The configured in-process model owns this retry. Its response determines the outcome.
     } catch (error) {
       if (error instanceof TemporalCancellationError || (error instanceof Error && error.name === 'AbortError')) {
         throw error;
@@ -1798,7 +1799,9 @@ async function runEndpointPlanIrPath(
     planResult,
     endpointCompletion: completion,
   });
-  if (planResult.outcome === 'plans' && planResult.plans.length > 0 && validatedResponse.status === 'failed' && !validatedResponse.validation.passed) {
+  // A failed single-answer plan must have produced a candidate that reached validation.
+  if (planResult.outcome === 'plans' && validatedResponse.status === 'failed' &&
+      !validatedResponse.validation.passed && (validatedResponse.debug?.candidateCount ?? 0) > 0) {
     validatedResponse.debug = { ...validatedResponse.debug, endpointPlanRejected: true };
   }
   return validatedResponse;
