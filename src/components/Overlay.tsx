@@ -11,6 +11,7 @@ import { formatDiscordRange, formats, getFormatLabel, getRangeLabel, rangeFormat
 import { getUserTimezone } from '../lib/prompt';
 import { createAPIClient, TimeParserAPIError, TimeParserTimeoutError, TimeParserUnavailableError, type ParseAlternative, type ParseRangeResult, type ParseResponse } from '../lib/api-client';
 import { parseFallback } from '../lib/parse';
+import { getHostedAuthStatus } from '../lib/hosted-auth';
 import { canUseHostedFallback, parseHostedTime } from '../lib/hosted-parser';
 import { loadClipboardText } from '../lib/clipboard';
 import { HostedAccount } from './HostedAccount';
@@ -580,6 +581,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
       // Prefer the supervised parser when available; local chrono is an offline fallback.
       let result: ParseResponse | null = null;
       let apiError: Error | null = null;
+      let canRetryClipboardWithCloud = false;
       const requestId = crypto.randomUUID();
       const referenceInstant = new Date().toISOString();
 
@@ -605,9 +607,16 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           if (error instanceof Error && error.name === 'AbortError') {
             throw error; // Re-throw abort errors
           }
-          if (isFromClipboard && (useLlmParsing && canUseHostedFallback(error))) setCanRetryFallback(true);
-          if (!isFromClipboard && (useLlmParsing && canUseHostedFallback(error))) {
-            const localMessage = error instanceof Error ? error.message : null;
+          const fallbackError = useLlmParsing && canUseHostedFallback(error) ? error : null;
+          const allowHostedFallback = fallbackError !== null && (fallbackError.endpointWarming ||
+            (await getHostedAuthStatus().catch(() => null))?.phase === 'signed_in');
+          if (!active()) return;
+          if (isFromClipboard && allowHostedFallback) {
+            canRetryClipboardWithCloud = true;
+            setCanRetryFallback(true);
+          }
+          if (!isFromClipboard && fallbackError && allowHostedFallback) {
+            const localMessage = fallbackError.message;
             clearProgressTimers();
             setParseProgressMessage('Preparing smart fallback');
             // Wait for a full second of idle input before starting uncancellable cloud work.
@@ -619,7 +628,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
               if (!active()) return;
               if (result) {
                 setGenerationId(result.generationId);
-                setEndpointWarming(error.endpointWarming);
+                setEndpointWarming(fallbackError.endpointWarming);
                 warmingTextRef.current = null;
               }
             } catch (hostedError) {
@@ -680,7 +689,7 @@ export function Overlay({ onClose, openToken }: OverlayProps) {
           setConfidence(1);
           if (apiError instanceof TimeParserAPIError && apiError.code === 'sign_in_required') setSignInRequired(true);
           if (isFromClipboard && !hasDiscordReference) {
-            setError(useLlmParsing && canUseHostedFallback(apiError) ? 'Smart parsing can try this clipboard text in the cloud.' : null);
+            setError(canRetryClipboardWithCloud ? 'Smart parsing can try this clipboard text in the cloud.' : null);
           } else if (apiError instanceof TimeParserAPIError && apiError.code === 'needs_clarification') {
             setClarificationQuestion(apiError.message);
             setAmbiguousTimeZone(apiError.ambiguousTimeZone);

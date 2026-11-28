@@ -6,13 +6,14 @@ import { Overlay } from './Overlay';
 import { TimeParserAPIError } from '../lib/api-client';
 import { invoke } from '@tauri-apps/api/core';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
-const fake = vi.hoisted(() => ({ parse: vi.fn(), hosted: vi.fn(), endpointStatus: vi.fn(), eligible: true }));
+const fake = vi.hoisted(() => ({ parse: vi.fn(), hosted: vi.fn(), authStatus: vi.fn(), endpointStatus: vi.fn(), eligible: true }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({ auto_load_clipboard: false })) }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'test', setFocus: vi.fn() }), LogicalSize: class {}, PhysicalPosition: class {}, currentMonitor: vi.fn() }));
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ readText: vi.fn(), writeText: vi.fn() }));
 vi.mock('@tauri-apps/plugin-notification', () => ({ sendNotification: vi.fn() }));
 vi.mock('../lib/stats', () => ({ initStats: vi.fn(), getFormatStats: vi.fn(async () => []), getMostUsedFormatIndex: () => 0, incrementFormatUsage: vi.fn() }));
 vi.mock('../lib/hosted-parser', () => ({ canUseHostedFallback: (error: unknown) => fake.eligible && !(error && typeof error === 'object' && 'code' in error && error.code === 'needs_clarification'), parseHostedTime: fake.hosted }));
+vi.mock('../lib/hosted-auth', () => ({ getHostedAuthStatus: fake.authStatus }));
 vi.mock('./HostedAccount', () => ({ HostedAccount: () => <section aria-label="Account">Browser approval</section> }));
 vi.mock('../lib/api-client', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/api-client')>(),
@@ -22,6 +23,7 @@ let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   vi.clearAllMocks(); fake.eligible = true;
+  fake.authStatus.mockResolvedValue({ phase: 'signed_in' });
   fake.endpointStatus.mockResolvedValue({ warmupEnabled: true, state: 'warming' });
   vi.mocked(invoke).mockResolvedValue({ auto_load_clipboard: false });
   vi.mocked(readText).mockResolvedValue('');
@@ -74,6 +76,21 @@ it('displays the validated Luna result after a ready RunPod plan rejects bare Ea
   expect(fake.endpointStatus).toHaveBeenCalledOnce();
   await act(async () => vi.advanceTimersByTimeAsync(2500));
   expect(fake.endpointStatus).toHaveBeenCalledOnce();
+});
+
+it('shows a rejected ready plan immediately when signed out', async () => {
+  fake.authStatus.mockResolvedValue({ phase: 'signed_out' });
+  fake.parse.mockRejectedValue(new TimeParserAPIError('Rejected RunPod plan', 400, 'endpoint_plan_rejected'));
+  await act(async () => root.render(<Overlay openToken={0} onClose={() => {}} />));
+  const input = container.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'easter');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(350));
+  expect(container.querySelector('.status-line')?.textContent).toContain('Rejected RunPod plan');
+  expect(container.querySelector('[aria-label=Account]')).toBeNull();
+  expect(fake.hosted).not.toHaveBeenCalled();
 });
 
 it('keeps the local error visible when hosted fallback is unavailable', async () => {
@@ -271,6 +288,8 @@ it('waits for the AI preference and then parses the latest typed text without cl
 });
 
 it('keeps the browser sign-in panel mounted while another parse is in flight', async () => {
+  fake.authStatus.mockResolvedValue({ phase: 'signed_out' });
+  fake.parse.mockRejectedValue(new TimeParserAPIError('RunPod is warming', 400, 'parse_failed', undefined, undefined, true));
   fake.hosted.mockRejectedValue(new TimeParserAPIError('Sign in.',401,'sign_in_required'));
   await act(async()=>root.render(<Overlay openToken={0} onClose={()=>{}} />));
   const input=container.querySelector('textarea')!;
@@ -278,6 +297,7 @@ it('keeps the browser sign-in panel mounted while another parse is in flight', a
   await type('5pms'); await act(async()=>vi.advanceTimersByTimeAsync(1200));
   const account=container.querySelector('[aria-label="Account"]');
   expect(account).not.toBeNull();
+  expect(fake.authStatus).not.toHaveBeenCalled();
   fake.parse.mockImplementation(()=>new Promise(()=>{}));
   await type('6pms'); await act(async()=>vi.advanceTimersByTimeAsync(400));
   expect(container.querySelector('[aria-label="Account"]')).toBe(account);
