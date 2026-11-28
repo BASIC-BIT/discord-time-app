@@ -528,6 +528,7 @@ server.post<{ Body: ParseRequest }>('/parse', {
       parsed.validation.warnings.push(PLAN_IR_WARMING_WARNING);
     }
     logTemporalGeneration(text, tz, now, parsed);
+    const hostedPlanRejected = config.temporalPlanIrEndpointHosted && parsed.debug?.endpointPlanRejected === true;
     request.log.info({
       requestId,
       inputTextHmac: hashInputText(text),
@@ -552,14 +553,15 @@ server.post<{ Body: ParseRequest }>('/parse', {
       outputTokens: parsed.debug?.outputTokens,
       estimatedCostUsd: parsed.debug?.estimatedCostUsd,
       validationPassed: parsed.validation.passed,
+      hostedPlanRejected,
       validationChecks: parsed.validation.checks,
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
     }, 'parse result');
 
-    // If all parsing failed
     if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
-        error: parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
+        error: hostedPlanRejected ? 'endpoint_plan_rejected'
+          : parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,
         debug: { ambiguousTimeZone: parsed.debug?.ambiguousTimeZone === true, ...(endpointWarming ? { endpointWarming: true, llmFallbackAttempted } : {}) },

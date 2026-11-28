@@ -48,6 +48,8 @@ it('automatically resumes once the browser approval completes', async () => {
   fake.status.mockResolvedValue({ ...signedOut, phase: 'signed_in' });
   await act(async () => fake.changed()); await act(async () => fake.changed());
   expect(resumed).toHaveBeenCalledOnce(); expect(container.textContent).toContain('You’re connected');
+  expect(container.textContent).toContain('our cloud parser and OpenAI');
+  expect(container.textContent).toContain('built-in time checks');
 });
 it('does not resume parsing merely because an already signed-in account panel mounts', async () => {
   fake.status.mockResolvedValue({ ...signedOut, phase: 'signed_in' });

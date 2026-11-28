@@ -27,7 +27,19 @@ test('HTTP clients preserve the same warmup failure metadata', async () => {
   await expect(client.parseTime('test', 'UTC')).rejects.toSatisfy(canUseHostedFallback);
 });
 
-test('only a failed deterministic parse during warmup is eligible', () => {
+test('RunPod plan rejections survive both desktop transports and qualify for Luna', async () => {
+  const body = { error: 'endpoint_plan_rejected', debug: { ambiguousTimeZone: false } };
+  fake.invoke.mockResolvedValue({ ok: false, status: 400, body });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 400 })));
+  for (const useNativeBridge of [true, false]) {
+    const client = new TimeParserAPIClient('http://127.0.0.1:8857', 'test-local-key', 'unavailable', useNativeBridge);
+    await expect(client.parseTime('easter', 'America/Indianapolis')).rejects.toSatisfy(
+      (error: TimeParserAPIError) => !error.endpointWarming && canUseHostedFallback(error),
+    );
+  }
+});
+
+test('only recoverable parse failures qualify for the hosted retry', () => {
   expect(canUseHostedFallback(new TimeParserAPIError('failed', 400, 'parse_failed', undefined, undefined, true))).toBe(true);
   for (const error of [new Error('offline'), new TimeParserAPIError('clarify', 400, 'needs_clarification', undefined, undefined, true), new TimeParserAPIError('failed', 400), new TimeParserAPIError('unavailable', 503, undefined, undefined, undefined, true)]) {
     expect(canUseHostedFallback(error)).toBe(false);

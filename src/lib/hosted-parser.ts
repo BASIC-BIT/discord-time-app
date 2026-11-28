@@ -4,8 +4,10 @@ import { getHostedAuthToken, hostedConfigured } from './hosted-auth';
 import { ConvexError } from 'convex/values';
 import { TimeParserAPIError, type ParseResponse } from './api-client';
 
-export function canUseHostedFallback(error: unknown): boolean {
-  return hostedConfigured && error instanceof TimeParserAPIError && error.endpointWarming && !error.llmFallbackAttempted && error.status === 400 && error.code !== 'needs_clarification';
+export function canUseHostedFallback(error: unknown): error is TimeParserAPIError {
+  return hostedConfigured && error instanceof TimeParserAPIError && error.status === 400 &&
+    !error.llmFallbackAttempted && error.code !== 'needs_clarification' &&
+    (error.endpointWarming || error.code === 'endpoint_plan_rejected');
 }
 
 export async function parseHostedTime(text: string, tz: string, now: string, requestId: string, signal: AbortSignal): Promise<ParseResponse | null> {
@@ -13,7 +15,7 @@ export async function parseHostedTime(text: string, tz: string, now: string, req
   if (!hostedConfigured) throw new TimeParserAPIError('Smart fallback is not configured in this build.', 503);
   const token = await getHostedAuthToken();
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  if (!token) throw new TimeParserAPIError('Sign in to use smart parsing while the model warms up.', 401, 'sign_in_required');
+  if (!token) throw new TimeParserAPIError('Sign in to use smart fallback.', 401, 'sign_in_required');
   const client = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
   client.setAuth(token);
   // shortcut: Convex actions cannot be cancelled by the client; discard stale results and bound server work.
@@ -46,6 +48,6 @@ export async function parseHostedTime(text: string, tz: string, now: string, req
     generationId: requestId, kind: result.kind ?? 'instant', epoch: result.epoch ?? result.range!.start.epoch,
     suggestedFormatIndex: result.suggestedFormatIndex ?? 4, range: result.range,
     confidence: result.confidence, method: result.method, canonical: result.canonical,
-    debug: { endpointWarming: true, serverValidated: true },
+    debug: { serverValidated: true },
   };
 }
