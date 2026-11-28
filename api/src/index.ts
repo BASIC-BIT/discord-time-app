@@ -556,10 +556,9 @@ server.post<{ Body: ParseRequest }>('/parse', {
       clarificationAlternativeCount: parsed.clarificationAlternatives?.length ?? 0,
     }, 'parse result');
 
-    // The desktop sidecar always enables prewarming in hosted model mode. Local mode keeps rejections on device.
     if (parsed.status === 'failed' || parsed.epoch === undefined) {
       return reply.status(400).send({
-        error: config.temporalPlanIrWarmup.enabled && parsed.debug?.endpointPlanRejected ? 'endpoint_plan_rejected'
+        error: config.temporalPlanIrEndpointHosted && parsed.debug?.endpointPlanRejected ? 'endpoint_plan_rejected'
           : parsed.status === 'needs_clarification' ? 'needs_clarification' : 'Could not parse time expression',
         message: userFacingParseErrorMessage(parsed, text),
         generationId: parsed.generationId,

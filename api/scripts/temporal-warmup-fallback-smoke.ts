@@ -130,12 +130,12 @@ async function main() {
   const llmUrl = await listen(llm);
   const slmUrl = await listen(slm);
   try {
-    for (const { configured, warming, warmupEnabled, semanticGate = false } of [
-      { configured: true, warming: true, warmupEnabled: true },
-      { configured: false, warming: true, warmupEnabled: true },
-      { configured: true, warming: false, warmupEnabled: true },
-      { configured: false, warming: false, warmupEnabled: true, semanticGate: true },
-      { configured: false, warming: false, warmupEnabled: false },
+    for (const { configured, warming, warmupEnabled, hosted, semanticGate = false } of [
+      { configured: true, warming: true, warmupEnabled: true, hosted: true },
+      { configured: false, warming: true, warmupEnabled: true, hosted: true },
+      { configured: true, warming: false, warmupEnabled: true, hosted: true },
+      { configured: false, warming: false, warmupEnabled: false, hosted: true, semanticGate: true },
+      { configured: false, warming: false, warmupEnabled: true, hosted: false },
     ]) {
       slmReady = !warming;
       endpointPlan = plan;
@@ -151,6 +151,7 @@ async function main() {
           TEMPORAL_FEATURE_PLAN_IR: 'true', TEMPORAL_FEATURE_DETERMINISTIC_PREFLIGHT: 'false',
           TEMPORAL_FEATURE_SEMANTIC_CONSISTENCY_GATE: String(semanticGate),
           TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL: slmUrl, TEMPORAL_PLAN_IR_ENDPOINT_MODEL: 'test-cold-slm',
+          TEMPORAL_PLAN_IR_ENDPOINT_HOSTED: String(hosted),
           TEMPORAL_PLAN_IR_ENDPOINT_API: 'chat', TEMPORAL_PLAN_IR_ENDPOINT_WARMUP: String(warmupEnabled),
         }, stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -193,7 +194,7 @@ async function main() {
           const easter = await parse('easter');
           assert.equal(easter.status, 400);
           const rejected = await easter.json();
-          assert.equal(rejected.error, warmupEnabled ? 'endpoint_plan_rejected' : 'Could not parse time expression');
+          assert.equal(rejected.error, hosted ? 'endpoint_plan_rejected' : 'Could not parse time expression');
           assert.notEqual(rejected.debug?.endpointWarming, true);
 
           endpointPlan = noPlan;

@@ -674,6 +674,7 @@ fn hosted_slm_endpoint(settings: &AppSettings) -> Option<HostedSlmEndpoint> {
 }
 
 fn apply_slm_api_env(command: &mut Command, settings: &AppSettings) {
+    command.env("TEMPORAL_PLAN_IR_ENDPOINT_HOSTED", "false");
     if !settings.local_slm_enabled {
         return;
     }
@@ -683,7 +684,9 @@ fn apply_slm_api_env(command: &mut Command, settings: &AppSettings) {
             if let Some(api_key) = hosted.api_key {
                 command.env("TEMPORAL_PLAN_IR_ENDPOINT_API_KEY", api_key);
             }
-            command.env("TEMPORAL_PLAN_IR_ENDPOINT_WARMUP", "true");
+            command
+                .env("TEMPORAL_PLAN_IR_ENDPOINT_HOSTED", "true")
+                .env("TEMPORAL_PLAN_IR_ENDPOINT_WARMUP", "true");
             (hosted.base_url, hosted.model)
         }
         // Hosted selected but unavailable in this build (no URL/key): keep parsing
@@ -2627,6 +2630,10 @@ mod hosted_slm_endpoint_tests {
         let mut command = Command::new("node");
         apply_slm_api_env(&mut command, &settings);
         assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_HOSTED").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
             env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL").as_deref(),
             Some(LOCAL_SLM_DEFAULT_ENDPOINT_BASE_URL)
         );
@@ -2665,6 +2672,10 @@ mod hosted_slm_endpoint_tests {
 
         let mut command = Command::new("node");
         apply_slm_api_env(&mut command, &settings);
+        assert_eq!(
+            env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_HOSTED").as_deref(),
+            Some("true")
+        );
         assert_eq!(
             env_of(&command, "TEMPORAL_PLAN_IR_ENDPOINT_BASE_URL").as_deref(),
             Some("https://slm.example.com/v1")

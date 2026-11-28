@@ -1799,7 +1799,7 @@ async function runEndpointPlanIrPath(
     planResult,
     endpointCompletion: completion,
   });
-  // A failed single-answer plan must have produced a candidate that reached validation.
+  // Only enriched candidates and ranges are counted, after validateCandidate or validateRange ran.
   if (planResult.outcome === 'plans' && validatedResponse.status === 'failed' &&
       !validatedResponse.validation.passed && (validatedResponse.debug?.candidateCount ?? 0) > 0) {
     validatedResponse.debug = { ...validatedResponse.debug, endpointPlanRejected: true };

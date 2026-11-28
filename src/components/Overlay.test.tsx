@@ -6,7 +6,7 @@ import { Overlay } from './Overlay';
 import { TimeParserAPIError } from '../lib/api-client';
 import { invoke } from '@tauri-apps/api/core';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
-const fake = vi.hoisted(() => ({ parse: vi.fn(), hosted: vi.fn(), eligible: true }));
+const fake = vi.hoisted(() => ({ parse: vi.fn(), hosted: vi.fn(), endpointStatus: vi.fn(), eligible: true }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({ auto_load_clipboard: false })) }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'test', setFocus: vi.fn() }), LogicalSize: class {}, PhysicalPosition: class {}, currentMonitor: vi.fn() }));
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ readText: vi.fn(), writeText: vi.fn() }));
@@ -16,12 +16,13 @@ vi.mock('../lib/hosted-parser', () => ({ canUseHostedFallback: (error: unknown) 
 vi.mock('./HostedAccount', () => ({ HostedAccount: () => <section aria-label="Account">Browser approval</section> }));
 vi.mock('../lib/api-client', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/api-client')>(),
-  createAPIClient: async () => ({ parseTime: fake.parse, getPlanIrEndpointStatus: async () => ({ warmupEnabled: true, state: 'warming' }) }),
+  createAPIClient: async () => ({ parseTime: fake.parse, getPlanIrEndpointStatus: fake.endpointStatus }),
 }));
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   vi.clearAllMocks(); fake.eligible = true;
+  fake.endpointStatus.mockResolvedValue({ warmupEnabled: true, state: 'warming' });
   vi.mocked(invoke).mockResolvedValue({ auto_load_clipboard: false });
   vi.mocked(readText).mockResolvedValue('');
   vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -70,7 +71,9 @@ it('displays the validated Luna result after a ready RunPod plan rejects bare Ea
   expect(fake.hosted).toHaveBeenCalledOnce();
   expect(fake.hosted.mock.calls[0][0]).toBe('easter');
   expect(container.querySelector('.format-code')?.textContent).toContain('<t:1806249600:');
-  expect(container.querySelector('.warming-notice')?.classList.contains('visible')).toBe(false);
+  expect(fake.endpointStatus).toHaveBeenCalledOnce();
+  await act(async () => vi.advanceTimersByTimeAsync(2500));
+  expect(fake.endpointStatus).toHaveBeenCalledOnce();
 });
 
 it('keeps the local error visible when hosted fallback is unavailable', async () => {
